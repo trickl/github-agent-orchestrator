@@ -64,6 +64,9 @@ Homepage = "https://github.com/trickl/github-agent-orchestrator"
 Repository = "https://github.com/trickl/github-agent-orchestrator"
 Issues = "https://github.com/trickl/github-agent-orchestrator/issues"
 
+[project.scripts]
+orchestrator = "github_agent_orchestrator.cli:main"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 

@@ -31,7 +31,8 @@ def test_llm_factory_unsupported() -> None:
 
 def test_openai_provider_requires_api_key() -> None:
     """Test OpenAI provider requires API key."""
-    config = LLMConfig(provider="openai")
+    # Set provider to openai but ensure no API key
+    config = LLMConfig(provider="openai", openai_api_key=None)
 
     with pytest.raises(ValueError, match="OpenAI API key is required"):
         OpenAIProvider(config)
