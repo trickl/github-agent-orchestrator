@@ -2,7 +2,7 @@
 
 import logging
 from pathlib import Path
-from typing import Any, Literal
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -15,7 +15,7 @@ class LLMConfig(BaseSettings):
         default="openai",
         description="LLM provider to use",
     )
-    
+
     # OpenAI settings
     openai_api_key: str | None = Field(
         default=None,
@@ -31,7 +31,7 @@ class LLMConfig(BaseSettings):
         le=2.0,
         description="Temperature for OpenAI model",
     )
-    
+
     # LLaMA settings
     llama_model_path: Path | None = Field(
         default=None,
@@ -46,7 +46,7 @@ class LLMConfig(BaseSettings):
         default=None,
         description="Number of threads for LLaMA (None = auto)",
     )
-    
+
     model_config = SettingsConfigDict(
         env_prefix="ORCHESTRATOR_LLM_",
         env_file=".env",
@@ -69,7 +69,7 @@ class GitHubConfig(BaseSettings):
         default="https://api.github.com",
         description="GitHub API base URL",
     )
-    
+
     model_config = SettingsConfigDict(
         env_prefix="ORCHESTRATOR_GITHUB_",
         env_file=".env",
@@ -92,7 +92,7 @@ class StateConfig(BaseSettings):
         default="orchestrator-state",
         description="Branch name for state storage",
     )
-    
+
     model_config = SettingsConfigDict(
         env_prefix="ORCHESTRATOR_STATE_",
         env_file=".env",
@@ -111,7 +111,7 @@ class OrchestratorConfig(BaseSettings):
         default=False,
         description="Enable debug mode",
     )
-    
+
     llm: LLMConfig = Field(
         default_factory=LLMConfig,
         description="LLM configuration",
@@ -124,13 +124,13 @@ class OrchestratorConfig(BaseSettings):
         default_factory=StateConfig,
         description="State configuration",
     )
-    
+
     model_config = SettingsConfigDict(
         env_prefix="ORCHESTRATOR_",
         env_file=".env",
         extra="ignore",
     )
-    
+
     def setup_logging(self) -> None:
         """Configure logging based on settings."""
         level = getattr(logging, self.log_level.upper(), logging.INFO)
@@ -139,6 +139,6 @@ class OrchestratorConfig(BaseSettings):
             format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
             datefmt="%Y-%m-%d %H:%M:%S",
         )
-        
+
         if self.debug:
             logging.getLogger("github_agent_orchestrator").setLevel(logging.DEBUG)

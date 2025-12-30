@@ -1,11 +1,13 @@
 """Test configuration and fixtures."""
 
-import pytest
 from pathlib import Path
+
+import pytest
+
 from github_agent_orchestrator.core.config import (
-    OrchestratorConfig,
-    LLMConfig,
     GitHubConfig,
+    LLMConfig,
+    OrchestratorConfig,
     StateConfig,
 )
 

@@ -12,22 +12,22 @@ logger = logging.getLogger(__name__)
 
 class LLMFactory:
     """Factory for creating LLM provider instances."""
-    
+
     @staticmethod
     def create(config: LLMConfig) -> LLMProvider:
         """Create an LLM provider based on configuration.
-        
+
         Args:
             config: LLM configuration specifying the provider.
-            
+
         Returns:
             Configured LLM provider instance.
-            
+
         Raises:
             ValueError: If provider type is not supported.
         """
         logger.info(f"Creating LLM provider: {config.provider}")
-        
+
         if config.provider == "openai":
             return OpenAIProvider(config)
         elif config.provider == "llama":
