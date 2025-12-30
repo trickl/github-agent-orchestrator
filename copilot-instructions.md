@@ -2,7 +2,7 @@
 
 ## Purpose
 
-GitHub Copilot must help produce high-quality, maintainable Python code that aligns with modern software engineering standards. It should optimise for clarity, correctness, testability, and incremental improvement.
+GitHub Copilot must help produce high-quality, maintainable Python code that aligns with modern software engineering standards. It should optimize for clarity, correctness, testability, and incremental improvement.
 
 ## General Development Principles
 
@@ -19,7 +19,7 @@ GitHub Copilot must help produce high-quality, maintainable Python code that ali
 - Prefer dependency injection and composition over large monolithic classes.
 - Always write code that is easy to delete and evolve.
 
-## Refactoring Behaviour
+## Refactoring Behavior
 
 When refactoring:
 
