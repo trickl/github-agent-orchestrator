@@ -24,7 +24,7 @@ GitHub Copilot must help produce high-quality, maintainable Python code that ali
 When refactoring:
 
 - Prefer breaking changes if it results in simplicity, unless explicitly asked to preserve compatibility.
-- Do not retain legacy behaviours or backwards-compatibility layers unless explicitly requested.
+- Do not retain legacy behaviors or backwards-compatibility layers unless explicitly requested.
 - Replace old structures cleanly; avoid transitional duplication.
 - Remove deprecated patterns and anti-patterns aggressively.
 
@@ -38,7 +38,7 @@ When refactoring:
 ## Testing & Reliability
 
 - Every meaningful feature must include unit tests.
-- New behaviour must come with tests.
+- New behavior must come with tests.
 - Refactors must not reduce coverage.
 - Prefer deterministic, reliable tests over brittle intelligent ones.
 
@@ -46,7 +46,7 @@ When refactoring:
 
 - Document public functions and modules with concise docstrings.
 - Use comments to explain why, not what.
-- Keep README and architecture docs aligned with behaviour.
+- Keep README and architecture docs aligned with behavior.
 
 ## Linting & Style
 
