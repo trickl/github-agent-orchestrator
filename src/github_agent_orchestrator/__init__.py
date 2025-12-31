@@ -1,17 +1,13 @@
 """GitHub Agent Orchestrator.
 
-A stateful orchestration engine that manages plans, critiques, issues,
-and incremental PRs using GitHub's coding agents. Supports persistent
-planning via repo-backed storage and continuous project evolution.
+Phase 1/1A provides a minimal, local-first CLI with:
+- configuration loaded from `.env`
+- structured logging
+- GitHub issue creation with local JSON persistence
 """
 
 __version__ = "0.1.0"
 
-from github_agent_orchestrator.core.config import OrchestratorConfig
-from github_agent_orchestrator.core.orchestrator import Orchestrator
+from github_agent_orchestrator.orchestrator.config import OrchestratorSettings
 
-__all__ = [
-    "__version__",
-    "Orchestrator",
-    "OrchestratorConfig",
-]
+__all__ = ["__version__", "OrchestratorSettings"]

@@ -1,9 +1,8 @@
 """LLM package initialization."""
 
-from github_agent_orchestrator.llm.factory import LLMFactory
-from github_agent_orchestrator.llm.provider import LLMProvider
+"""Deprecated Phase>1 package.
 
-__all__ = [
-    "LLMFactory",
-    "LLMProvider",
-]
+Phase 1/1A explicitly avoids LLM inference.
+"""
+
+__all__: list[str] = []

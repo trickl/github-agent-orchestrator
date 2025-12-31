@@ -6,25 +6,22 @@ This directory contains example scripts demonstrating how to use the GitHub Agen
 
 ### basic_usage.py
 
-Comprehensive examples showing:
-- Basic orchestrator usage
-- Custom configuration
-- Direct LLM provider usage
-- GitHub client operations
-- State management
+Programmatic issue creation (Phase 1/1A) showing:
+
+* settings loaded from `.env`
+* GitHub issue creation
+* local persistence to `agent_state/issues.json`
 
 Run with:
 ```bash
-python examples/basic_usage.py
+python examples/basic_usage.py --repo owner/repo --title "Hello" --body "From examples/" --labels agent
 ```
 
 For full functionality, set environment variables:
 ```bash
-export ORCHESTRATOR_LLM_OPENAI_API_KEY=sk-...
 export ORCHESTRATOR_GITHUB_TOKEN=ghp_...
-export ORCHESTRATOR_GITHUB_REPOSITORY=owner/repo
 
-python examples/basic_usage.py
+python examples/basic_usage.py --repo owner/repo --title "Hello" --body "From examples/" --labels agent
 ```
 
 ## Additional Resources

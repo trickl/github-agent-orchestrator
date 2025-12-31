@@ -1,7 +1,6 @@
-"""GitHub integration package."""
+"""Deprecated Phase>1 GitHub package.
 
-from github_agent_orchestrator.github.client import GitHubClient
+Phase 1A GitHub integration lives under `github_agent_orchestrator.orchestrator.github`.
+"""
 
-__all__ = [
-    "GitHubClient",
-]
+__all__: list[str] = []

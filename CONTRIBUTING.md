@@ -96,8 +96,11 @@ pytest --cov=src/github_agent_orchestrator
 pytest tests/unit/test_config.py
 
 # Run specific test
-pytest tests/unit/test_config.py::test_llm_config_defaults
+pytest tests/unit/test_config.py::test_settings_defaults
 ```
+
+Note: test names and focus evolve quickly in this repo. If the selector above fails,
+prefer running `pytest -q` and then targeting a currently-listed test name.
 
 ### Code Quality Checks
 
@@ -183,14 +186,14 @@ def process_data(data: dict[str, Any]) -> list[str]:
 
 ```python
 import pytest
-from github_agent_orchestrator.core.config import LLMConfig
+from github_agent_orchestrator.orchestrator.config import OrchestratorSettings
 
-def test_llm_config_defaults() -> None:
-    """Test LLM config default values."""
-    config = LLMConfig(openai_api_key="test-key")
-    
-    assert config.provider == "openai"
-    assert config.openai_model == "gpt-4"
+def test_settings_require_github_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Settings require ORCHESTRATOR_GITHUB_TOKEN to be set (in env or via .env)."""
+    monkeypatch.delenv("ORCHESTRATOR_GITHUB_TOKEN", raising=False)
+
+    with pytest.raises(Exception):
+        OrchestratorSettings()
 ```
 
 ### Test Coverage
@@ -307,10 +310,12 @@ Include:
 Create a `.env` file for development:
 
 ```bash
-ORCHESTRATOR_LLM_PROVIDER=openai
-ORCHESTRATOR_LLM_OPENAI_API_KEY=your-key-here
 ORCHESTRATOR_GITHUB_TOKEN=your-token-here
-ORCHESTRATOR_GITHUB_REPOSITORY=owner/repo
+
+# Optional (defaults shown)
+GITHUB_BASE_URL=https://api.github.com
+LOG_LEVEL=INFO
+AGENT_STATE_PATH=agent_state
 ```
 
 ### Debugging
@@ -325,8 +330,7 @@ logging.basicConfig(level=logging.DEBUG)
 Or set environment variable:
 
 ```bash
-export ORCHESTRATOR_LOG_LEVEL=DEBUG
-export ORCHESTRATOR_DEBUG=true
+export LOG_LEVEL=DEBUG
 ```
 
 ### Running Integration Tests

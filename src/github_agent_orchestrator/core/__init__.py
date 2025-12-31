@@ -1,9 +1,6 @@
-"""Core package initialization."""
+"""Deprecated Phase>1 package.
 
-from github_agent_orchestrator.core.config import OrchestratorConfig
-from github_agent_orchestrator.core.orchestrator import Orchestrator
+Phase 1/1A implementation lives under `github_agent_orchestrator.orchestrator`.
+"""
 
-__all__ = [
-    "Orchestrator",
-    "OrchestratorConfig",
-]
+__all__: list[str] = []

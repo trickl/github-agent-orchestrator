@@ -1,183 +1,70 @@
 #!/usr/bin/env python3
-"""Example usage of the GitHub Agent Orchestrator.
+"""Programmatic issue creation example (Phase 1/1A).
 
-This script demonstrates how to use the orchestrator with different
-LLM providers and GitHub integration.
+This demonstrates using the orchestrator components directly:
+
+* load settings from `.env`
+* create a GitHub issue
+* persist minimal metadata to `agent_state/issues.json`
+
+Repository selection is passed as an argument (not read from `.env`).
 """
 
-import logging
-import os
-from pathlib import Path
+from __future__ import annotations
 
-from github_agent_orchestrator import Orchestrator, OrchestratorConfig
-from github_agent_orchestrator.core.config import GitHubConfig, LLMConfig, StateConfig
+import argparse
+from typing import Sequence
 
-
-def example_basic_usage() -> None:
-    """Example: Basic usage with environment variables."""
-    print("=== Basic Usage Example ===\n")
-
-    # Initialize orchestrator (reads from environment)
-    orchestrator = Orchestrator()
-
-    # Process a simple task
-    result = orchestrator.process_task("Create a simple Python function to calculate factorial")
-
-    print(f"Task: {result['task']}")
-    print(f"Status: {result['status']}")
-    print(f"Plan:\n{result['plan']}\n")
+from github_agent_orchestrator.orchestrator.config import OrchestratorSettings
+from github_agent_orchestrator.orchestrator.github.client import GitHubClient
+from github_agent_orchestrator.orchestrator.github.issue_service import (
+    IssueAlreadyExists,
+    IssueService,
+    IssueStore,
+)
+from github_agent_orchestrator.orchestrator.logging import configure_logging
 
 
-def example_custom_config() -> None:
-    """Example: Using custom configuration."""
-    print("=== Custom Configuration Example ===\n")
+def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Create a GitHub issue (programmatic example).")
+    parser.add_argument("--repo", required=True, help='Target repository in the form "owner/repo"')
+    parser.add_argument("--title", required=True, help="Issue title")
+    parser.add_argument("--body", default="", help="Issue body")
+    parser.add_argument(
+        "--labels",
+        default="",
+        help='Comma-separated labels, e.g. "agent,phase-1" (optional)',
+    )
+    return parser.parse_args(argv)
 
-    # Create custom configuration
-    config = OrchestratorConfig(
-        log_level="DEBUG",
-        debug=True,
-        llm=LLMConfig(
-            provider="openai",
-            openai_api_key=os.getenv("OPENAI_API_KEY", "test-key"),
-            openai_model="gpt-4",
-            openai_temperature=0.8,
-        ),
-        github=GitHubConfig(
-            token=os.getenv("GITHUB_TOKEN"),
-            repository=os.getenv("GITHUB_REPOSITORY"),
-        ),
-        state=StateConfig(storage_path=Path(".state"), auto_commit=False),
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = _parse_args(argv)
+
+    labels = [label.strip() for label in args.labels.split(",") if label.strip()]
+
+    settings = OrchestratorSettings()
+    configure_logging(settings.log_level)
+
+    github = GitHubClient(
+        token=settings.github_token,
+        repository=args.repo,
+        base_url=settings.github_base_url,
     )
 
-    orchestrator = Orchestrator(config)
-
-    # Process a task
-    result = orchestrator.process_task("Design a REST API for a todo application")
-
-    print(f"Task: {result['task']}")
-    print(f"Status: {result['status']}\n")
-
-
-def example_llm_direct() -> None:
-    """Example: Using LLM provider directly."""
-    print("=== Direct LLM Usage Example ===\n")
-
-    from github_agent_orchestrator.llm.factory import LLMFactory
-
-    # Create LLM provider
-    config = LLMConfig(
-        provider="openai",
-        openai_api_key=os.getenv("OPENAI_API_KEY", "test-key"),
-        openai_model="gpt-4",
-    )
+    service = IssueService(github=github, store=IssueStore(settings.issues_state_file))
 
     try:
-        llm = LLMFactory.create(config)
+        record = service.create_issue(title=args.title, body=args.body, labels=labels)
+    except IssueAlreadyExists as exc:
+        print(str(exc))
+        return 0
 
-        # Generate text
-        response = llm.generate("Write a haiku about coding")
-        print(f"Response: {response}\n")
-
-        # Chat interface
-        messages = [
-            {"role": "user", "content": "What is Python?"},
-        ]
-        chat_response = llm.chat(messages)
-        print(f"Chat Response: {chat_response}\n")
-    except Exception as e:
-        print(f"LLM example requires valid API key: {e}\n")
-
-
-def example_github_client() -> None:
-    """Example: Using GitHub client directly."""
-    print("=== GitHub Client Example ===\n")
-
-    from github_agent_orchestrator.github.client import GitHubClient
-
-    token = os.getenv("GITHUB_TOKEN")
-    repository = os.getenv("GITHUB_REPOSITORY")
-
-    if not token or not repository:
-        print("GitHub example requires GITHUB_TOKEN and GITHUB_REPOSITORY env vars\n")
-        return
-
-    try:
-        config = GitHubConfig(token=token, repository=repository)
-        client = GitHubClient(config)
-
-        # List open pull requests
-        prs = client.list_pull_requests(state="open")
-        print(f"Found {len(prs)} open pull requests")
-
-        # List open issues
-        issues = client.list_issues(state="open")
-        print(f"Found {len(issues)} open issues\n")
-
-        client.close()
-    except Exception as e:
-        print(f"GitHub example failed: {e}\n")
-
-
-def example_state_management() -> None:
-    """Example: Using state manager directly."""
-    print("=== State Management Example ===\n")
-
-    from github_agent_orchestrator.state.manager import StateManager
-
-    config = StateConfig(storage_path=Path("/tmp/example-state"), auto_commit=False)
-
-    manager = StateManager(config)
-
-    # Add some data
-    manager.add_task(
-        {"task": "Implement user authentication", "status": "in_progress", "priority": "high"}
-    )
-
-    manager.add_plan(
-        {
-            "plan": "Authentication Implementation",
-            "steps": [
-                "Design user model",
-                "Implement password hashing",
-                "Create login endpoint",
-                "Add JWT tokens",
-                "Write tests",
-            ],
-        }
-    )
-
-    # Save state
-    manager.save()
-
-    # Load state
-    state = manager.load()
-    print(f"Loaded state with {len(state.tasks)} tasks and {len(state.plans)} plans")
-    print(f"First task: {state.tasks[0]['task']}\n")
-
-
-def main() -> None:
-    """Run all examples."""
-    logging.basicConfig(level=logging.INFO)
-
-    print("GitHub Agent Orchestrator - Usage Examples")
-    print("=" * 50)
-    print()
-
-    # Run examples that don't require API keys
-    example_state_management()
-
-    # Examples that may require credentials (will handle gracefully)
-    example_custom_config()
-    example_llm_direct()
-    example_github_client()
-
-    print("=" * 50)
-    print("\nExamples completed!")
-    print("\nTo run with real API keys, set environment variables:")
-    print("  export ORCHESTRATOR_LLM_OPENAI_API_KEY=sk-...")
-    print("  export ORCHESTRATOR_GITHUB_TOKEN=ghp_...")
-    print("  export ORCHESTRATOR_GITHUB_REPOSITORY=owner/repo")
+    print(f"Created issue #{record.number}: {record.title}")
+    print(f"URL: {record.url}")
+    print(f"Persisted to: {settings.issues_state_file}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

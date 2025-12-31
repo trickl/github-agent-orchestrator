@@ -5,19 +5,96 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A stateful orchestration engine that manages plans, critiques, issues, and incremental PRs using GitHub's coding agents. Supports persistent planning via repo-backed storage and continuous project evolution.
+Minimal, local-first GitHub orchestrator (Phase 1/1A).
+
+This project is intentionally **not** an “agent”. It is a Git-native **task compiler**:
+
+- It creates issues from well-defined templates/intent.
+- It materialises issues from files (promotes queued artefacts into GitHub issues).
+
+It does **not** decide issue content, reason about solutions, or interpret meaning beyond basic classification and routing.
+
+All “thinking” happens inside Copilot-authored PRs.
 
 ## Features
 
-- **🤖 Pluggable LLM Layer**: Support for OpenAI GPT models and local LLaMA models
-- **🔗 GitHub Integration**: Read and create Pull Requests and Issues programmatically
-- **💾 Persistent State**: Repo-backed state management with version control support
-- **🏗️ Clean Architecture**: Modular design with clear separation of concerns
-- **✅ Type Safety**: Full type hints and mypy checking
-- **🎨 Code Quality**: Automated linting with ruff, black, and isort
-- **🧪 Well Tested**: Comprehensive test suite with pytest
-- **📚 Documented**: Complete documentation with Sphinx
-- **🚀 CI-Ready**: GitHub Actions workflows for testing and deployment
+* **🔐 GitHub auth via token** (PyGithub)
+* **🧾 Structured JSON logs** (stdlib `logging`)
+* **🧩 Minimal CLI** (`orchestrator create-issue`)
+* **💾 Local JSON state** (`agent_state/issues.json`)
+* **🛡️ Idempotent-safe** issue creation (by title, locally)
+* **🌐 REST server adapter** (FastAPI + OpenAPI docs)
+* **🔎 Linked PR monitoring** (polling via GitHub GraphQL)
+* **📥 Issue queue promotion** (planned: convert queued artefacts into GitHub issues)
+
+## Design: artefact-driven orchestration
+
+### Canonical folders (finalised)
+
+The orchestration loop is driven by a small set of canonical artefacts:
+
+```
+/planning
+    /vision
+        goal.md              # User-owned, rarely changes
+    /state
+        system_capabilities.md
+    /reviews
+        review-YYYY-MM-DD.md
+    /issue_queue
+        pending/
+        processed/
+```
+
+The `/planning/issue_queue` folder is the explicit handoff boundary between reasoning and orchestration.
+
+### The four canonical issue types (never mix)
+
+1) **Gap Analysis (Plan → Build)**
+
+- Purpose: compare `goal.md` vs `system_capabilities.md` and identify the next development step.
+- Output: exactly one file in `/planning/issue_queue/pending/dev-<timestamp>.md`.
+- Constraints: no code changes, no issue creation; output must be a candidate task (not a fix).
+
+2) **Development Task (Build Something)**
+
+- Input: one file from `/planning/issue_queue/pending/`.
+- Output: code + tests and an updated `/planning/state/system_capabilities.md`.
+- Promotion: the orchestrator converts the file into a GitHub issue, assigns to Copilot, then moves the file to `processed/`.
+
+3) **Review Task (Critique)**
+
+- Purpose: assess the system from one lens (architecture, correctness, mission alignment, capability completeness).
+- Output: exactly one review document in `/planning/reviews/`.
+- Constraints: analysis only (no fixes, no new tasks).
+
+4) **Review Consumption (Critique → Action)**
+
+- Purpose: translate critique into candidate work without acting on it.
+- Input: one specific review file.
+- Output: one or more files in `/planning/issue_queue/pending/review-<timestamp>-<n>.md`.
+
+### Loop constraint (rate limiting)
+
+The orchestrator is intentionally rate-limited:
+
+1. Scan `/planning/issue_queue/pending`.
+2. If files exist:
+     - Convert the next file → GitHub issue
+     - Move file → `issue_queue/processed`
+     - Assign to Copilot
+     - Exit (one issue per cycle)
+3. Else:
+     - Optionally create a meta-issue (gap analysis, system state update, review)
+4. Sleep / poll
+
+### User role (explicit)
+
+The user owns exactly one artefact:
+
+- `/planning/vision/goal.md`
+
+Everything else is derived.
 
 ## Quick Start
 
@@ -44,129 +121,126 @@ pip install "github-agent-orchestrator[llama]"
 Create a `.env` file or set environment variables:
 
 ```bash
-# LLM Configuration
-ORCHESTRATOR_LLM_PROVIDER=openai
-ORCHESTRATOR_LLM_OPENAI_API_KEY=sk-...
-ORCHESTRATOR_LLM_OPENAI_MODEL=gpt-4
-
 # GitHub Configuration
+# Use a dedicated variable to avoid collisions with other tools/services that
+# may also use GITHUB_TOKEN.
 ORCHESTRATOR_GITHUB_TOKEN=ghp_...
-ORCHESTRATOR_GITHUB_REPOSITORY=owner/repo
 
-# State Configuration (optional)
-ORCHESTRATOR_STATE_STORAGE_PATH=.state
-ORCHESTRATOR_STATE_AUTO_COMMIT=true
+# Optional (defaults shown)
+GITHUB_BASE_URL=https://api.github.com
+LOG_LEVEL=INFO
+AGENT_STATE_PATH=agent_state
+
+# REST server (optional)
+# Needed for PR refresh/monitoring because Phase 1 state does not yet persist repo.
+ORCHESTRATOR_DEFAULT_REPO=owner/repo
+ORCHESTRATOR_HOST=127.0.0.1
+ORCHESTRATOR_PORT=8000
 ```
 
-### Basic Usage
+### Basic Usage (CLI)
 
-```python
-from github_agent_orchestrator import Orchestrator, OrchestratorConfig
-
-# Initialize with default configuration from environment
-orchestrator = Orchestrator()
-
-# Process a single task
-result = orchestrator.process_task(
-    "Implement a new feature for user authentication"
-)
-
-print(f"Task: {result['task']}")
-print(f"Plan: {result['plan']}")
-print(f"Status: {result['status']}")
-
-# Run long-running orchestration
-orchestrator.run()
+```bash
+orchestrator create-issue \
+  --repo "owner/repo" \
+  --title "Phase 1: bootstrap" \
+  --body "Create minimal local orchestrator" \
+  --labels "agent,phase-1"
 ```
 
-### Using Different LLM Providers
-
-#### OpenAI
+### Programmatic Usage
 
 ```python
-from github_agent_orchestrator import OrchestratorConfig
-from github_agent_orchestrator.core.config import LLMConfig
+from github_agent_orchestrator.orchestrator.config import OrchestratorSettings
+from github_agent_orchestrator.orchestrator.github.client import GitHubClient
+from github_agent_orchestrator.orchestrator.github.issue_service import IssueService, IssueStore
+from github_agent_orchestrator.orchestrator.logging import configure_logging
 
-config = OrchestratorConfig(
-    llm=LLMConfig(
-        provider="openai",
-        openai_api_key="sk-...",
-        openai_model="gpt-4",
-        openai_temperature=0.7,
-    )
+settings = OrchestratorSettings()
+configure_logging(settings.log_level)
+
+github = GitHubClient(
+    token=settings.github_token,
+    repository="owner/repo",  # provided explicitly (not from .env)
+    base_url=settings.github_base_url,
 )
 
-orchestrator = Orchestrator(config)
+service = IssueService(
+    github=github,
+    store=IssueStore(settings.issues_state_file),
+)
+
+record = service.create_issue(
+    title="Hello",
+    body="Created from Python",
+    labels=["agent"],
+)
+
+print(record)
+
 ```
 
-#### Local LLaMA
+## REST Server (FastAPI)
 
-```python
-from pathlib import Path
-from github_agent_orchestrator import OrchestratorConfig
-from github_agent_orchestrator.core.config import LLMConfig
+Run the REST API (serves OpenAPI docs automatically):
 
-config = OrchestratorConfig(
-    llm=LLMConfig(
-        provider="llama",
-        llama_model_path=Path("/path/to/model.gguf"),
-        llama_n_ctx=4096,
-    )
-)
-
-orchestrator = Orchestrator(config)
+```bash
+orchestrator-server
 ```
 
-### GitHub Operations
+Useful endpoints:
 
-```python
-from github_agent_orchestrator.github.client import GitHubClient
-from github_agent_orchestrator.core.config import GitHubConfig
+- OpenAPI JSON: `http://127.0.0.1:8000/openapi.json`
+- Swagger UI: `http://127.0.0.1:8000/docs`
 
-config = GitHubConfig(
-    token="ghp_...",
-    repository="owner/repo",
-)
+The server exposes endpoints under `/api/v1`, including:
 
-client = GitHubClient(config)
+- `GET /api/v1/issues`
+- `POST /api/v1/issues/{issue_number}/monitor-prs`
+- `GET /api/v1/jobs/{job_id}`
 
-# List open pull requests
-prs = client.list_pull_requests(state="open")
+## React + Vite UI (minimal scaffold)
 
-# Create a new issue
-issue = client.create_issue(
-    title="New feature request",
-    body="Description of the feature",
-    labels=["enhancement"],
-)
+A minimal UI scaffold is in `ui/`. It calls the REST API via a dev proxy.
 
-# Create a pull request
-pr = client.create_pull_request(
-    title="Implement feature X",
-    body="This PR implements feature X",
-    head="feature-branch",
-    base="main",
-)
+1) Start the backend:
+
+```bash
+orchestrator-server
+```
+
+2) Start the UI dev server:
+
+```bash
+cd ui
+npm install
+npm run dev
+```
 ```
 
 ## Architecture
 
-The project follows a clean, modular architecture:
+The Phase 1/1A implementation lives under `src/github_agent_orchestrator/orchestrator/`:
 
 ```
 src/github_agent_orchestrator/
-├── core/           # Core orchestration logic and configuration
-├── llm/            # LLM provider abstractions and implementations
-├── github/         # GitHub API integration
-└── state/          # Persistent state management
+└── orchestrator/
+    ├── config.py             # .env + env var settings
+    ├── logging.py            # JSON logging
+    ├── main.py               # CLI entrypoint
+    └── github/
+        ├── client.py         # PyGithub wrapper
+        └── issue_service.py  # Issue creation + local persistence
+
+agent_state/
+└── issues.json               # persisted issue metadata
 ```
 
 Key components:
 
-- **Orchestrator**: Main coordination engine
-- **LLM Providers**: Pluggable language model backends (OpenAI, LLaMA)
-- **GitHub Client**: Wrapper for GitHub API operations
-- **State Manager**: Repo-backed persistent state with version control
+* `OrchestratorSettings`: loads config from `.env`
+* `GitHubClient`: authenticates and creates issues
+* `IssueService`: idempotent-safe issue creation and persistence
 
 ## Development
 
@@ -244,7 +318,7 @@ See [ROADMAP.md](ROADMAP.md) for planned features and development timeline.
 
 ### Coming Soon (v0.2.0)
 - 🚧 Complete orchestration workflow
-- 🚧 Task decomposition and planning
+- 🚧 Artefact-driven issue queue processing (one issue per cycle)
 - 🚧 Automated code review integration
 - 🚧 Enhanced error handling
 

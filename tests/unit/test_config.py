@@ -1,49 +1,55 @@
-"""Unit tests for configuration."""
+"""Unit tests for Phase 1/1A configuration."""
 
-from github_agent_orchestrator.core.config import (
-    GitHubConfig,
-    LLMConfig,
-    OrchestratorConfig,
-    StateConfig,
-)
+from __future__ import annotations
 
+from pathlib import Path
 
-def test_llm_config_defaults() -> None:
-    """Test LLM config default values."""
-    config = LLMConfig(openai_api_key="test-key")
+import pytest
 
-    assert config.provider == "openai"
-    assert config.openai_model == "gpt-4"
-    assert config.openai_temperature == 0.7
-    assert config.llama_n_ctx == 4096
+from github_agent_orchestrator.orchestrator.config import OrchestratorSettings
 
 
-def test_github_config_defaults() -> None:
-    """Test GitHub config default values."""
-    config = GitHubConfig(token="test-token", repository="owner/repo")
+def test_settings_loads_from_dotenv(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("ORCHESTRATOR_GITHUB_TOKEN", raising=False)
+    monkeypatch.delenv("GITHUB_BASE_URL", raising=False)
+    monkeypatch.delenv("LOG_LEVEL", raising=False)
+    monkeypatch.delenv("AGENT_STATE_PATH", raising=False)
+    monkeypatch.chdir(tmp_path)
 
-    assert config.token == "test-token"
-    assert config.repository == "owner/repo"
-    assert config.base_url == "https://api.github.com"
-
-
-def test_state_config_defaults() -> None:
-    """Test state config default values."""
-    config = StateConfig()
-
-    assert config.auto_commit is True
-    assert config.state_branch == "orchestrator-state"
-
-
-def test_orchestrator_config_composition() -> None:
-    """Test orchestrator config with nested configs."""
-    config = OrchestratorConfig(
-        log_level="DEBUG",
-        debug=True,
+    (tmp_path / ".env").write_text(
+        "\n".join(
+            [
+                "ORCHESTRATOR_GITHUB_TOKEN=test-token",
+                "LOG_LEVEL=DEBUG",
+                "",
+            ]
+        ),
+        encoding="utf-8",
     )
 
-    assert config.log_level == "DEBUG"
-    assert config.debug is True
-    assert isinstance(config.llm, LLMConfig)
-    assert isinstance(config.github, GitHubConfig)
-    assert isinstance(config.state, StateConfig)
+    settings = OrchestratorSettings()
+    assert settings.github_token == "test-token"
+    assert settings.github_base_url == "https://api.github.com"
+    assert settings.log_level == "DEBUG"
+
+
+def test_settings_defaults(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("ORCHESTRATOR_GITHUB_TOKEN", raising=False)
+    monkeypatch.delenv("GITHUB_BASE_URL", raising=False)
+    monkeypatch.delenv("LOG_LEVEL", raising=False)
+    monkeypatch.delenv("AGENT_STATE_PATH", raising=False)
+    monkeypatch.chdir(tmp_path)
+
+    (tmp_path / ".env").write_text(
+        "\n".join(
+            [
+                "ORCHESTRATOR_GITHUB_TOKEN=test-token",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    settings = OrchestratorSettings()
+    assert settings.agent_state_path == Path("agent_state")
+    assert settings.issues_state_file == Path("agent_state") / "issues.json"

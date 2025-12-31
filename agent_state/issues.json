@@ -1,0 +1,76 @@
+[
+  {
+    "repository": "trickl/breadboard-lab",
+    "issue_number": 3,
+    "title": "Establish project guidelines and write github instructions",
+    "created_at": "2025-12-30T17:23:20+00:00",
+    "status": "open",
+    "assignees": [
+      "Copilot",
+      "trickl"
+    ],
+    "linked_pull_requests": [
+      {
+        "number": 4,
+        "url": "https://github.com/trickl/breadboard-lab/pull/4",
+        "title": "[WIP] Establish project guidelines and add GitHub instructions",
+        "state": "OPEN",
+        "is_draft": true,
+        "merged": false,
+        "merged_at": null,
+        "closed_at": null,
+        "updated_at": "2025-12-30T18:53:21Z"
+      }
+    ],
+    "pr_last_checked_at": "2025-12-30T18:55:27Z",
+    "pr_completion": "timeout"
+  },
+  {
+    "repository": "trickl/github-agent-orchestrator",
+    "issue_number": 5,
+    "title": "Define or refresh the current system capabilities document",
+    "created_at": "2025-12-30T19:59:25+00:00",
+    "status": "open",
+    "assignees": [],
+    "linked_pull_requests": [],
+    "pr_last_checked_at": null,
+    "pr_completion": null
+  },
+  {
+    "repository": "trickl/breadboard-lab",
+    "issue_number": 5,
+    "title": "Define or refresh the current system capabilities document",
+    "created_at": "2025-12-30T20:15:58+00:00",
+    "status": "open",
+    "assignees": [],
+    "linked_pull_requests": [],
+    "pr_last_checked_at": null,
+    "pr_completion": null
+  },
+  {
+    "repository": "trickl/breadboard-lab",
+    "issue_number": 7,
+    "title": "Identify the next most important development gap",
+    "created_at": "2025-12-30T22:32:26+00:00",
+    "status": "open",
+    "assignees": [
+      "Copilot",
+      "trickl"
+    ],
+    "linked_pull_requests": [
+      {
+        "number": 8,
+        "url": "https://github.com/trickl/breadboard-lab/pull/8",
+        "title": "Gap analysis: Identify voltage heatmap visualization as next development priority",
+        "state": "OPEN",
+        "is_draft": false,
+        "merged": false,
+        "merged_at": null,
+        "closed_at": null,
+        "updated_at": "2025-12-31T00:41:49Z"
+      }
+    ],
+    "pr_last_checked_at": "2025-12-31T00:45:48Z",
+    "pr_completion": null
+  }
+]

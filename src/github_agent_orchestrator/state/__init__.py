@@ -1,7 +1,6 @@
-"""State management package."""
+"""Deprecated Phase>1 package.
 
-from github_agent_orchestrator.state.manager import StateManager
+Phase 1A persists issue metadata to `agent_state/issues.json`.
+"""
 
-__all__ = [
-    "StateManager",
-]
+__all__: list[str] = []

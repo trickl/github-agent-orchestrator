@@ -8,7 +8,7 @@ This guide will help you set up and start using the GitHub Agent Orchestrator.
 - pip (Python package installer)
 - Git
 - A GitHub account (for GitHub integration)
-- OpenAI API key (for OpenAI provider) or a local LLaMA model file (for LLaMA provider)
+- A GitHub token with permission to create issues in your target repository
 
 ## Installation
 
@@ -44,64 +44,21 @@ pip install "github-agent-orchestrator[llama]"
 
 ## Configuration
 
-### Method 1: Using CLI (Recommended)
+The orchestrator reads configuration from environment variables and/or a local `.env` file.
 
-Initialize configuration with the CLI:
-
-```bash
-orchestrator init --provider openai
-```
-
-This creates a `.env` file with all configuration options.
-
-Edit `.env` and add your credentials:
+Create a `.env` in the project root:
 
 ```bash
-# LLM Configuration
-ORCHESTRATOR_LLM_PROVIDER=openai
-ORCHESTRATOR_LLM_OPENAI_API_KEY=sk-your-actual-key-here
-ORCHESTRATOR_LLM_OPENAI_MODEL=gpt-4
-
-# GitHub Configuration
+# Required
 ORCHESTRATOR_GITHUB_TOKEN=ghp-your-actual-token-here
-ORCHESTRATOR_GITHUB_REPOSITORY=your-username/your-repo
+
+# Optional (defaults shown)
+GITHUB_BASE_URL=https://api.github.com
+LOG_LEVEL=INFO
+AGENT_STATE_PATH=agent_state
 ```
 
-### Method 2: Environment Variables
-
-Set environment variables directly:
-
-```bash
-export ORCHESTRATOR_LLM_PROVIDER=openai
-export ORCHESTRATOR_LLM_OPENAI_API_KEY=sk-...
-export ORCHESTRATOR_LLM_OPENAI_MODEL=gpt-4
-
-export ORCHESTRATOR_GITHUB_TOKEN=ghp-...
-export ORCHESTRATOR_GITHUB_REPOSITORY=owner/repo
-
-export ORCHESTRATOR_STATE_STORAGE_PATH=.state
-export ORCHESTRATOR_STATE_AUTO_COMMIT=true
-```
-
-### Method 3: Programmatic Configuration
-
-```python
-from pathlib import Path
-from github_agent_orchestrator import OrchestratorConfig
-from github_agent_orchestrator.core.config import LLMConfig, GitHubConfig
-
-config = OrchestratorConfig(
-    llm=LLMConfig(
-        provider="openai",
-        openai_api_key="sk-...",
-        openai_model="gpt-4",
-    ),
-    github=GitHubConfig(
-        token="ghp-...",
-        repository="owner/repo",
-    ),
-)
-```
+Repository selection is intentionally not stored in `.env`; you pass it per command via `--repo`.
 
 ## Getting API Keys
 
@@ -126,35 +83,13 @@ config = OrchestratorConfig(
 
 ### CLI Commands
 
-Process a single task:
+Create a GitHub issue:
 ```bash
-orchestrator task "Create a Python function to calculate fibonacci numbers"
-```
-
-Run the orchestrator loop:
-```bash
-orchestrator run
-```
-
-With debug mode:
-```bash
-orchestrator task "Your task" --debug
-```
-
-### Python API
-
-```python
-from github_agent_orchestrator import Orchestrator
-
-# Initialize orchestrator
-orchestrator = Orchestrator()
-
-# Process a task
-result = orchestrator.process_task("Your task description")
-
-print(f"Task: {result['task']}")
-print(f"Plan: {result['plan']}")
-print(f"Status: {result['status']}")
+orchestrator create-issue \
+    --repo "owner/repo" \
+    --title "Test issue" \
+    --body "Created by the orchestrator" \
+    --labels "agent,test"
 ```
 
 ## Verification
@@ -164,7 +99,7 @@ print(f"Status: {result['status']}")
 Run the example script:
 
 ```bash
-python examples/basic_usage.py
+python examples/basic_usage.py --repo owner/repo --title "Hello" --body "From examples/" --labels agent
 ```
 
 ### Run Tests
@@ -190,24 +125,6 @@ black --check src/ tests/
 
 # Type checking
 mypy src/
-```
-
-## LLaMA Setup (Optional)
-
-To use local LLaMA models:
-
-1. Install llama-cpp-python:
-```bash
-pip install llama-cpp-python
-```
-
-2. Download a GGUF model file (e.g., from Hugging Face)
-
-3. Configure the path:
-```bash
-export ORCHESTRATOR_LLM_PROVIDER=llama
-export ORCHESTRATOR_LLM_LLAMA_MODEL_PATH=/path/to/model.gguf
-export ORCHESTRATOR_LLM_LLAMA_N_CTX=4096
 ```
 
 ## Troubleshooting
@@ -236,8 +153,7 @@ If you can't connect to APIs:
 ### State Issues
 
 If state is not persisting:
-- Check directory permissions for `.state` directory
-- Verify `auto_commit` setting if using git
+- Check directory permissions for the `AGENT_STATE_PATH` directory
 - Check logs for error messages
 
 ## Next Steps
