@@ -7,18 +7,22 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import cast
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.staticfiles import StaticFiles
 
-from github_agent_orchestrator.orchestrator.config import OrchestratorSettings
 from github_agent_orchestrator.orchestrator.github.client import GitHubClient
 from github_agent_orchestrator.orchestrator.github.issue_service import (
     IssueRecord,
     IssueService,
     IssueStore,
 )
+from github_agent_orchestrator.server.config import ServerSettings
+from github_agent_orchestrator.server.dashboard_router import router as dashboard_router
 from github_agent_orchestrator.server.job_store import JobStore
 from github_agent_orchestrator.server.models import ApiIssue, JobStatus, MonitorJob, MonitorRequest
 from github_agent_orchestrator.server.monitor_runner import start_monitor_job
@@ -39,26 +43,36 @@ def _to_api_issue(record: IssueRecord) -> ApiIssue:
 
 
 def create_app() -> FastAPI:
-    settings = OrchestratorSettings()
+    settings = ServerSettings()
 
     app = FastAPI(
         title="GitHub Agent Orchestrator",
         version="0.1.0",
         description="REST API over the local-first github-agent-orchestrator services.",
+        openapi_url="/api/openapi.json",
+        docs_url="/api/docs",
+        redoc_url="/api/redoc",
     )
+
+    # Expose settings for request handlers that want to read it.
+    app.state.settings = settings
 
     # Minimal dev-friendly CORS so a Vite dev server can call the API.
     # Tighten this later (e.g., ORCHESTRATOR_CORS_ORIGINS).
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+        allow_origins=settings.parsed_cors_origins(),
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
 
+    # Dashboard UI API (mounted at /api)
+    app.include_router(dashboard_router, prefix="/api")
+
+    # Legacy /api/v1 endpoints (kept for compatibility with earlier tooling)
     issue_store = IssueStore(settings.issues_state_file)
-    job_store = JobStore(settings.agent_state_path / "jobs.json")
+    job_store = JobStore(settings.jobs_state_file)
 
     @app.get("/api/v1/health")
     def health() -> dict[str, str]:
@@ -78,6 +92,11 @@ def create_app() -> FastAPI:
 
     @app.post("/api/v1/issues/{issue_number}/refresh-prs", response_model=ApiIssue)
     def refresh_prs(issue_number: int) -> ApiIssue:
+        if not settings.github_token.strip():
+            raise HTTPException(
+                status_code=409,
+                detail="ORCHESTRATOR_GITHUB_TOKEN is required for this endpoint",
+            )
         github = GitHubClient(
             token=settings.github_token,
             repository=_infer_repo_from_state_or_fail(issue_number, issue_store),
@@ -94,6 +113,11 @@ def create_app() -> FastAPI:
 
     @app.post("/api/v1/issues/{issue_number}/monitor-prs", response_model=MonitorJob)
     def monitor_prs(issue_number: int, req: MonitorRequest) -> MonitorJob:
+        if not settings.github_token.strip():
+            raise HTTPException(
+                status_code=409,
+                detail="ORCHESTRATOR_GITHUB_TOKEN is required for this endpoint",
+            )
         repository = _infer_repo_from_state_or_fail(issue_number, issue_store)
         job_id = start_monitor_job(
             repository=repository,
@@ -101,7 +125,9 @@ def create_app() -> FastAPI:
             poll_seconds=req.poll_seconds,
             timeout_seconds=req.timeout_seconds,
             require_pr=req.require_pr,
-            settings=settings,
+            github_token=settings.github_token,
+            github_base_url=settings.github_base_url,
+            issues_state_file=settings.issues_state_file,
             job_store=job_store,
         )
         record = job_store.get(job_id)
@@ -134,7 +160,50 @@ def create_app() -> FastAPI:
             error=record.error,
         )
 
+    _maybe_mount_ui(app, settings)
     return app
+
+
+def _maybe_mount_ui(app: FastAPI, settings: ServerSettings) -> None:
+    """Serve the built dashboard UI (Vite) from the same process.
+
+    - API is under `/api/*`
+    - UI is served at `/` (SPA fallback)
+
+    This is optional: if the UI isn't built (no `ui/dist/index.html`), we serve a small
+    instruction page at `/` instead.
+    """
+
+    dist = Path(settings.ui_dist_path)
+    index = dist / "index.html"
+
+    if dist.exists() and (dist / "assets").exists():
+        app.mount("/assets", StaticFiles(directory=dist / "assets"), name="ui-assets")
+
+    @app.get("/", include_in_schema=False, response_model=None)
+    def ui_index() -> FileResponse | PlainTextResponse:
+        if index.exists():
+            return FileResponse(index)
+        return PlainTextResponse(
+            "UI not built. Run 'npm run build' in ./ui, then start the server again.\n",
+            status_code=200,
+        )
+
+    @app.get("/{full_path:path}", include_in_schema=False, response_model=None)
+    def ui_spa_fallback(full_path: str) -> FileResponse:
+        # Don't steal API routes.
+        if full_path.startswith("api/") or full_path == "api":
+            raise HTTPException(status_code=404, detail="Not Found")
+
+        # Serve actual files (favicon, manifest, etc.) when present.
+        candidate = dist / full_path
+        if candidate.exists() and candidate.is_file():
+            return FileResponse(candidate)
+
+        # SPA fallback.
+        if index.exists():
+            return FileResponse(index)
+        raise HTTPException(status_code=404, detail="UI not built")
 
 
 def _infer_repo_from_state_or_fail(issue_number: int, store: IssueStore) -> str:

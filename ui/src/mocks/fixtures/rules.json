@@ -1,0 +1,26 @@
+[
+  {
+    "id": "rule-001",
+    "name": "Complexity review",
+    "category": "review",
+    "enabled": true,
+    "promptText": "Review the system for accidental complexity. Focus on: coupling, unclear boundaries, non-obvious invariants. Output exactly one file in /planning/reviews/.\n",
+    "targetFolder": "reviews/complexity",
+    "trigger": { "kind": "AFTER_N_ISSUES_COMPLETED", "nIssuesCompleted": 10 },
+    "lastRunIso": "2025-12-30T12:00:00Z",
+    "nextEligibleIso": "2026-01-05T12:00:00Z",
+    "editable": false
+  },
+  {
+    "id": "rule-002",
+    "name": "Gap analysis: observability",
+    "category": "gap",
+    "enabled": true,
+    "promptText": "Compare goal.md vs system_capabilities.md. Identify the next dev task. Output exactly one candidate file into /planning/issue_queue/pending/.\n",
+    "targetFolder": "gap_analysis/observability",
+    "trigger": { "kind": "MANUAL_ONLY" },
+    "lastRunIso": "2025-12-31T10:15:00Z",
+    "nextEligibleIso": null,
+    "editable": true
+  }
+]

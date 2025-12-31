@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src",
+    "tests",
+    "playwright",
+    "vite.config.ts",
+    "playwright.config.ts"
+  ]
+}

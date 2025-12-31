@@ -1,0 +1,24 @@
+[
+  {
+    "id": "pending/dev-2025-12-30-001.md",
+    "title": "Dev: Improve timeline event persistence",
+    "typePath": "issue_queue/pending",
+    "status": "PENDING",
+    "ageSeconds": 3600,
+    "githubIssueUrl": null,
+    "prUrl": null,
+    "lastUpdatedIso": "2025-12-31T11:59:00Z",
+    "isActive": true
+  },
+  {
+    "id": "processed/dev-2025-12-20-001.md",
+    "title": "Dev: Add rules endpoint",
+    "typePath": "issue_queue/processed",
+    "status": "MERGED",
+    "ageSeconds": 86400,
+    "githubIssueUrl": "https://github.com/trickl/github-agent-orchestrator/issues/12",
+    "prUrl": "https://github.com/trickl/github-agent-orchestrator/pull/13",
+    "lastUpdatedIso": "2025-12-30T10:00:00Z",
+    "isActive": false
+  }
+]

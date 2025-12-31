@@ -1,0 +1,16 @@
+{
+  "goal": {
+    "key": "goal",
+    "title": "Goal",
+    "path": "planning/vision/goal.md",
+    "lastUpdatedIso": "2025-12-01T09:00:00Z",
+    "content": "# Goal\n\nBuild a transparent, debuggable orchestrator loop driven by planning artefacts.\n"
+  },
+  "capabilities": {
+    "key": "capabilities",
+    "title": "System Capabilities",
+    "path": "planning/state/system_capabilities.md",
+    "lastUpdatedIso": "2025-12-15T09:00:00Z",
+    "content": "# System Capabilities\n\n- Creates issues from queued artefacts\n- Promotes one issue per cycle\n"
+  }
+}

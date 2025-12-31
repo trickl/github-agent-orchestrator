@@ -5,8 +5,8 @@ from __future__ import annotations
 import logging
 import threading
 import uuid
+from pathlib import Path
 
-from github_agent_orchestrator.orchestrator.config import OrchestratorSettings
 from github_agent_orchestrator.orchestrator.github.client import GitHubClient
 from github_agent_orchestrator.orchestrator.github.issue_service import IssueService, IssueStore
 from github_agent_orchestrator.server.job_store import JobStore
@@ -21,7 +21,9 @@ def start_monitor_job(
     poll_seconds: float,
     timeout_seconds: float,
     require_pr: bool,
-    settings: OrchestratorSettings,
+    github_token: str,
+    github_base_url: str,
+    issues_state_file: Path,
     job_store: JobStore,
 ) -> str:
     job_id = uuid.uuid4().hex
@@ -38,7 +40,9 @@ def start_monitor_job(
             "poll_seconds": poll_seconds,
             "timeout_seconds": timeout_seconds,
             "require_pr": require_pr,
-            "settings": settings,
+            "github_token": github_token,
+            "github_base_url": github_base_url,
+            "issues_state_file": issues_state_file,
             "job_store": job_store,
         },
     )
@@ -54,18 +58,20 @@ def _run_job(
     poll_seconds: float,
     timeout_seconds: float,
     require_pr: bool,
-    settings: OrchestratorSettings,
+    github_token: str,
+    github_base_url: str,
+    issues_state_file: Path,
     job_store: JobStore,
 ) -> None:
     job_store.update(job_id, status="running")
 
     github = GitHubClient(
-        token=settings.github_token,
+        token=github_token,
         repository=repository,
-        base_url=settings.github_base_url,
+        base_url=github_base_url,
     )
     try:
-        store = IssueStore(settings.issues_state_file)
+        store = IssueStore(issues_state_file)
         service = IssueService(github=github, store=store)
 
         result = service.wait_for_linked_pull_requests_complete(

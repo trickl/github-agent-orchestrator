@@ -1,0 +1,20 @@
+[
+  {
+    "id": "evt-100",
+    "tsIso": "2025-12-31T12:00:00Z",
+    "kind": "RULE_TRIGGERED",
+    "summary": "Rule triggered: Gap analysis: observability",
+    "ruleId": "rule-002",
+    "typePath": "gap_analysis/observability",
+    "links": [{ "label": "Rules", "url": "/rules" }]
+  },
+  {
+    "id": "evt-101",
+    "tsIso": "2025-12-31T12:00:10Z",
+    "kind": "ISSUE_FILE_CREATED",
+    "summary": "Created pending issue file dev-2025-12-31-001.md",
+    "issueId": "pending/dev-2025-12-31-001.md",
+    "issueTitle": "Dev: Improve timeline event persistence",
+    "typePath": "issue_queue/pending"
+  }
+]

@@ -4,6 +4,24 @@
 
 GitHub Copilot must help produce high-quality, maintainable Python code that aligns with modern software engineering standards. It should optimize for clarity, correctness, testability, and incremental improvement.
 
+## North star: long-horizon execution
+
+This project’s core value proposition is a **long-horizon software engineering executor** that:
+
+- Operates over **hours, not minutes** (target: ~$12$ hours unattended).
+- Executes **multi-PR, multi-issue, multi-review** workstreams.
+- **Continuously plans, executes, evaluates, and realigns** against a stated goal.
+
+It uses GitHub as the arena in which reasoning is **materialised**:
+
+- **Issues = intent**
+- **PRs = execution**
+- **Reviews = reflection**
+- **Repository files = memory**
+
+Copilot is expected to excel at **local optimisation** (the next function, the next test, the next fix). The
+orchestrator provides **global optimisation over time** by enforcing an artefact-driven loop.
+
 ## System invariants (do not violate)
 
 This repository implements an **autonomous development process** that is driven by **artefacts** (files and issues), not by hidden reasoning in the orchestrator.

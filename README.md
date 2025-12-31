@@ -7,7 +7,31 @@
 
 Minimal, local-first GitHub orchestrator (Phase 1/1A).
 
-This project is intentionally **not** an “agent”. It is a Git-native **task compiler**:
+This project is intentionally **not** a monolithic “agent”. It is a Git-native **orchestrator / task compiler**
+that enables *long-horizon* software execution by keeping the system’s reasoning external, inspectable, and
+versioned.
+
+## Core value proposition
+
+Together with Copilot, this system is a **long-horizon software engineering executor** that:
+
+- Operates over **hours, not minutes** (target: ~$12$ hours unattended).
+- Runs **multi-PR, multi-issue, multi-review** workstreams.
+- **Continuously plans, executes, evaluates, and realigns** against a stated goal.
+
+It uses GitHub as the arena where reasoning is **materialised**:
+
+- **Issues = intent**
+- **PRs = execution**
+- **Reviews = reflection**
+- **Repository files = memory**
+
+Copilot excels at **local optimisation** (the next function, the next test, the next fix). This orchestrator is
+about **global optimisation over time**.
+
+## What this repository does (and does not do)
+
+This repository is a Git-native **task compiler**:
 
 - It creates issues from well-defined templates/intent.
 - It materialises issues from files (promotes queued artefacts into GitHub issues).
@@ -190,10 +214,15 @@ orchestrator-server
 
 Useful endpoints:
 
-- OpenAPI JSON: `http://127.0.0.1:8000/openapi.json`
-- Swagger UI: `http://127.0.0.1:8000/docs`
+- OpenAPI JSON: `http://127.0.0.1:8000/api/openapi.json`
+- Swagger UI: `http://127.0.0.1:8000/api/docs`
 
-The server exposes endpoints under `/api/v1`, including:
+The server exposes endpoints under:
+
+- `/api` (dashboard API used by the React UI)
+- `/api/v1` (legacy / orchestration endpoints)
+
+Examples under `/api/v1`:
 
 - `GET /api/v1/issues`
 - `POST /api/v1/issues/{issue_number}/monitor-prs`
