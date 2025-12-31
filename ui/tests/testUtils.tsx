@@ -3,7 +3,9 @@ import { ThemeProvider } from '@mui/material/styles';
 import { CssBaseline } from '@mui/material';
 import { render, type RenderOptions } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { theme } from '../src/app/theme';
+import { createAppTheme } from '../src/app/theme';
+
+const theme = createAppTheme('light');
 
 export function renderWithAppProviders(
   ui: React.ReactElement,

@@ -3,17 +3,39 @@ import {
   AppBar,
   Box,
   Chip,
+  IconButton,
   Toolbar,
   Typography,
   CircularProgress,
   Tooltip,
 } from '@mui/material';
+import { useTheme } from '@mui/material/styles';
+import MenuIcon from '@mui/icons-material/Menu';
+import MenuOpenIcon from '@mui/icons-material/MenuOpen';
+import { LightDarkToggle } from 'react-light-dark-toggle';
 import { apiFetch } from '../../lib/apiClient';
 import { endpoints } from '../../lib/endpoints';
+import { ColorModeContext } from '../colorModeContext';
 
 type Health = { ok: boolean; version: string; repoName: string };
 
-export function TopBar(): React.JSX.Element {
+type TopBarProps = {
+  sidebarWidth: number;
+  sidebarCollapsed: boolean;
+  onToggleSidebar: () => void;
+};
+
+export function TopBar({
+  sidebarWidth,
+  sidebarCollapsed,
+  onToggleSidebar,
+}: TopBarProps): React.JSX.Element {
+  const theme = useTheme();
+  const colorMode = React.useContext(ColorModeContext);
+  if (!colorMode) {
+    throw new Error('TopBar must be rendered within ColorModeProvider');
+  }
+
   const [health, setHealth] = React.useState<Health | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [down, setDown] = React.useState(false);
@@ -46,13 +68,41 @@ export function TopBar(): React.JSX.Element {
   }, []);
 
   return (
-    <AppBar position="fixed" elevation={1} color="default">
+    <AppBar
+      position="fixed"
+      elevation={1}
+      color="default"
+      sx={{
+        width: { sm: `calc(100% - ${sidebarWidth}px)` },
+        ml: { sm: `${sidebarWidth}px` },
+      }}
+    >
       <Toolbar>
+        <IconButton
+          color="inherit"
+          edge="start"
+          aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          onClick={onToggleSidebar}
+          sx={{ mr: 1 }}
+        >
+          {sidebarCollapsed ? <MenuIcon /> : <MenuOpenIcon />}
+        </IconButton>
+
         <Typography variant="h6" sx={{ flexGrow: 1 }}>
-          Orchestrator Dashboard
+          GitHub Agent Orchestrator
         </Typography>
 
         <Box display="flex" alignItems="center" gap={1.5}>
+          <LightDarkToggle
+            aria-label="Toggle light/dark mode"
+            isLight={colorMode.mode === 'light'}
+            onToggle={(isLight: boolean) => colorMode.setMode(isLight ? 'light' : 'dark')}
+            lightBorderColor={theme.palette.divider}
+            darkBorderColor={theme.palette.divider}
+            lightBackgroundColor={theme.palette.background.paper}
+            darkBackgroundColor={theme.palette.background.paper}
+          />
+
           {health?.repoName ? (
             <Typography variant="body2" color="text.secondary">
               {health.repoName}

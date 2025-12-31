@@ -7,6 +7,7 @@ import {
   ListItemIcon,
   ListItemText,
   Toolbar,
+  Tooltip,
 } from '@mui/material';
 import DashboardIcon from '@mui/icons-material/Dashboard';
 import TimelineIcon from '@mui/icons-material/Timeline';
@@ -16,10 +17,16 @@ import RuleIcon from '@mui/icons-material/Rule';
 import DescriptionIcon from '@mui/icons-material/Description';
 import { NavLink, useLocation } from 'react-router-dom';
 
-import { sidebarWidth } from './layoutConstants';
+import { sidebarCollapsedWidth, sidebarWidth } from './layoutConstants';
 
-export function Sidebar(): React.JSX.Element {
+type SidebarProps = {
+  collapsed: boolean;
+};
+
+export function Sidebar({ collapsed }: SidebarProps): React.JSX.Element {
   const location = useLocation();
+
+  const drawerWidth: number = collapsed ? sidebarCollapsedWidth : sidebarWidth;
 
   const items: Array<{
     label: string;
@@ -38,24 +45,43 @@ export function Sidebar(): React.JSX.Element {
     <Drawer
       variant="permanent"
       sx={{
-        width: sidebarWidth,
+        width: drawerWidth,
         flexShrink: 0,
-        [`& .MuiDrawer-paper`]: { width: sidebarWidth, boxSizing: 'border-box' },
+        [`& .MuiDrawer-paper`]: { width: drawerWidth, boxSizing: 'border-box' },
       }}
     >
       <Toolbar />
       <Divider />
       <List>
         {items.map((item) => (
-          <ListItemButton
+          <Tooltip
             key={item.to}
-            component={NavLink}
-            to={item.to}
-            selected={location.pathname === item.to}
+            title={collapsed ? item.label : ''}
+            placement="right"
+            arrow
+            disableHoverListener={!collapsed}
           >
-            <ListItemIcon>{item.icon}</ListItemIcon>
-            <ListItemText primary={item.label} />
-          </ListItemButton>
+            <ListItemButton
+              component={NavLink}
+              to={item.to}
+              selected={location.pathname === item.to}
+              sx={{
+                justifyContent: collapsed ? 'center' : 'flex-start',
+                px: collapsed ? 1 : 2,
+              }}
+            >
+              <ListItemIcon
+                sx={{
+                  minWidth: collapsed ? 0 : 40,
+                  mr: collapsed ? 0 : 1,
+                  justifyContent: 'center',
+                }}
+              >
+                {item.icon}
+              </ListItemIcon>
+              {collapsed ? null : <ListItemText primary={item.label} />}
+            </ListItemButton>
+          </Tooltip>
         ))}
       </List>
     </Drawer>
