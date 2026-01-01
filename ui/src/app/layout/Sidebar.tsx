@@ -10,6 +10,7 @@ import {
   Tooltip,
 } from '@mui/material';
 import DashboardIcon from '@mui/icons-material/Dashboard';
+import AutorenewIcon from '@mui/icons-material/Autorenew';
 import TimelineIcon from '@mui/icons-material/Timeline';
 import AssignmentTurnedInIcon from '@mui/icons-material/AssignmentTurnedIn';
 import BugReportIcon from '@mui/icons-material/BugReport';
@@ -34,10 +35,11 @@ export function Sidebar({ collapsed }: SidebarProps): React.JSX.Element {
     icon: React.JSX.Element;
   }> = [
     { label: 'Overview', to: '/', icon: <DashboardIcon fontSize="small" /> },
+    { label: 'Loop', to: '/loop', icon: <AutorenewIcon fontSize="small" /> },
     { label: 'Timeline', to: '/timeline', icon: <TimelineIcon fontSize="small" /> },
     { label: 'Active Work', to: '/active', icon: <AssignmentTurnedInIcon fontSize="small" /> },
     { label: 'Issues', to: '/issues', icon: <BugReportIcon fontSize="small" /> },
-    { label: 'Generation Rules', to: '/rules', icon: <RuleIcon fontSize="small" /> },
+    { label: 'Cognitive Tasks', to: '/cognitive-tasks', icon: <RuleIcon fontSize="small" /> },
     { label: 'Planning Docs', to: '/docs', icon: <DescriptionIcon fontSize="small" /> },
   ];
 

@@ -49,7 +49,89 @@ All “thinking” happens inside Copilot-authored PRs.
 * **🛡️ Idempotent-safe** issue creation (by title, locally)
 * **🌐 REST server adapter** (FastAPI + OpenAPI docs)
 * **🔎 Linked PR monitoring** (polling via GitHub GraphQL)
-* **📥 Issue queue promotion** (planned: convert queued artefacts into GitHub issues)
+* **📥 Issue queue promotion** (convert queued artefacts into GitHub issues)
+* **✅ Safe-ish PR merge automation** (mark ready, merge, optionally delete branch)
+* **🧠 Post-merge capability update issue** (create a system-capabilities update issue from a merged PR)
+
+## Main processing loop (A–G)
+
+This system runs a simple, explicit loop. **The only sources of truth are:**
+
+- a goal / plan document: `/planning/vision/goal.md`
+- a system capabilities document: `/planning/state/system_capabilities.md`
+
+Everything else is derived from those artefacts and the resulting GitHub history.
+
+### Step A — Gap analysis (cognitive, explicit)
+
+You manually (or semi-manually) trigger a *Gap Analysis* cognitive task.
+
+That task:
+
+- compares the goal vs current capabilities
+- identifies the next concrete development task
+- writes **exactly one** handoff artefact into `/planning/issue_queue/pending/`
+
+Nothing else happens at this step.
+
+**Triggering gap analysis (manual for now):**
+
+- **UI:** run the Gap Analysis cognitive task from the dashboard (Cognitive Tasks).
+- **CLI:** create an issue from `planning/issue_templates/gap-analysis.md` and assign it to Copilot.
+
+Keeping this step manual is intentional during early validation: it’s where prioritisation and
+judgment live.
+
+### Step B — Issue creation (automatic, hardwired)
+
+The orchestrator processes the pending directory and promotes the next file into a GitHub issue.
+This step is deliberately “boring plumbing”:
+
+- reads the next queue file
+- creates the GitHub issue
+- assigns it to Copilot
+- moves the queue file to `processed/`
+
+Rate limiting is intentional: **one issue per cycle**.
+
+### Step C — Development (external / Copilot)
+
+Copilot works the issue and produces a PR. Review/discussion happens in GitHub.
+This is outside the orchestrator’s intelligence.
+
+### Step D — PR completion & merge (automatic)
+
+Another orchestrator job detects linked PRs, checks they’re complete/safe, and merges them (or
+refuses). Again: deterministic, reliable automation.
+
+### Step E — Capability update issue (cognitive, triggered)
+
+On merge, a cognitive task creates a *new* issue whose body:
+
+- includes the PR description
+- includes PR comments/discussion (chronological)
+- explicitly requests an update to `/planning/state/system_capabilities.md` to reflect the merge
+
+This is the only place the system’s *self-knowledge* is updated.
+
+### Step F — Capability update execution
+
+That capability-update issue is worked (typically by Copilot). The capabilities document is updated
+to match reality, and the issue is closed.
+
+### Step G — Repeat
+
+With updated capabilities, gap analysis can be run again and the loop continues.
+
+### Parallel / periodic track — Review tasks
+
+Independently, you can inject review issues every *N* completed development tasks (e.g. complexity
+review, architecture drift, refactoring, test coverage). These are just additional issues flowing
+through the same pipeline; they don’t disturb the main loop.
+
+To test the loop in a real scenario, we intentionally keep **Step A (gap analysis) manual for now**.
+Everything else (B–F) is designed to be runnable as automated jobs (e.g. cron/CI/webhooks), while still
+remaining deterministic and inspectable.
 
 ## Design: artefact-driven orchestration
 

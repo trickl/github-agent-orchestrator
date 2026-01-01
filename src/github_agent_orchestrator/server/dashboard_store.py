@@ -1,7 +1,7 @@
 """File-backed stores for the dashboard API.
 
 These stores intentionally keep things simple and local-first:
-- JSON files for rules and timeline
+- JSON files for cognitive tasks and timeline
 - markdown files for planning docs and issue queue artefacts
 
 They are designed to be dependency-free and easy to evolve.
@@ -55,7 +55,7 @@ class TimelineEventModel(BaseModel):
     tsIso: str
     kind: str
     summary: str
-    ruleId: str | None = None
+    cognitiveTaskId: str | None = None
     issueId: str | None = None
     issueTitle: str | None = None
     typePath: str | None = None
@@ -83,7 +83,7 @@ class TimelineStore:
         return max(events, key=lambda e: e.tsIso)
 
 
-class GenerationRuleModel(BaseModel):
+class CognitiveTaskModel(BaseModel):
     id: str
     name: str
     category: str
@@ -96,48 +96,48 @@ class GenerationRuleModel(BaseModel):
     editable: bool = True
 
 
-class RuleStore:
+class CognitiveTaskStore:
     def __init__(self, path: Path) -> None:
         self._path = path
 
-    def list(self) -> list[GenerationRuleModel]:
+    def list(self) -> list[CognitiveTaskModel]:
         raw = _safe_load_json_list(self._path)
-        rules = [GenerationRuleModel.model_validate(item) for item in raw]
+        tasks = [CognitiveTaskModel.model_validate(item) for item in raw]
         # Stable ordering for UI.
-        rules.sort(key=lambda r: r.name.lower())
-        return rules
+        tasks.sort(key=lambda t: t.name.lower())
+        return tasks
 
-    def get(self, rule_id: str) -> GenerationRuleModel:
-        for r in self.list():
-            if r.id == rule_id:
-                return r
-        raise NotFound("Rule not found")
+    def get(self, task_id: str) -> CognitiveTaskModel:
+        for t in self.list():
+            if t.id == task_id:
+                return t
+        raise NotFound("Cognitive task not found")
 
-    def upsert(self, rule: GenerationRuleModel) -> GenerationRuleModel:
-        rules = self.list()
+    def upsert(self, task: CognitiveTaskModel) -> CognitiveTaskModel:
+        tasks = self.list()
         replaced = False
-        for idx, existing in enumerate(rules):
-            if existing.id == rule.id:
-                rules[idx] = rule
+        for idx, existing in enumerate(tasks):
+            if existing.id == task.id:
+                tasks[idx] = task
                 replaced = True
                 break
         if not replaced:
-            rules.append(rule)
-        _save_json_list(self._path, rules)
-        return rule
+            tasks.append(task)
+        _save_json_list(self._path, tasks)
+        return task
 
-    def create(self, partial: dict[str, object]) -> GenerationRuleModel:
-        rule_id = str(partial.get("id") or "").strip() or str(uuid.uuid4())
-        created = GenerationRuleModel.model_validate({"id": rule_id, **partial})
+    def create(self, partial: dict[str, object]) -> CognitiveTaskModel:
+        task_id = str(partial.get("id") or "").strip() or str(uuid.uuid4())
+        created = CognitiveTaskModel.model_validate({"id": task_id, **partial})
         return self.upsert(created)
 
-    def delete(self, rule_id: str) -> None:
-        rules = [r for r in self.list() if r.id != rule_id]
-        _save_json_list(self._path, rules)
+    def delete(self, task_id: str) -> None:
+        tasks = [t for t in self.list() if t.id != task_id]
+        _save_json_list(self._path, tasks)
 
-    def touch_last_run(self, rule_id: str) -> None:
-        rule = self.get(rule_id)
-        updated = rule.model_copy(update={"lastRunIso": _utc_now_iso()})
+    def touch_last_run(self, task_id: str) -> None:
+        task = self.get(task_id)
+        updated = task.model_copy(update={"lastRunIso": _utc_now_iso()})
         self.upsert(updated)
 
 

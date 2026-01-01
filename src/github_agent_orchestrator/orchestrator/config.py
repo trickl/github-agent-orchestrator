@@ -57,6 +57,12 @@ class OrchestratorSettings(BaseSettings):
         description="Directory where local agent state is persisted",
     )
 
+    workflow_state_path: Path = Field(
+        default=Path("workflow/state.json"),
+        validation_alias="ORCHESTRATOR_WORKFLOW_STATE_PATH",
+        description="Path where the workflow state machine is persisted",
+    )
+
     copilot_assignee: str = Field(
         default="copilot-swe-agent[bot]",
         validation_alias="COPILOT_ASSIGNEE",
@@ -84,3 +90,9 @@ class OrchestratorSettings(BaseSettings):
         """Path where created issue metadata is persisted."""
 
         return self.agent_state_path / "issues.json"
+
+    @property
+    def workflow_state_file(self) -> Path:
+        """Path where workflow state is persisted."""
+
+        return self.workflow_state_path

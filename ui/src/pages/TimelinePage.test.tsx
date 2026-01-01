@@ -8,7 +8,7 @@ import { renderWithAppProviders } from '../../tests/testUtils';
 test('Timeline renders events', async () => {
   renderWithAppProviders(<TimelinePage />, { route: '/timeline' });
   await screen.findByText('Timeline');
-  await screen.findByText(/Rule triggered:/i);
+  await screen.findByText(/Cognitive task triggered:/i);
 });
 
 test('Timeline handles empty list', async () => {

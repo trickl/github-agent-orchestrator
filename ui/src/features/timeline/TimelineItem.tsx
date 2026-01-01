@@ -21,7 +21,7 @@ import type { TimelineEvent, TimelineEventKind } from './timelineTypes';
 
 function iconFor(kind: TimelineEventKind): React.JSX.Element {
   switch (kind) {
-    case 'RULE_TRIGGERED':
+    case 'COGNITIVE_TASK_TRIGGERED':
       return <BoltIcon fontSize="small" />;
     case 'ISSUE_FILE_CREATED':
       return <DescriptionIcon fontSize="small" />;

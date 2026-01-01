@@ -2,11 +2,11 @@
   {
     "id": "evt-100",
     "tsIso": "2025-12-31T12:00:00Z",
-    "kind": "RULE_TRIGGERED",
-    "summary": "Rule triggered: Gap analysis: observability",
-    "ruleId": "rule-002",
+    "kind": "COGNITIVE_TASK_TRIGGERED",
+    "summary": "Cognitive task triggered: Gap analysis: observability",
+    "cognitiveTaskId": "task-002",
     "typePath": "gap_analysis/observability",
-    "links": [{ "label": "Rules", "url": "/rules" }]
+    "links": [{ "label": "Cognitive Tasks", "url": "/cognitive-tasks" }]
   },
   {
     "id": "evt-101",

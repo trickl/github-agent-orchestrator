@@ -61,8 +61,13 @@ class ServerSettings(BaseSettings):
         return self.agent_state_path / "timeline.json"
 
     @property
-    def rules_state_file(self) -> Path:
-        # Keep rules next to other planning state.
+    def cognitive_tasks_state_file(self) -> Path:
+        # Keep cognitive tasks next to other planning state.
+        return self.planning_root / "state" / "cognitive_tasks.json"
+
+    @property
+    def legacy_generation_rules_state_file(self) -> Path:
+        # Backwards-compatible location used by older dashboard versions.
         return self.planning_root / "state" / "generation_rules.json"
 
     def parsed_cors_origins(self) -> list[str]:

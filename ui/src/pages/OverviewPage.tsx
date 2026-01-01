@@ -102,8 +102,8 @@ export function OverviewPage(): React.JSX.Element {
               <Button component={RouterLink} to="/timeline" variant="outlined">
                 Timeline
               </Button>
-              <Button component={RouterLink} to="/rules" variant="outlined">
-                Rules
+              <Button component={RouterLink} to="/cognitive-tasks" variant="outlined">
+                Cognitive Tasks
               </Button>
               <Button component={RouterLink} to="/docs" variant="outlined">
                 Docs

@@ -6,8 +6,9 @@ import { ActiveWorkPage } from '../pages/ActiveWorkPage';
 import { IssuesPage } from '../pages/IssuesPage';
 import { NotFoundPage } from '../pages/NotFoundPage';
 import { OverviewPage } from '../pages/OverviewPage';
+import { LoopPage } from '../pages/LoopPage';
 import { PlanningDocsPage } from '../pages/PlanningDocsPage';
-import { RulesPage } from '../pages/RulesPage';
+import { CognitiveTasksPage } from '../pages/CognitiveTasksPage';
 import { TimelinePage } from '../pages/TimelinePage';
 
 export const routes: RouteObject[] = [
@@ -15,10 +16,13 @@ export const routes: RouteObject[] = [
     element: <AppLayout />,
     children: [
       { path: '/', element: <OverviewPage /> },
+      { path: '/loop', element: <LoopPage /> },
       { path: '/timeline', element: <TimelinePage /> },
       { path: '/active', element: <ActiveWorkPage /> },
       { path: '/issues', element: <IssuesPage /> },
-      { path: '/rules', element: <RulesPage /> },
+      { path: '/cognitive-tasks', element: <CognitiveTasksPage /> },
+      // Legacy alias: previous UI used /rules.
+      { path: '/rules', element: <Navigate to="/cognitive-tasks" replace /> },
       { path: '/docs', element: <PlanningDocsPage /> },
       { path: '/index.html', element: <Navigate to="/" replace /> },
       { path: '*', element: <NotFoundPage /> },

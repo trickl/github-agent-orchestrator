@@ -1,5 +1,5 @@
 export type TimelineEventKind =
-  | 'RULE_TRIGGERED'
+  | 'COGNITIVE_TASK_TRIGGERED'
   | 'ISSUE_FILE_CREATED'
   | 'GITHUB_ISSUE_OPENED'
   | 'COPILOT_ASSIGNED'
@@ -15,7 +15,7 @@ export type TimelineEvent = {
   tsIso: string;
   kind: TimelineEventKind;
   summary: string;
-  ruleId?: string;
+  cognitiveTaskId?: string;
   issueId?: string;
   issueTitle?: string;
   typePath?: string;

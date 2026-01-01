@@ -5,6 +5,7 @@ This intentionally wraps PyGithub to keep GitHub calls out of CLI code and make 
 
 from __future__ import annotations
 
+import base64
 import logging
 from dataclasses import dataclass
 from datetime import datetime
@@ -80,10 +81,40 @@ class PullRequestDetails:
 
 
 @dataclass(frozen=True, slots=True)
+class PullRequestContent:
+    """Pull request content used for post-merge reporting."""
+
+    number: int
+    title: str
+    body: str
+    state: str
+    merged: bool
+    merged_at: str | None
+    html_url: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class PullRequestDiscussionItem:
+    """An item in a PR's discussion stream (comments/reviews/review comments)."""
+
+    created_at: datetime
+    kind: str
+    author: str
+    body: str
+    url: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class MergeResult:
     merged: bool
     message: str
     sha: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class PullRequestCreated:
+    number: int
+    url: str | None
 
 
 class GitHubClient:
@@ -154,6 +185,174 @@ class GitHubClient:
         path = path.lstrip("/")
         return f"{self._rest_base_url}/repos/{repository}/{path}"
 
+    def get_repository_default_branch(self, *, repository: str | None = None) -> str:
+        repo = (repository or self._repository_name).strip()
+        url = self._repo_url(repository=repo, path="")
+        resp = self._session.get(url, timeout=30)
+        resp.raise_for_status()
+        data: dict[str, Any] = resp.json()
+        default_branch = data.get("default_branch")
+        if not isinstance(default_branch, str) or not default_branch.strip():
+            return "main"
+        return default_branch
+
+    def get_branch_head_sha(self, *, branch: str, repository: str | None = None) -> str:
+        repo = (repository or self._repository_name).strip()
+        if not branch.strip():
+            raise ValueError("branch is required")
+        url = self._repo_url(repository=repo, path=f"git/ref/heads/{branch}")
+        resp = self._session.get(url, timeout=30)
+        resp.raise_for_status()
+        data: dict[str, Any] = resp.json()
+        obj = data.get("object")
+        if not isinstance(obj, dict):
+            raise ValueError("Unexpected ref response: missing object")
+        sha = obj.get("sha")
+        if not isinstance(sha, str) or not sha.strip():
+            raise ValueError("Unexpected ref response: missing sha")
+        return sha
+
+    def create_branch(
+        self,
+        *,
+        branch: str,
+        base_sha: str,
+        repository: str | None = None,
+    ) -> None:
+        repo = (repository or self._repository_name).strip()
+        if not branch.strip():
+            raise ValueError("branch is required")
+        if not base_sha.strip():
+            raise ValueError("base_sha is required")
+
+        url = self._repo_url(repository=repo, path="git/refs")
+        payload = {"ref": f"refs/heads/{branch}", "sha": base_sha}
+        resp = self._session.post(url, json=payload, timeout=30)
+        if resp.status_code == 422:
+            # Branch likely already exists.
+            return
+        resp.raise_for_status()
+
+    def get_text_file_from_repo(
+        self,
+        *,
+        path: str,
+        ref: str = "",
+        repository: str | None = None,
+    ) -> tuple[str, str]:
+        """Return (text_content, sha) for a file in a repo at a ref.
+
+        Raises:
+            FileNotFoundError if not present.
+        """
+
+        repo = (repository or self._repository_name).strip()
+        norm = path.lstrip("/")
+        url = self._repo_url(repository=repo, path=f"contents/{norm}")
+        params: dict[str, str] = {}
+        if ref.strip():
+            params["ref"] = ref
+
+        resp = self._session.get(url, params=params or None, timeout=30)
+        if resp.status_code == 404:
+            raise FileNotFoundError(f"File not found: {path}")
+        resp.raise_for_status()
+        data: dict[str, Any] = resp.json()
+
+        file_sha = data.get("sha")
+        if not isinstance(file_sha, str) or not file_sha.strip():
+            raise ValueError("Unexpected contents response: missing sha")
+
+        encoding = data.get("encoding")
+        content = data.get("content")
+        if encoding == "base64" and isinstance(content, str):
+            raw = base64.b64decode(content.encode("utf-8"))
+            text = raw.decode("utf-8")
+            return text, file_sha
+
+        # Fallback: treat as plain string when possible.
+        if isinstance(content, str):
+            return content, file_sha
+        raise ValueError("Unexpected contents response: missing content")
+
+    def upsert_text_file_in_repo(
+        self,
+        *,
+        path: str,
+        content: str,
+        branch: str,
+        message: str,
+        sha: str | None = None,
+        repository: str | None = None,
+    ) -> str:
+        """Create or update a text file via the contents API.
+
+        Returns:
+            New file sha.
+        """
+
+        repo = (repository or self._repository_name).strip()
+        norm = path.lstrip("/")
+        url = self._repo_url(repository=repo, path=f"contents/{norm}")
+        payload: dict[str, Any] = {
+            "message": message,
+            "content": base64.b64encode(content.encode("utf-8")).decode("utf-8"),
+            "branch": branch,
+        }
+        if sha is not None and sha.strip():
+            payload["sha"] = sha
+
+        resp = self._session.put(url, json=payload, timeout=30)
+        resp.raise_for_status()
+        data: dict[str, Any] = resp.json()
+        content_info = data.get("content")
+        if isinstance(content_info, dict):
+            new_sha = content_info.get("sha")
+            if isinstance(new_sha, str) and new_sha.strip():
+                return new_sha
+        raise ValueError("Unexpected contents upsert response: missing content sha")
+
+    def delete_file_in_repo(
+        self,
+        *,
+        path: str,
+        sha: str,
+        branch: str,
+        message: str,
+        repository: str | None = None,
+    ) -> None:
+        repo = (repository or self._repository_name).strip()
+        norm = path.lstrip("/")
+        url = self._repo_url(repository=repo, path=f"contents/{norm}")
+        payload: dict[str, Any] = {"message": message, "sha": sha, "branch": branch}
+        resp = self._session.delete(url, json=payload, timeout=30)
+        if resp.status_code == 404:
+            return
+        resp.raise_for_status()
+
+    def create_pull_request(
+        self,
+        *,
+        title: str,
+        body: str,
+        head: str,
+        base: str,
+        repository: str | None = None,
+    ) -> PullRequestCreated:
+        repo = (repository or self._repository_name).strip()
+        url = self._repo_url(repository=repo, path="pulls")
+        payload = {"title": title, "body": body, "head": head, "base": base}
+        resp = self._session.post(url, json=payload, timeout=30)
+        resp.raise_for_status()
+        data: dict[str, Any] = resp.json()
+        number = data.get("number")
+        if not isinstance(number, int) or number <= 0:
+            raise ValueError("Unexpected create PR response: missing number")
+        html_url = data.get("html_url")
+        if not isinstance(html_url, str) or not html_url.strip():
+            html_url = None
+        return PullRequestCreated(number=number, url=html_url)
+
     def _search_url(self, *, path: str) -> str:
         path = path.lstrip("/")
         return f"{self._rest_base_url}/{path}"
@@ -165,6 +364,200 @@ class GitHubClient:
         # GitHub commonly returns timestamps like "2025-01-01T00:00:00Z".
         iso = value.replace("Z", "+00:00")
         return datetime.fromisoformat(iso)
+
+    def _get_paginated_json_list(self, url: str) -> list[dict[str, Any]]:
+        """Fetch a REST endpoint that returns a JSON list, following basic pagination.
+
+        Notes:
+            We keep pagination intentionally simple for Phase 1/1A: fetch up to 10 pages of
+            100 items each.
+        """
+
+        items: list[dict[str, Any]] = []
+        per_page = 100
+        for page in range(1, 11):
+            resp = self._session.get(
+                url,
+                params={"per_page": per_page, "page": page},
+                timeout=30,
+            )
+            resp.raise_for_status()
+            payload = resp.json()
+            if not isinstance(payload, list):
+                break
+
+            page_items: list[dict[str, Any]] = [p for p in payload if isinstance(p, dict)]
+            items.extend(page_items)
+
+            if len(payload) < per_page:
+                break
+        return items
+
+    @staticmethod
+    def _safe_login(value: object) -> str:
+        if isinstance(value, dict):
+            login = value.get("login")
+            if isinstance(login, str) and login.strip():
+                return login
+        return "unknown"
+
+    def get_pull_request_content(self, *, pull_number: int) -> PullRequestContent:
+        """Fetch PR title/body plus merge state from REST."""
+
+        url = self._pulls_url(pull_number=pull_number)
+        resp = self._session.get(url, timeout=30)
+        resp.raise_for_status()
+        data: dict[str, Any] = resp.json()
+
+        number = data.get("number")
+        if not isinstance(number, int) or number <= 0:
+            raise ValueError("Invalid pull request response: missing number")
+
+        title = data.get("title")
+        if not isinstance(title, str):
+            title = ""
+
+        body = data.get("body")
+        if not isinstance(body, str):
+            body = ""
+
+        state = data.get("state")
+        if not isinstance(state, str):
+            state = ""
+
+        merged = bool(data.get("merged"))
+
+        merged_at = data.get("merged_at")
+        if not isinstance(merged_at, str) or not merged_at.strip():
+            merged_at = None
+
+        html_url = data.get("html_url")
+        if not isinstance(html_url, str) or not html_url.strip():
+            html_url = None
+
+        return PullRequestContent(
+            number=number,
+            title=title,
+            body=body,
+            state=state,
+            merged=merged,
+            merged_at=merged_at,
+            html_url=html_url,
+        )
+
+    def get_pull_request_discussion(self, *, pull_number: int) -> list[PullRequestDiscussionItem]:
+        """Fetch PR discussion items and return them in chronological order.
+
+        Includes:
+        - Issue comments on the PR conversation
+        - Reviews (approval / change requests), with their review body
+        - Review comments (inline diff comments)
+        """
+
+        discussion: list[PullRequestDiscussionItem] = []
+
+        issue_comments_url = self._repo_url(
+            repository=self._repository_name, path=f"issues/{pull_number}/comments"
+        )
+        for item in self._get_paginated_json_list(issue_comments_url):
+            created_at = item.get("created_at")
+            try:
+                created_dt = self._parse_datetime(created_at)
+            except Exception:
+                continue
+
+            body = item.get("body")
+            if not isinstance(body, str):
+                body = ""
+
+            url = item.get("html_url")
+            if not isinstance(url, str) or not url.strip():
+                url = None
+
+            discussion.append(
+                PullRequestDiscussionItem(
+                    created_at=created_dt,
+                    kind="ISSUE_COMMENT",
+                    author=self._safe_login(item.get("user")),
+                    body=body,
+                    url=url,
+                )
+            )
+
+        reviews_url = self._repo_url(
+            repository=self._repository_name,
+            path=f"pulls/{pull_number}/reviews",
+        )
+        for item in self._get_paginated_json_list(reviews_url):
+            created_at = item.get("submitted_at") or item.get("created_at")
+            try:
+                created_dt = self._parse_datetime(created_at)
+            except Exception:
+                continue
+
+            state = item.get("state")
+            if not isinstance(state, str):
+                state = ""
+
+            body = item.get("body")
+            if not isinstance(body, str):
+                body = ""
+
+            if not body.strip() and state.strip():
+                body = f"Review state: {state.strip()}"
+
+            url = item.get("html_url")
+            if not isinstance(url, str) or not url.strip():
+                url = None
+
+            discussion.append(
+                PullRequestDiscussionItem(
+                    created_at=created_dt,
+                    kind="REVIEW",
+                    author=self._safe_login(item.get("user")),
+                    body=body,
+                    url=url,
+                )
+            )
+
+        review_comments_url = self._repo_url(
+            repository=self._repository_name, path=f"pulls/{pull_number}/comments"
+        )
+        for item in self._get_paginated_json_list(review_comments_url):
+            created_at = item.get("created_at")
+            try:
+                created_dt = self._parse_datetime(created_at)
+            except Exception:
+                continue
+
+            body = item.get("body")
+            if not isinstance(body, str):
+                body = ""
+
+            path = item.get("path")
+            if isinstance(path, str) and path.strip():
+                line = item.get("line")
+                if isinstance(line, int) and line > 0:
+                    body = f"File: {path}:{line}\n\n{body}".strip()
+                else:
+                    body = f"File: {path}\n\n{body}".strip()
+
+            url = item.get("html_url")
+            if not isinstance(url, str) or not url.strip():
+                url = None
+
+            discussion.append(
+                PullRequestDiscussionItem(
+                    created_at=created_dt,
+                    kind="REVIEW_COMMENT",
+                    author=self._safe_login(item.get("user")),
+                    body=body,
+                    url=url,
+                )
+            )
+
+        discussion.sort(key=lambda d: d.created_at)
+        return discussion
 
     def _graphql_url(self) -> str:
         """Derive the GitHub GraphQL endpoint from the configured REST base URL.

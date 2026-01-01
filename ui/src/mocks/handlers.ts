@@ -3,7 +3,7 @@ import rulesFixture from './fixtures/rules.json';
 import issuesFixture from './fixtures/issues.json';
 import timelineFixture from './fixtures/timeline.json';
 import docsFixture from './fixtures/docs.json';
-import type { GenerationRule } from '../features/rules/ruleTypes';
+import type { CognitiveTask } from '../features/cognitiveTasks/cognitiveTaskTypes';
 import type { Issue } from '../features/issues/issueTypes';
 import type { TimelineEvent } from '../features/timeline/timelineTypes';
 import type { PlanningDoc } from '../features/planning/planningTypes';
@@ -15,18 +15,18 @@ type DocsFixture = {
   capabilities: PlanningDoc;
 };
 
-const rulesFixtureTyped = rulesFixture as unknown as GenerationRule[];
+const rulesFixtureTyped = rulesFixture as unknown as CognitiveTask[];
 const issuesFixtureTyped = issuesFixture as unknown as Issue[];
 const timelineFixtureTyped = timelineFixture as unknown as TimelineEvent[];
 const docsFixtureTyped = docsFixture as unknown as DocsFixture;
 
-let rules: GenerationRule[] = structuredClone(rulesFixtureTyped);
+let tasks: CognitiveTask[] = structuredClone(rulesFixtureTyped);
 let issues: Issue[] = structuredClone(issuesFixtureTyped);
 let timeline: TimelineEvent[] = structuredClone(timelineFixtureTyped);
 let docs: DocsFixture = structuredClone(docsFixtureTyped);
 
 export function resetMockState(): void {
-  rules = structuredClone(rulesFixtureTyped);
+  tasks = structuredClone(rulesFixtureTyped);
   issues = structuredClone(issuesFixtureTyped);
   timeline = structuredClone(timelineFixtureTyped);
   docs = structuredClone(docsFixtureTyped);
@@ -55,6 +55,56 @@ export const handlers = [
     const lastEventIso = first ? first.tsIso : nowIso();
 
     return HttpResponse.json({ activeIssueId, openIssueCount, lastEventIso });
+  }),
+
+  http.get('*/loop', async () => {
+    await delay(150);
+
+    const pending = issues.filter((i) => i.status === 'PENDING').length;
+    const openIssues = issues.filter((i) => !['CLOSED', 'MERGED'].includes(i.status)).length;
+    const openCapabilityUpdateIssues = issues.filter((i) =>
+      i.title.startsWith('Update system capabilities based on merged PR')
+    ).length;
+
+    let stage: 'A' | 'B' | 'C' | 'D' | 'F' = 'A';
+    let stageLabel = 'Gap analysis';
+    let activeStep = 0;
+
+    // Mock jobs are not currently simulated.
+    if (openCapabilityUpdateIssues > 0) {
+      stage = 'F';
+      stageLabel = 'Capability update execution';
+      activeStep = 5;
+    } else if (openIssues > 0) {
+      stage = 'C';
+      stageLabel = 'Development (Copilot)';
+      activeStep = 2;
+    } else if (pending > 0) {
+      stage = 'B';
+      stageLabel = 'Issue creation';
+      activeStep = 1;
+    }
+
+    const first = timeline[0];
+    const lastAction =
+      first ? { tsIso: first.tsIso, summary: first.summary, kind: first.kind } : null;
+
+    return HttpResponse.json({
+      nowIso: nowIso(),
+      stage,
+      stageLabel,
+      activeStep,
+      counts: {
+        pending,
+        processed: 0,
+        complete: 0,
+        openIssues,
+        openCapabilityUpdateIssues,
+        unpromotedPending: pending,
+      },
+      runningJob: null,
+      lastAction,
+    });
   }),
 
   http.get('*/issues', async ({ request }) => {
@@ -98,27 +148,27 @@ export const handlers = [
     return HttpResponse.json(docs.capabilities);
   }),
 
-  http.get('*/rules', async () => {
+  http.get('*/cognitive-tasks', async () => {
     await delay(150);
-    return HttpResponse.json(rules);
+    return HttpResponse.json(tasks);
   }),
 
-  http.post('*/rules', async ({ request }) => {
+  http.post('*/cognitive-tasks', async ({ request }) => {
     await delay(150);
-    const body = (await request.json()) as Omit<GenerationRule, 'id' | 'lastRunIso' | 'nextEligibleIso' | 'editable'>;
-    const created: GenerationRule = {
+    const body = (await request.json()) as Omit<CognitiveTask, 'id' | 'lastRunIso' | 'nextEligibleIso' | 'editable'>;
+    const created: CognitiveTask = {
       ...body,
-      id: id('rule'),
+      id: id('task'),
       editable: true,
     };
-    rules = [created, ...rules];
+    tasks = [created, ...tasks];
     timeline = [
       {
         id: id('evt'),
         tsIso: nowIso(),
         kind: 'NOTE',
-        summary: `Rule created: ${created.name}`,
-        ruleId: created.id,
+        summary: `Cognitive task created: ${created.name}`,
+        cognitiveTaskId: created.id,
         typePath: created.targetFolder,
       },
       ...timeline,
@@ -126,46 +176,46 @@ export const handlers = [
     return HttpResponse.json(created, { status: 201 });
   }),
 
-  http.put('*/rules/:id', async ({ params, request }) => {
+  http.put('*/cognitive-tasks/:id', async ({ params, request }) => {
     await delay(150);
     const idParam = String(params.id);
-    const body = (await request.json()) as GenerationRule;
-    rules = rules.map((r) => (r.id === idParam ? { ...body, id: idParam } : r));
-    return HttpResponse.json(rules.find((r) => r.id === idParam));
+    const body = (await request.json()) as CognitiveTask;
+    tasks = tasks.map((t) => (t.id === idParam ? { ...body, id: idParam } : t));
+    return HttpResponse.json(tasks.find((t) => t.id === idParam));
   }),
 
-  http.delete('*/rules/:id', async ({ params }) => {
+  http.delete('*/cognitive-tasks/:id', async ({ params }) => {
     await delay(150);
     const idParam = String(params.id);
-    rules = rules.filter((r) => r.id !== idParam);
+    tasks = tasks.filter((t) => t.id !== idParam);
     timeline = [
       {
         id: id('evt'),
         tsIso: nowIso(),
         kind: 'NOTE',
-        summary: `Rule deleted: ${idParam}`,
-        ruleId: idParam,
+        summary: `Cognitive task deleted: ${idParam}`,
+        cognitiveTaskId: idParam,
       },
       ...timeline,
     ];
     return HttpResponse.json({ ok: true });
   }),
 
-  http.post('*/rules/:id/run', async ({ params }) => {
+  http.post('*/cognitive-tasks/:id/run', async ({ params }) => {
     await delay(250);
-    const ruleId = String(params.id);
-    const rule = rules.find((r) => r.id === ruleId);
-    if (!rule) {
+    const taskId = String(params.id);
+    const task = tasks.find((t) => t.id === taskId);
+    if (!task) {
       return HttpResponse.json({ ok: false }, { status: 404 });
     }
 
     const createdIssueId = `pending/${id('dev')}.md`;
-    const createdIssueTitle = `Dev: Generated by ${rule.name}`;
+    const createdIssueTitle = `Dev: Generated by ${task.name}`;
 
     const newIssue: Issue = {
       id: createdIssueId,
       title: createdIssueTitle,
-      typePath: rule.targetFolder,
+      typePath: task.targetFolder,
       status: 'PENDING',
       ageSeconds: 0,
       lastUpdatedIso: nowIso(),
@@ -179,16 +229,16 @@ export const handlers = [
         id: evtId,
         tsIso: nowIso(),
         kind: 'ISSUE_FILE_CREATED',
-        summary: `Created issue for rule: ${rule.name}`,
-        ruleId,
+        summary: `Created issue for cognitive task: ${task.name}`,
+        cognitiveTaskId: taskId,
         issueId: createdIssueId,
         issueTitle: createdIssueTitle,
-        typePath: rule.targetFolder,
+        typePath: task.targetFolder,
       },
       ...timeline,
     ];
 
-    rules = rules.map((r) => (r.id === ruleId ? { ...r, lastRunIso: nowIso() } : r));
+    tasks = tasks.map((t) => (t.id === taskId ? { ...t, lastRunIso: nowIso() } : t));
 
     return HttpResponse.json({
       ok: true,

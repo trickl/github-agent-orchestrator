@@ -4,6 +4,9 @@ test('App loads and sidebar navigation works', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByText('Orchestrator Dashboard')).toBeVisible();
 
+  await page.getByRole('link', { name: 'Loop' }).click();
+  await expect(page.getByRole('heading', { name: 'Loop' })).toBeVisible();
+
   await page.getByRole('link', { name: 'Timeline' }).click();
   await expect(page.getByRole('heading', { name: 'Timeline' })).toBeVisible();
 
@@ -13,15 +16,15 @@ test('App loads and sidebar navigation works', async ({ page }) => {
   await page.getByRole('link', { name: 'Issues' }).click();
   await expect(page.getByRole('heading', { name: 'Issues' })).toBeVisible();
 
-  await page.getByRole('link', { name: 'Generation Rules' }).click();
-  await expect(page.getByRole('heading', { name: 'Generation Rules' })).toBeVisible();
+  await page.getByRole('link', { name: 'Cognitive Tasks' }).click();
+  await expect(page.getByRole('heading', { name: 'Cognitive Tasks' })).toBeVisible();
 
   await page.getByRole('link', { name: 'Planning Docs' }).click();
   await expect(page.getByRole('heading', { name: 'Planning Docs' })).toBeVisible();
 });
 
 test('Rules page: edit rule, run now, verify timeline event appears', async ({ page }) => {
-  await page.goto('/rules');
+  await page.goto('/cognitive-tasks');
   await expect(page.getByText('Gap analysis: observability')).toBeVisible();
 
   const row = page.locator('tr', { hasText: 'Gap analysis: observability' });

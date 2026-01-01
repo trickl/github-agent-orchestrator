@@ -1,6 +1,6 @@
 [
   {
-    "id": "rule-001",
+    "id": "task-001",
     "name": "Complexity review",
     "category": "review",
     "enabled": true,
@@ -12,7 +12,7 @@
     "editable": false
   },
   {
-    "id": "rule-002",
+    "id": "task-002",
     "name": "Gap analysis: observability",
     "category": "gap",
     "enabled": true,
