@@ -1,5 +1,5 @@
 import { http, HttpResponse, delay } from 'msw';
-import rulesFixture from './fixtures/rules.json';
+import cognitiveTasksFixture from './fixtures/cognitive_tasks.json';
 import issuesFixture from './fixtures/issues.json';
 import timelineFixture from './fixtures/timeline.json';
 import docsFixture from './fixtures/docs.json';
@@ -15,18 +15,18 @@ type DocsFixture = {
   capabilities: PlanningDoc;
 };
 
-const rulesFixtureTyped = rulesFixture as unknown as CognitiveTask[];
+const cognitiveTasksFixtureTyped = cognitiveTasksFixture as unknown as CognitiveTask[];
 const issuesFixtureTyped = issuesFixture as unknown as Issue[];
 const timelineFixtureTyped = timelineFixture as unknown as TimelineEvent[];
 const docsFixtureTyped = docsFixture as unknown as DocsFixture;
 
-let tasks: CognitiveTask[] = structuredClone(rulesFixtureTyped);
+let tasks: CognitiveTask[] = structuredClone(cognitiveTasksFixtureTyped);
 let issues: Issue[] = structuredClone(issuesFixtureTyped);
 let timeline: TimelineEvent[] = structuredClone(timelineFixtureTyped);
 let docs: DocsFixture = structuredClone(docsFixtureTyped);
 
 export function resetMockState(): void {
-  tasks = structuredClone(rulesFixtureTyped);
+  tasks = structuredClone(cognitiveTasksFixtureTyped);
   issues = structuredClone(issuesFixtureTyped);
   timeline = structuredClone(timelineFixtureTyped);
   docs = structuredClone(docsFixtureTyped);
@@ -34,10 +34,6 @@ export function resetMockState(): void {
 
 function nowIso(): string {
   return new Date().toISOString();
-}
-
-function id(prefix: string): string {
-  return `${prefix}-${Math.random().toString(16).slice(2, 10)}`;
 }
 
 export const handlers = [
@@ -62,27 +58,51 @@ export const handlers = [
 
     const pending = issues.filter((i) => i.status === 'PENDING').length;
     const openIssues = issues.filter((i) => !['CLOSED', 'MERGED'].includes(i.status)).length;
-    const openCapabilityUpdateIssues = issues.filter((i) =>
-      i.title.startsWith('Update system capabilities based on merged PR')
+    const openGapAnalysisIssues = issues.filter(
+      (i) => i.title.toLowerCase().trim() === 'identify the next most important development gap'
     ).length;
 
-    let stage: 'A' | 'B' | 'C' | 'D' | 'F' = 'A';
+    // The mock data doesn't currently model PR objects. Approximate with prUrl presence.
+    const openPullRequests = issues.filter((i) => i.prUrl && !['MERGED', 'CLOSED'].includes(i.status)).length;
+
+    // In mocks, treat all pending as development tasks unless explicitly prefixed.
+    const pendingDevelopment = issues.filter(
+      (i) => i.status === 'PENDING' && !i.title.toLowerCase().startsWith('system:')
+    ).length;
+    const pendingCapabilityUpdates = issues.filter(
+      (i) => i.status === 'PENDING' && i.title.toLowerCase().startsWith('system:')
+    ).length;
+
+    const pendingDevelopmentWithoutPr = issues.filter(
+      (i) => i.status === 'PENDING' && !i.prUrl && !i.title.toLowerCase().startsWith('system:')
+    ).length;
+    const pendingDevelopmentWithPr = issues.filter(
+      (i) => i.status === 'PENDING' && Boolean(i.prUrl) && !i.title.toLowerCase().startsWith('system:')
+    ).length;
+
+    let stage: 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' = 'A';
     let stageLabel = 'Gap analysis';
     let activeStep = 0;
 
-    // Mock jobs are not currently simulated.
-    if (openCapabilityUpdateIssues > 0) {
-      stage = 'F';
-      stageLabel = 'Capability update execution';
-      activeStep = 5;
-    } else if (openIssues > 0) {
-      stage = 'C';
-      stageLabel = 'Development (Copilot)';
-      activeStep = 2;
-    } else if (pending > 0) {
-      stage = 'B';
-      stageLabel = 'Issue creation';
-      activeStep = 1;
+    // Follow the backend stage priority using the available mock signals.
+    if (openGapAnalysisIssues > 0) {
+      stage = 'A';
+      stageLabel = 'Gap analysis';
+      activeStep = 0;
+    } else if (pendingDevelopment > 0) {
+      if (pendingDevelopmentWithoutPr > 0) {
+        stage = 'B';
+        stageLabel = 'Issue creation';
+        activeStep = 1;
+      } else if (pendingDevelopmentWithPr > 0) {
+        stage = 'C';
+        stageLabel = 'Development (Copilot)';
+        activeStep = 2;
+      }
+    } else if (pendingCapabilityUpdates > 0) {
+      stage = 'E';
+      stageLabel = 'Capability update queued';
+      activeStep = 4;
     }
 
     const first = timeline[0];
@@ -94,13 +114,27 @@ export const handlers = [
       stage,
       stageLabel,
       activeStep,
+      stageReason: 'mock backend',
       counts: {
         pending,
         processed: 0,
         complete: 0,
         openIssues,
-        openCapabilityUpdateIssues,
+        openPullRequests,
+        openGapAnalysisIssues,
         unpromotedPending: pending,
+
+        pendingDevelopment,
+        pendingCapabilityUpdates,
+        pendingExcluded: 0,
+
+        pendingDevelopmentWithoutPr,
+        pendingDevelopmentWithPr,
+        pendingDevelopmentReadyForReview: 0,
+
+        pendingCapabilityUpdatesWithoutPr: pendingCapabilityUpdates,
+        pendingCapabilityUpdatesWithPr: 0,
+        pendingCapabilityUpdatesReadyForReview: 0,
       },
       runningJob: null,
       lastAction,
@@ -116,11 +150,6 @@ export const handlers = [
         ? issues
         : issues.filter((i) => ['PENDING', 'OPEN', 'ASSIGNED', 'PR_OPEN', 'BLOCKED', 'FAILED'].includes(i.status));
     return HttpResponse.json(out);
-  }),
-
-  http.post('*/issues/refresh', () => {
-    // In mocks we don't call GitHub; just report success.
-    return HttpResponse.json({ updated: 0 });
   }),
 
   http.get('*/active', async () => {
@@ -151,100 +180,5 @@ export const handlers = [
   http.get('*/cognitive-tasks', async () => {
     await delay(150);
     return HttpResponse.json(tasks);
-  }),
-
-  http.post('*/cognitive-tasks', async ({ request }) => {
-    await delay(150);
-    const body = (await request.json()) as Omit<CognitiveTask, 'id' | 'lastRunIso' | 'nextEligibleIso' | 'editable'>;
-    const created: CognitiveTask = {
-      ...body,
-      id: id('task'),
-      editable: true,
-    };
-    tasks = [created, ...tasks];
-    timeline = [
-      {
-        id: id('evt'),
-        tsIso: nowIso(),
-        kind: 'NOTE',
-        summary: `Cognitive task created: ${created.name}`,
-        cognitiveTaskId: created.id,
-        typePath: created.targetFolder,
-      },
-      ...timeline,
-    ];
-    return HttpResponse.json(created, { status: 201 });
-  }),
-
-  http.put('*/cognitive-tasks/:id', async ({ params, request }) => {
-    await delay(150);
-    const idParam = String(params.id);
-    const body = (await request.json()) as CognitiveTask;
-    tasks = tasks.map((t) => (t.id === idParam ? { ...body, id: idParam } : t));
-    return HttpResponse.json(tasks.find((t) => t.id === idParam));
-  }),
-
-  http.delete('*/cognitive-tasks/:id', async ({ params }) => {
-    await delay(150);
-    const idParam = String(params.id);
-    tasks = tasks.filter((t) => t.id !== idParam);
-    timeline = [
-      {
-        id: id('evt'),
-        tsIso: nowIso(),
-        kind: 'NOTE',
-        summary: `Cognitive task deleted: ${idParam}`,
-        cognitiveTaskId: idParam,
-      },
-      ...timeline,
-    ];
-    return HttpResponse.json({ ok: true });
-  }),
-
-  http.post('*/cognitive-tasks/:id/run', async ({ params }) => {
-    await delay(250);
-    const taskId = String(params.id);
-    const task = tasks.find((t) => t.id === taskId);
-    if (!task) {
-      return HttpResponse.json({ ok: false }, { status: 404 });
-    }
-
-    const createdIssueId = `pending/${id('dev')}.md`;
-    const createdIssueTitle = `Dev: Generated by ${task.name}`;
-
-    const newIssue: Issue = {
-      id: createdIssueId,
-      title: createdIssueTitle,
-      typePath: task.targetFolder,
-      status: 'PENDING',
-      ageSeconds: 0,
-      lastUpdatedIso: nowIso(),
-      isActive: false,
-    };
-    issues = [newIssue, ...issues];
-
-    const evtId = id('evt');
-    timeline = [
-      {
-        id: evtId,
-        tsIso: nowIso(),
-        kind: 'ISSUE_FILE_CREATED',
-        summary: `Created issue for cognitive task: ${task.name}`,
-        cognitiveTaskId: taskId,
-        issueId: createdIssueId,
-        issueTitle: createdIssueTitle,
-        typePath: task.targetFolder,
-      },
-      ...timeline,
-    ];
-
-    tasks = tasks.map((t) => (t.id === taskId ? { ...t, lastRunIso: nowIso() } : t));
-
-    return HttpResponse.json({
-      ok: true,
-      createdIssueId,
-      createdIssueTitle,
-      timelineEventId: evtId,
-    });
   }),
 ];

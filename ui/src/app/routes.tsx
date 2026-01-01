@@ -21,8 +21,6 @@ export const routes: RouteObject[] = [
       { path: '/active', element: <ActiveWorkPage /> },
       { path: '/issues', element: <IssuesPage /> },
       { path: '/cognitive-tasks', element: <CognitiveTasksPage /> },
-      // Legacy alias: previous UI used /rules.
-      { path: '/rules', element: <Navigate to="/cognitive-tasks" replace /> },
       { path: '/docs', element: <PlanningDocsPage /> },
       { path: '/index.html', element: <Navigate to="/" replace /> },
       { path: '*', element: <NotFoundPage /> },

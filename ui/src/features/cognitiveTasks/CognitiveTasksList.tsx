@@ -30,7 +30,15 @@ export type CognitiveTasksListFilters = {
   category: 'all' | CognitiveTask['category'];
 };
 
-export function CognitiveTasksList(props: {
+type ReadOnlyProps = {
+  readOnly: true;
+  tasks: CognitiveTask[];
+  filters: CognitiveTasksListFilters;
+  onFiltersChange: (next: CognitiveTasksListFilters) => void;
+};
+
+type EditableProps = {
+  readOnly?: false;
   tasks: CognitiveTask[];
   filters: CognitiveTasksListFilters;
   onFiltersChange: (next: CognitiveTasksListFilters) => void;
@@ -40,7 +48,9 @@ export function CognitiveTasksList(props: {
   onDelete: (task: CognitiveTask) => void;
   onRun: (task: CognitiveTask) => void;
   onToggleEnabled: (task: CognitiveTask, enabled: boolean) => void;
-}): React.JSX.Element {
+};
+
+export function CognitiveTasksList(props: ReadOnlyProps | EditableProps): React.JSX.Element {
   const { filters } = props;
 
   return (
@@ -74,9 +84,11 @@ export function CognitiveTasksList(props: {
 
         <Box flex={1} />
 
-        <Button startIcon={<AddIcon />} variant="contained" onClick={props.onCreate}>
-          New task
-        </Button>
+        {props.readOnly === true ? null : (
+          <Button startIcon={<AddIcon />} variant="contained" onClick={props.onCreate}>
+            New task
+          </Button>
+        )}
       </Stack>
 
       <Table size="small">
@@ -89,7 +101,7 @@ export function CognitiveTasksList(props: {
             <TableCell>Target folder</TableCell>
             <TableCell>Last run</TableCell>
             <TableCell>Next eligible</TableCell>
-            <TableCell align="right">Actions</TableCell>
+            {props.readOnly === true ? null : <TableCell align="right">Actions</TableCell>}
           </TableRow>
         </TableHead>
         <TableBody>
@@ -107,13 +119,19 @@ export function CognitiveTasksList(props: {
                 <Chip label={t.category} variant="outlined" />
               </TableCell>
               <TableCell>
-                <Link
-                  component="button"
-                  onClick={() => props.onToggleEnabled(t, !t.enabled)}
-                  underline="hover"
-                >
-                  {t.enabled ? 'Enabled' : 'Disabled'}
-                </Link>
+                {props.readOnly === true ? (
+                  <Typography variant="body2" color="text.secondary">
+                    {t.enabled ? 'Enabled' : 'Disabled'}
+                  </Typography>
+                ) : (
+                  <Link
+                    component="button"
+                    onClick={() => props.onToggleEnabled(t, !t.enabled)}
+                    underline="hover"
+                  >
+                    {t.enabled ? 'Enabled' : 'Disabled'}
+                  </Link>
+                )}
               </TableCell>
               <TableCell>{humanTriggerSummary(t.trigger)}</TableCell>
               <TableCell>
@@ -127,39 +145,49 @@ export function CognitiveTasksList(props: {
               <TableCell>
                 <Timestamp iso={t.nextEligibleIso} />
               </TableCell>
-              <TableCell align="right">
-                <Stack direction="row" justifyContent="flex-end" gap={0.5}>
-                  <Tooltip title="Run now" arrow>
-                    <span>
-                      <IconButton aria-label="Run now" onClick={() => props.onRun(t)} size="small">
-                        <PlayArrowIcon fontSize="small" />
+              {props.readOnly === true ? null : (
+                <TableCell align="right">
+                  <Stack direction="row" justifyContent="flex-end" gap={0.5}>
+                    <Tooltip title="Run now" arrow>
+                      <span>
+                        <IconButton
+                          aria-label="Run now"
+                          onClick={() => props.onRun(t)}
+                          size="small"
+                        >
+                          <PlayArrowIcon fontSize="small" />
+                        </IconButton>
+                      </span>
+                    </Tooltip>
+                    <Tooltip title={t.editable ? 'Edit' : 'View (read-only)'} arrow>
+                      <IconButton aria-label="Edit" onClick={() => props.onEdit(t)} size="small">
+                        <EditIcon fontSize="small" />
                       </IconButton>
-                    </span>
-                  </Tooltip>
-                  <Tooltip title={t.editable ? 'Edit' : 'View (read-only)'} arrow>
-                    <IconButton aria-label="Edit" onClick={() => props.onEdit(t)} size="small">
-                      <EditIcon fontSize="small" />
-                    </IconButton>
-                  </Tooltip>
-                  <Tooltip title="Duplicate" arrow>
-                    <IconButton aria-label="Duplicate" onClick={() => props.onDuplicate(t)} size="small">
-                      <ContentCopyIcon fontSize="small" />
-                    </IconButton>
-                  </Tooltip>
-                  <Tooltip title="Delete" arrow>
-                    <span>
+                    </Tooltip>
+                    <Tooltip title="Duplicate" arrow>
                       <IconButton
-                        aria-label="Delete"
-                        onClick={() => props.onDelete(t)}
+                        aria-label="Duplicate"
+                        onClick={() => props.onDuplicate(t)}
                         size="small"
-                        disabled={!t.editable}
                       >
-                        <DeleteIcon fontSize="small" />
+                        <ContentCopyIcon fontSize="small" />
                       </IconButton>
-                    </span>
-                  </Tooltip>
-                </Stack>
-              </TableCell>
+                    </Tooltip>
+                    <Tooltip title="Delete" arrow>
+                      <span>
+                        <IconButton
+                          aria-label="Delete"
+                          onClick={() => props.onDelete(t)}
+                          size="small"
+                          disabled={!t.editable}
+                        >
+                          <DeleteIcon fontSize="small" />
+                        </IconButton>
+                      </span>
+                    </Tooltip>
+                  </Stack>
+                </TableCell>
+              )}
             </TableRow>
           ))}
         </TableBody>

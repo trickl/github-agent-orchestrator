@@ -4,6 +4,8 @@ import { App } from './app/App';
 import { ColorModeProvider } from './app/colorMode';
 
 async function maybeStartMsw(): Promise<void> {
+  // MSW should be explicitly opt-in and should never run in production builds.
+  if (!import.meta.env.DEV) return;
   if (import.meta.env.VITE_USE_MSW !== 'true') return;
   const { worker } = await import('./mocks/browser');
   await worker.start({

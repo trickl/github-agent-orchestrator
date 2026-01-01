@@ -1,11 +1,8 @@
 import React from 'react';
 import {
   Box,
-  Button,
   MenuItem,
-  Snackbar,
   Stack,
-  Alert,
   TextField,
   Typography,
 } from '@mui/material';
@@ -24,9 +21,6 @@ export function IssuesPage(): React.JSX.Element {
   const [status, setStatus] = React.useState<StatusFilter>('open');
   const [typePath, setTypePath] = React.useState('');
   const [search, setSearch] = React.useState('');
-  const [snack, setSnack] = React.useState<{ kind: 'success' | 'error'; msg: string } | null>(
-    null
-  );
 
   const res = useApiResource(() => apiFetch<Issue[]>(endpoints.issues(status)), [status]);
 
@@ -53,27 +47,6 @@ export function IssuesPage(): React.JSX.Element {
       <Typography variant="h5" gutterBottom>
         Issues
       </Typography>
-
-      <Stack direction={{ xs: 'column', sm: 'row' }} gap={1} mb={1} alignItems="start">
-        <Button
-          size="small"
-          variant="outlined"
-          onClick={() => {
-            void (async () => {
-              try {
-                await apiFetch<{ updated: number }>(endpoints.issuesRefresh(), { method: 'POST' });
-                setSnack({ kind: 'success', msg: 'Refreshed issues from GitHub.' });
-                res.reload();
-              } catch (e) {
-                const msg = e instanceof Error ? e.message : 'Failed to refresh issues.';
-                setSnack({ kind: 'error', msg });
-              }
-            })();
-          }}
-        >
-          Refresh from GitHub
-        </Button>
-      </Stack>
 
       <Stack direction={{ xs: 'column', sm: 'row' }} gap={2} mb={2}>
         <TextField
@@ -125,19 +98,6 @@ export function IssuesPage(): React.JSX.Element {
           </Box>
         )
       ) : null}
-
-      <Snackbar
-        open={Boolean(snack)}
-        autoHideDuration={4000}
-        onClose={() => setSnack(null)}
-        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
-      >
-        {snack ? (
-          <Alert onClose={() => setSnack(null)} severity={snack.kind} variant="filled">
-            {snack.msg}
-          </Alert>
-        ) : undefined}
-      </Snackbar>
     </div>
   );
 }

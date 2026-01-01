@@ -302,13 +302,6 @@ Useful endpoints:
 The server exposes endpoints under:
 
 - `/api` (dashboard API used by the React UI)
-- `/api/v1` (legacy / orchestration endpoints)
-
-Examples under `/api/v1`:
-
-- `GET /api/v1/issues`
-- `POST /api/v1/issues/{issue_number}/monitor-prs`
-- `GET /api/v1/jobs/{job_id}`
 
 ## React + Vite UI (minimal scaffold)
 

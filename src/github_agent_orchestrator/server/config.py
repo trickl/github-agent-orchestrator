@@ -27,11 +27,6 @@ class ServerSettings(BaseSettings):
         default="https://api.github.com", validation_alias="GITHUB_BASE_URL"
     )
 
-    agent_state_path: Path = Field(default=Path("agent_state"), validation_alias="AGENT_STATE_PATH")
-    planning_root: Path = Field(
-        default=Path("planning"), validation_alias="ORCHESTRATOR_PLANNING_ROOT"
-    )
-
     # Active repository context for the dashboard. If set, issue lists and overview
     # will be scoped to this repo by default.
     default_repo: str = Field(default="", validation_alias="ORCHESTRATOR_DEFAULT_REPO")
@@ -47,28 +42,6 @@ class ServerSettings(BaseSettings):
     )
 
     model_config = SettingsConfigDict(env_prefix="", env_file=".env", extra="ignore")
-
-    @property
-    def issues_state_file(self) -> Path:
-        return self.agent_state_path / "issues.json"
-
-    @property
-    def jobs_state_file(self) -> Path:
-        return self.agent_state_path / "jobs.json"
-
-    @property
-    def timeline_state_file(self) -> Path:
-        return self.agent_state_path / "timeline.json"
-
-    @property
-    def cognitive_tasks_state_file(self) -> Path:
-        # Keep cognitive tasks next to other planning state.
-        return self.planning_root / "state" / "cognitive_tasks.json"
-
-    @property
-    def legacy_generation_rules_state_file(self) -> Path:
-        # Backwards-compatible location used by older dashboard versions.
-        return self.planning_root / "state" / "generation_rules.json"
 
     def parsed_cors_origins(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]

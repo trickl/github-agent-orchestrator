@@ -13,6 +13,8 @@ import {
   Stepper,
   Typography,
 } from '@mui/material';
+import type { StepIconProps } from '@mui/material/StepIcon';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import { Link as RouterLink } from 'react-router-dom';
 
 import { apiFetch } from '../lib/apiClient';
@@ -26,9 +28,22 @@ type LoopCounts = {
   pending: number;
   processed: number;
   complete: number;
-  openIssues: number;
-  openCapabilityUpdateIssues: number;
-  unpromotedPending: number;
+  openIssues: number | null;
+  openPullRequests: number | null;
+  openGapAnalysisIssues: number | null;
+  unpromotedPending: number | null;
+
+  pendingDevelopment: number | null;
+  pendingCapabilityUpdates: number | null;
+  pendingExcluded: number | null;
+
+  pendingDevelopmentWithoutPr: number | null;
+  pendingDevelopmentWithPr: number | null;
+  pendingDevelopmentReadyForReview: number | null;
+
+  pendingCapabilityUpdatesWithoutPr: number | null;
+  pendingCapabilityUpdatesWithPr: number | null;
+  pendingCapabilityUpdatesReadyForReview: number | null;
 };
 
 type RunningJob = {
@@ -40,12 +55,16 @@ type RunningJob = {
 
 type LoopStatus = {
   nowIso: string;
-  stage: 'A' | 'B' | 'C' | 'D' | 'F';
+  stage: 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G';
   stageLabel: string;
   activeStep: number;
   counts: LoopCounts;
   runningJob: RunningJob | null;
   lastAction: null | { tsIso: string; summary: string; kind: string };
+  repo?: string | null;
+  ref?: string | null;
+  stageReason?: string;
+  warnings?: string[];
 };
 
 const steps: Array<{
@@ -129,8 +148,74 @@ const steps: Array<{
   },
 ];
 
+function LoopStepIcon(props: StepIconProps): React.JSX.Element {
+  const iconNumber = typeof props.icon === 'number' ? props.icon : Number(props.icon);
+  const idx = Number.isFinite(iconNumber) ? iconNumber - 1 : -1;
+  const letter = idx >= 0 && idx < steps.length ? steps[idx]?.key ?? '?' : '?';
+
+  if (props.completed) {
+    return <CheckCircleIcon sx={{ color: 'success.main' }} />;
+  }
+
+  return (
+    <Box
+      sx={{
+        width: 24,
+        height: 24,
+        borderRadius: '50%',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        fontSize: 12,
+        fontWeight: 800,
+        border: '2px solid',
+        borderColor: props.active ? 'primary.main' : 'divider',
+        bgcolor: props.active ? 'primary.main' : 'transparent',
+        color: props.active ? 'primary.contrastText' : 'text.secondary',
+      }}
+    >
+      {letter}
+    </Box>
+  );
+}
+
 export function LoopPage(): React.JSX.Element {
   const res = useApiResource(() => apiFetch<LoopStatus>(endpoints.loop()), []);
+
+  if (res.loading) {
+    return (
+      <div>
+        <Typography variant="h5" gutterBottom>
+          Loop
+        </Typography>
+        <LoadingState />
+      </div>
+    );
+  }
+
+  if (res.error) {
+    return (
+      <div>
+        <Typography variant="h5" gutterBottom>
+          Loop
+        </Typography>
+        <ErrorState message={res.error} onRetry={res.reload} />
+      </div>
+    );
+  }
+
+  if (!res.data) {
+    return (
+      <div>
+        <Typography variant="h5" gutterBottom>
+          Loop
+        </Typography>
+      </div>
+    );
+  }
+
+  const data = res.data;
+  const fmt = (v: number | null | undefined): string => (typeof v === 'number' ? String(v) : '—');
 
   return (
     <div>
@@ -138,19 +223,15 @@ export function LoopPage(): React.JSX.Element {
         Loop
       </Typography>
 
-      {res.loading ? <LoadingState /> : null}
-      {res.error ? <ErrorState message={res.error} onRetry={res.reload} /> : null}
-
-      {!res.loading && !res.error && res.data ? (
-        <Stack spacing={2}>
+      <Stack spacing={2}>
           <Card variant="outlined">
             <CardContent>
               <Stack spacing={1.5}>
                 <Stack direction={{ xs: 'column', md: 'row' }} spacing={1} alignItems={{ md: 'center' }}>
                   <Typography variant="h6" sx={{ flex: 1 }}>
-                    Current stage: {res.data.stageLabel}
+                    Current stage: {data.stageLabel}
                   </Typography>
-                  <Chip label={`Stage ${res.data.stage}`} variant="outlined" />
+                  <Chip label={`Stage ${data.stage}`} variant="outlined" />
                 </Stack>
 
                 <Divider />
@@ -161,12 +242,18 @@ export function LoopPage(): React.JSX.Element {
                       Issue queue
                     </Typography>
                     <Typography variant="body2" color="text.secondary">
-                      Pending: <strong>{res.data.counts.pending}</strong> (unpromoted:{' '}
-                      <strong>{res.data.counts.unpromotedPending}</strong>)
+                      Pending: <strong>{data.counts.pending}</strong> (unpromoted:{' '}
+                      <strong>{fmt(data.counts.unpromotedPending)}</strong>)
                       <br />
-                      Processed: <strong>{res.data.counts.processed}</strong>
+                      Processed: <strong>{data.counts.processed}</strong>
                       <br />
-                      Complete: <strong>{res.data.counts.complete}</strong>
+                      Complete: <strong>{data.counts.complete}</strong>
+                      <br />
+                      Dev pending: <strong>{fmt(data.counts.pendingDevelopment)}</strong>
+                      <br />
+                      Capability pending: <strong>{fmt(data.counts.pendingCapabilityUpdates)}</strong>
+                      <br />
+                      Excluded pending: <strong>{fmt(data.counts.pendingExcluded)}</strong>
                     </Typography>
                   </Box>
 
@@ -175,9 +262,11 @@ export function LoopPage(): React.JSX.Element {
                       Issues
                     </Typography>
                     <Typography variant="body2" color="text.secondary">
-                      Open: <strong>{res.data.counts.openIssues}</strong>
+                      Open: <strong>{fmt(data.counts.openIssues)}</strong>
                       <br />
-                      Capability updates open: <strong>{res.data.counts.openCapabilityUpdateIssues}</strong>
+                      Open PRs: <strong>{fmt(data.counts.openPullRequests)}</strong>
+                      <br />
+                      Gap analysis open: <strong>{fmt(data.counts.openGapAnalysisIssues)}</strong>
                     </Typography>
                   </Box>
 
@@ -185,9 +274,9 @@ export function LoopPage(): React.JSX.Element {
                     <Typography variant="subtitle2" color="text.secondary">
                       Last action
                     </Typography>
-                    {res.data.lastAction ? (
+                    {data.lastAction ? (
                       <Typography variant="body2" color="text.secondary">
-                        <Timestamp iso={res.data.lastAction.tsIso} /> — {res.data.lastAction.summary}
+                        <Timestamp iso={data.lastAction.tsIso} /> — {data.lastAction.summary}
                       </Typography>
                     ) : (
                       <Typography variant="body2" color="text.secondary">
@@ -197,20 +286,38 @@ export function LoopPage(): React.JSX.Element {
                   </Box>
                 </Stack>
 
-                {res.data.runningJob ? (
+                {data.runningJob ? (
                   <Box>
                     <Typography variant="subtitle2" color="text.secondary">
                       Running job
                     </Typography>
                     <Typography variant="body2" color="text.secondary">
-                      Job <code>{res.data.runningJob.jobId}</code>
-                      {res.data.runningJob.issueNumber ? (
+                      Job <code>{data.runningJob.jobId}</code>
+                      {data.runningJob.issueNumber ? (
                         <>
                           {' '}
-                          (issue #{res.data.runningJob.issueNumber})
+                          (issue #{data.runningJob.issueNumber})
                         </>
                       ) : null}
                     </Typography>
+                  </Box>
+                ) : null}
+
+                {data.stageReason || (data.warnings && data.warnings.length) ? (
+                  <Box>
+                    <Typography variant="subtitle2" color="text.secondary">
+                      Notes
+                    </Typography>
+                    {data.stageReason ? (
+                      <Typography variant="body2" color="text.secondary">
+                        Stage reason: {data.stageReason}
+                      </Typography>
+                    ) : null}
+                    {data.warnings?.map((w) => (
+                      <Typography key={w} variant="body2" color="text.secondary">
+                        {w}
+                      </Typography>
+                    ))}
                   </Box>
                 ) : null}
 
@@ -237,12 +344,34 @@ export function LoopPage(): React.JSX.Element {
               <Typography variant="subtitle1" gutterBottom>
                 The loop (A–G)
               </Typography>
-              <Stepper activeStep={res.data.activeStep} orientation="vertical">
-                {steps.map((s) => (
-                  <Step key={s.key}>
-                    <StepLabel>
-                      <Typography variant="subtitle2">{s.title}</Typography>
-                      <Typography variant="body2" color="text.secondary">
+              <Stepper activeStep={data.activeStep} orientation="vertical">
+                {steps.map((s, idx) => (
+                  <Step
+                    key={s.key}
+                    completed={idx < data.activeStep}
+                    sx={{
+                      '& .MuiStepLabel-root': {
+                        borderRadius: 1,
+                        px: 1,
+                        py: 0.5,
+                        ...(idx === data.activeStep ? { bgcolor: 'action.hover' } : null),
+                      },
+                    }}
+                  >
+                    <StepLabel StepIconComponent={LoopStepIcon}>
+                      <Typography
+                        variant="subtitle2"
+                        sx={{
+                          fontWeight: idx === data.activeStep ? 800 : 600,
+                          color: idx === data.activeStep ? 'primary.main' : 'text.primary',
+                        }}
+                      >
+                        {s.title}
+                      </Typography>
+                      <Typography
+                        variant="body2"
+                        color={idx === data.activeStep ? 'text.primary' : 'text.secondary'}
+                      >
                         {s.subtitle}
                       </Typography>
                     </StepLabel>
@@ -253,7 +382,6 @@ export function LoopPage(): React.JSX.Element {
             </CardContent>
           </Card>
         </Stack>
-      ) : null}
     </div>
   );
 }

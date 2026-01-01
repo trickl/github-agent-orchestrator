@@ -182,8 +182,11 @@ class GitHubClient:
         return f"{self._rest_base_url}/repos/{self._repository_name}/pulls/{pull_number}{suffix}"
 
     def _repo_url(self, *, repository: str, path: str) -> str:
-        path = path.lstrip("/")
-        return f"{self._rest_base_url}/repos/{repository}/{path}"
+        repo = repository.strip().strip("/")
+        clean_path = path.lstrip("/")
+        if clean_path:
+            return f"{self._rest_base_url}/repos/{repo}/{clean_path}"
+        return f"{self._rest_base_url}/repos/{repo}"
 
     def get_repository_default_branch(self, *, repository: str | None = None) -> str:
         repo = (repository or self._repository_name).strip()

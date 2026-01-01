@@ -104,7 +104,7 @@ This repo includes a small FastAPI server (Python) and a React dashboard (Vite) 
 
 #### Start the REST server
 
-The server can start without a GitHub token for local-only dashboard features (planning docs, rules, timeline, reading local issue state). Endpoints that call GitHub (e.g. refreshing PRs) still require `ORCHESTRATOR_GITHUB_TOKEN`.
+The server can start without a GitHub token for UI hosting, but the dashboard reads state from the target GitHub repo. GitHub-backed endpoints require `ORCHESTRATOR_GITHUB_TOKEN`.
 
 ```bash
 python -m github_agent_orchestrator.server
