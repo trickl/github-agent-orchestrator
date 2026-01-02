@@ -53,7 +53,11 @@ def test_dashboard_health_and_docs(monkeypatch, tmp_path: Path) -> None:
 
     client = TestClient(create_app())
 
-    assert client.get("/api/health").json() == {"status": "ok"}
+    health = client.get("/api/health").json()
+    assert health["status"] == "ok"
+    assert health["ok"] is True
+    assert "version" in health
+    assert health["repoName"] == "acme/repo"
 
     goal = client.get("/api/docs/goal").json()
     assert goal["key"] == "goal"
@@ -460,12 +464,154 @@ def test_loop_status_stage_e_when_open_update_capability_issue_exists(
 
     monkeypatch.setattr(dashboard_router, "_list_open_pull_requests_raw", lambda *_a, **_k: [])
     monkeypatch.setattr(dashboard_router, "_list_issue_timeline_raw", lambda *_a, **_k: [])
-    monkeypatch.setattr(dashboard_router, "_get_pull_request", lambda *_a, **_k: {})
+
+    # The loop status call now fetches the capability issue body to recover the original PR number.
+    def fake_github_get_json(*_a, **kwargs):
+        url = str(kwargs.get("url") or "")
+        if url.endswith("/repos/acme/repo/issues/202"):
+            return {
+                "number": 202,
+                "title": "Update system capabilities based on merged PR #5",
+                "body": "---\n\n<!-- orchestrator:capability-update-from-pr acme/repo#5 -->\n",
+            }
+        raise AssertionError(f"Unexpected GET url: {url}")
+
+    monkeypatch.setattr(dashboard_router, "_github_get_json", fake_github_get_json)
+
+    def fake_get_pull_request(*_a, **kwargs):
+        pr_number = kwargs.get("pr_number")
+        if pr_number == 5:
+            return {
+                "number": 5,
+                "state": "closed",
+                "title": "Add thing",
+                "html_url": "https://github.com/acme/repo/pull/5",
+            }
+        return {}
+
+    monkeypatch.setattr(dashboard_router, "_get_pull_request", fake_get_pull_request)
 
     client = TestClient(create_app())
     loop = client.get("/api/loop").json()
     assert loop["stage"] == "E"
     assert loop["activeStep"] == 4
+
+    focus = loop.get("focus")
+    assert isinstance(focus, dict)
+    assert focus.get("kind") == "capability"
+    assert focus.get("issueNumber") == 202
+    assert focus.get("sourcePullNumber") == 5
+    assert focus.get("sourceTitle") == "Add thing"
+
+
+def test_loop_status_stage_g_when_open_update_capability_issue_has_ready_pr(
+    monkeypatch, tmp_path: Path
+) -> None:
+    planning = tmp_path / "planning"
+    agent_state = tmp_path / "agent_state"
+
+    monkeypatch.setenv("ORCHESTRATOR_PLANNING_ROOT", str(planning))
+    monkeypatch.setenv("AGENT_STATE_PATH", str(agent_state))
+    monkeypatch.setenv("ORCHESTRATOR_UI_DIST", str(tmp_path / "ui" / "dist"))
+    monkeypatch.setenv("ORCHESTRATOR_DEFAULT_REPO", "acme/repo")
+
+    import github_agent_orchestrator.server.dashboard_router as dashboard_router
+
+    def fake_list_repo_md(*_args, **kwargs):
+        dir_path = kwargs.get("dir_path")
+        if dir_path == "planning/issue_queue/pending":
+            return []
+        if dir_path == "planning/issue_queue/processed":
+            return []
+        if dir_path == "planning/issue_queue/complete":
+            return []
+        return []
+
+    monkeypatch.setattr(
+        dashboard_router,
+        "_list_repo_markdown_files_under",
+        fake_list_repo_md,
+    )
+
+    monkeypatch.setattr(dashboard_router, "_get_repo_text_file", lambda *_a, **_k: ("", "sha"))
+
+    monkeypatch.setattr(
+        dashboard_router,
+        "_list_open_issues_raw",
+        lambda *_a, **_k: [
+            {
+                "number": 202,
+                "title": "Update system capabilities based on merged PR #5",
+                "state": "open",
+                "labels": [{"name": "Update Capability"}],
+            }
+        ],
+    )
+
+    monkeypatch.setattr(dashboard_router, "_list_open_pull_requests_raw", lambda *_a, **_k: [])
+
+    def fake_timeline(*_a, **kwargs):
+        if kwargs.get("issue_number") == 202:
+            return [
+                {
+                    "event": "cross-referenced",
+                    "source": {"issue": {"number": 7, "pull_request": {}}},
+                }
+            ]
+        return []
+
+    monkeypatch.setattr(dashboard_router, "_list_issue_timeline_raw", fake_timeline)
+
+    def fake_github_get_json(*_a, **kwargs):
+        url = str(kwargs.get("url") or "")
+        if url.endswith("/repos/acme/repo/issues/202"):
+            return {
+                "number": 202,
+                "title": "Update system capabilities based on merged PR #5",
+                "body": "x\n<!-- orchestrator:capability-update-from-pr acme/repo#5 -->\n",
+            }
+        raise AssertionError(f"Unexpected GET url: {url}")
+
+    monkeypatch.setattr(dashboard_router, "_github_get_json", fake_github_get_json)
+
+    def fake_get_pull_request(*_a, **kwargs):
+        pr_number = kwargs.get("pr_number")
+        if pr_number == 7:
+            return {
+                "number": 7,
+                "state": "open",
+                "draft": False,
+                "requested_reviewers": [{"login": "alice"}],
+                "requested_teams": [],
+                "mergeable_state": "clean",
+                "html_url": "https://github.com/acme/repo/pull/7",
+            }
+        if pr_number == 5:
+            return {
+                "number": 5,
+                "state": "closed",
+                "draft": False,
+                "requested_reviewers": [],
+                "requested_teams": [],
+                "mergeable_state": "clean",
+                "title": "Add thing",
+                "html_url": "https://github.com/acme/repo/pull/5",
+            }
+        return {}
+
+    monkeypatch.setattr(dashboard_router, "_get_pull_request", fake_get_pull_request)
+
+    client = TestClient(create_app())
+    loop = client.get("/api/loop").json()
+    assert loop["stage"] == "G"
+    assert loop["activeStep"] == 6
+
+    focus = loop.get("focus")
+    assert isinstance(focus, dict)
+    assert focus.get("kind") == "capability"
+    assert focus.get("issueNumber") == 202
+    assert focus.get("sourcePullNumber") == 5
+    assert focus.get("pullNumber") == 7
 
 
 def test_loop_merge_endpoint_merges_one_ready_pr_and_creates_capability_issue(
@@ -577,6 +723,108 @@ def test_loop_merge_endpoint_merges_one_ready_pr_and_creates_capability_issue(
     assert data["merged"] is True
     assert data["pullNumber"] == 5
     assert data["capabilityIssueNumber"] == 456
+
+
+def test_loop_merge_endpoint_merges_ready_capability_pr_and_closes_issue(
+    monkeypatch, tmp_path: Path
+) -> None:
+    planning = tmp_path / "planning"
+    agent_state = tmp_path / "agent_state"
+
+    monkeypatch.setenv("ORCHESTRATOR_PLANNING_ROOT", str(planning))
+    monkeypatch.setenv("AGENT_STATE_PATH", str(agent_state))
+    monkeypatch.setenv("ORCHESTRATOR_UI_DIST", str(tmp_path / "ui" / "dist"))
+    monkeypatch.setenv("ORCHESTRATOR_DEFAULT_REPO", "acme/repo")
+    monkeypatch.setenv("ORCHESTRATOR_GITHUB_TOKEN", "test-token")
+    monkeypatch.setenv("COPILOT_ASSIGNEE", "copilot-swe-agent[bot]")
+
+    import github_agent_orchestrator.server.dashboard_router as dashboard_router
+
+    monkeypatch.setattr(dashboard_router, "_get_default_branch", lambda *_a, **_k: "main")
+
+    # An open Update Capability issue exists.
+    monkeypatch.setattr(
+        dashboard_router,
+        "_list_open_issues_raw",
+        lambda *_a, **_k: [
+            {
+                "number": 202,
+                "title": "Update system capabilities based on merged PR #5",
+                "state": "open",
+                "labels": [{"name": "Update Capability"}],
+            }
+        ],
+    )
+
+    # Issue timeline cross-references PR #5.
+    def fake_timeline(*_a, **kwargs):
+        if kwargs.get("issue_number") == 202:
+            return [
+                {
+                    "event": "cross-referenced",
+                    "source": {"issue": {"number": 5, "pull_request": {}}},
+                }
+            ]
+        return []
+
+    monkeypatch.setattr(dashboard_router, "_list_issue_timeline_raw", fake_timeline)
+
+    monkeypatch.setattr(dashboard_router, "_github_get_list", lambda *_a, **_k: [])
+
+    # PR is open, non-draft, review requested, and conflict-free.
+    monkeypatch.setattr(
+        dashboard_router,
+        "_get_pull_request",
+        lambda *_a, **_k: {
+            "number": 5,
+            "state": "open",
+            "draft": False,
+            "requested_reviewers": [{"login": "alice"}],
+            "requested_teams": [],
+            "mergeable_state": "clean",
+            "title": "Update capabilities",
+            "body": "Update system_capabilities.md",
+            "head": {"ref": "feature/caps", "repo": {"full_name": "acme/repo"}},
+        },
+    )
+
+    # Best-effort approval.
+    def fake_post_json(*_a, **kwargs):
+        url = str(kwargs.get("url") or "")
+        if url.endswith("/pulls/5/reviews"):
+            return {"id": 1}
+        raise AssertionError(f"Unexpected POST url: {url}")
+
+    monkeypatch.setattr(dashboard_router, "_github_post_json", fake_post_json)
+
+    # Merge call.
+    def fake_put_json(*_a, **kwargs):
+        url = str(kwargs.get("url") or "")
+        if url.endswith("/pulls/5/merge"):
+            return 200, {"merged": True, "sha": "deadbeef"}
+        return 500, {"message": "unexpected"}
+
+    monkeypatch.setattr(dashboard_router, "_github_put_json", fake_put_json)
+    monkeypatch.setattr(dashboard_router, "_github_delete_json", lambda *_a, **_k: (204, None))
+
+    # Close issue.
+    def fake_patch_json(*_a, **kwargs):
+        url = str(kwargs.get("url") or "")
+        if url.endswith("/issues/202"):
+            return {"number": 202, "state": "closed"}
+        raise AssertionError(f"Unexpected PATCH url: {url}")
+
+    monkeypatch.setattr(dashboard_router, "_github_patch_json", fake_patch_json)
+
+    client = TestClient(create_app())
+    resp = client.post("/api/loop/merge")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["merged"] is True
+    assert data["pullNumber"] == 5
+    assert data["capabilityIssueNumber"] == 202
+    assert data["capabilityIssueCreated"] is False
+    assert data.get("developmentIssueNumber") is None
 
 
 def test_loop_merge_endpoint_fails_cleanly_when_pr_stays_draft(monkeypatch, tmp_path: Path) -> None:

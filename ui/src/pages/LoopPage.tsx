@@ -60,6 +60,19 @@ type LoopStatus = {
   counts: LoopCounts;
   runningJob: RunningJob | null;
   lastAction: null | { tsIso: string; summary: string; kind: string };
+  focus?: {
+    kind: 'development' | 'capability';
+    title?: string;
+    sourceTitle?: string;
+    issueNumber?: number | null;
+    issueUrl?: string | null;
+    pullNumber?: number | null;
+    pullUrl?: string | null;
+    sourcePullNumber?: number | null;
+    sourcePullUrl?: string | null;
+    queuePath?: string | null;
+    queueId?: string | null;
+  } | null;
   repo?: string | null;
   ref?: string | null;
   stageReason?: string;
@@ -83,9 +96,9 @@ type MergeResult = {
   branch: string;
   merged: boolean;
   mergeCommitSha: string | null;
-  queuePath: string;
-  completePath: string;
-  developmentIssueNumber: number;
+  queuePath: string | null;
+  completePath: string | null;
+  developmentIssueNumber: number | null;
   pullNumber: number;
   approved: boolean;
   approvalError: string | null;
@@ -94,6 +107,7 @@ type MergeResult = {
   capabilityIssueCreated: boolean;
   capabilityIssueUrl: string | null;
   capabilityIssueAssigned: string[];
+  capabilityIssueClosed?: boolean;
   summary: string;
 };
 
@@ -168,11 +182,11 @@ const steps: Array<{
   },
   {
     key: 'G',
-    title: 'Step G — Repeat',
-    subtitle: 'With updated capabilities: run gap analysis again and continue the loop.',
+    title: 'Step G — Capability PR completion & merge (automatic)',
+    subtitle: 'Deterministic job: checks status and merges the capabilities update (then we’re back to Step A).',
     details: (
       <Typography variant="body2" color="text.secondary">
-        Rinse, iterate, ship.
+        One job at a time. Reliable and boring.
       </Typography>
     ),
   },
@@ -254,7 +268,7 @@ export function LoopPage(): React.JSX.Element {
   const fmt = (v: number | null | undefined): string => (typeof v === 'number' ? String(v) : '—');
 
   const canPromote = data.stage === 'B';
-  const canMerge = data.stage === 'D';
+  const canMerge = data.stage === 'D' || data.stage === 'G';
 
   const onPromote = (): void => {
     setPromoteBusy(true);
@@ -310,6 +324,92 @@ export function LoopPage(): React.JSX.Element {
                 </Stack>
 
                 <Divider />
+
+                {data.focus && (data.focus.title || data.focus.issueNumber || data.focus.pullNumber) ? (
+                  <Box>
+                    <Typography variant="subtitle2" color="text.secondary">
+                      Current work
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      <strong>
+                        {(() => {
+                          const capSourceTitle =
+                            data.focus.kind === 'capability' &&
+                            typeof data.focus.sourceTitle === 'string' &&
+                            data.focus.sourceTitle.trim().length > 0
+                              ? data.focus.sourceTitle
+                              : null;
+
+                          if (capSourceTitle) return capSourceTitle;
+                          if (data.focus.title && data.focus.title.trim().length > 0) return data.focus.title;
+                          return data.focus.kind === 'capability' ? 'Capability update' : 'Development';
+                        })()}
+                      </strong>
+                      {typeof data.focus.issueNumber === 'number'
+                        ? data.focus.kind === 'capability'
+                          ? ` (capability issue #${data.focus.issueNumber})`
+                          : ` (issue #${data.focus.issueNumber})`
+                        : ''}
+
+                      {data.focus.kind === 'capability' && typeof data.focus.sourcePullNumber === 'number'
+                        ? ` — source PR #${data.focus.sourcePullNumber}`
+                        : typeof data.focus.pullNumber === 'number'
+                          ? ` — PR #${data.focus.pullNumber}`
+                          : ''}
+
+                      {data.focus.kind === 'capability' &&
+                      typeof data.focus.pullNumber === 'number' &&
+                      typeof data.focus.sourcePullNumber === 'number' &&
+                      data.focus.pullNumber !== data.focus.sourcePullNumber
+                        ? ` — cap PR #${data.focus.pullNumber}`
+                        : data.focus.kind === 'capability' &&
+                            typeof data.focus.pullNumber === 'number' &&
+                            typeof data.focus.sourcePullNumber !== 'number'
+                          ? ` — cap PR #${data.focus.pullNumber}`
+                          : ''}
+                      {data.focus.issueUrl ? (
+                        <>
+                          {' '}
+                          —{' '}
+                          <a href={data.focus.issueUrl} target="_blank" rel="noreferrer">
+                            issue
+                          </a>
+                        </>
+                      ) : null}
+
+                      {data.focus.kind === 'capability' ? (
+                        <>
+                          {data.focus.sourcePullUrl ? (
+                            <>
+                              {' '}
+                              —{' '}
+                              <a href={data.focus.sourcePullUrl} target="_blank" rel="noreferrer">
+                                source pr
+                              </a>
+                            </>
+                          ) : null}
+                          {data.focus.pullUrl ? (
+                            <>
+                              {' '}
+                              —{' '}
+                              <a href={data.focus.pullUrl} target="_blank" rel="noreferrer">
+                                cap pr
+                              </a>
+                            </>
+                          ) : null}
+                        </>
+                      ) : data.focus.pullUrl ? (
+                        <>
+                          {' '}
+                          —{' '}
+                          <a href={data.focus.pullUrl} target="_blank" rel="noreferrer">
+                            pr
+                          </a>
+                        </>
+                      ) : null}
+                    </Typography>
+                  </Box>
+                ) : null}
 
                 <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
                   <Box sx={{ flex: 1 }}>
@@ -449,7 +549,7 @@ export function LoopPage(): React.JSX.Element {
                   <Box>
                     <Divider sx={{ my: 1.5 }} />
                     <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-                      Step D actions
+                      Step D/G actions
                     </Typography>
                     <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems={{ sm: 'center' }}>
                       <Button
@@ -462,7 +562,7 @@ export function LoopPage(): React.JSX.Element {
                         {mergeBusy ? 'Merging…' : 'Approve + merge ready PR'}
                       </Button>
                       <Typography variant="body2" color="text.secondary">
-                        Attempts to approve and merge the next ready development PR, then creates a capability update issue.
+                        Merges the next ready PR: capability-update PRs (Step G) take precedence; otherwise development PRs (Step D).
                       </Typography>
                     </Stack>
 
