@@ -80,29 +80,29 @@ export const handlers = [
       (i) => i.status === 'PENDING' && Boolean(i.prUrl) && !i.title.toLowerCase().startsWith('system:')
     ).length;
 
-    let stage: 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' = 'A';
-    let stageLabel = 'Gap analysis';
+    let stage: '1a' | '1b' | '1c' | '2a' | '2b' | '2c' | '3a' | '3b' | '3c' = '1a';
+    let stageLabel = '1a — Gap analysis issue';
     let activeStep = 0;
 
     // Follow the backend stage priority using the available mock signals.
     if (openGapAnalysisIssues > 0) {
-      stage = 'A';
-      stageLabel = 'Gap analysis';
-      activeStep = 0;
+      stage = '1b';
+      stageLabel = '1b — Gap analysis execution';
+      activeStep = 1;
+    } else if (pendingCapabilityUpdates > 0) {
+      stage = '3a';
+      stageLabel = '3a — Capability update issue';
+      activeStep = 6;
     } else if (pendingDevelopment > 0) {
       if (pendingDevelopmentWithoutPr > 0) {
-        stage = 'B';
-        stageLabel = 'Issue creation';
-        activeStep = 1;
+        stage = '2a';
+        stageLabel = '2a — Development issue creation';
+        activeStep = 3;
       } else if (pendingDevelopmentWithPr > 0) {
-        stage = 'C';
-        stageLabel = 'Development (Copilot)';
-        activeStep = 2;
+        stage = '2b';
+        stageLabel = '2b — Development execution';
+        activeStep = 4;
       }
-    } else if (pendingCapabilityUpdates > 0) {
-      stage = 'E';
-      stageLabel = 'Capability update queued';
-      activeStep = 4;
     }
 
     const first = timeline[0];
@@ -122,6 +122,8 @@ export const handlers = [
         openIssues,
         openPullRequests,
         openGapAnalysisIssues,
+        openGapAnalysisIssuesWithPr: 0,
+        openGapAnalysisIssuesReadyForReview: 0,
         unpromotedPending: pending,
 
         pendingDevelopment,

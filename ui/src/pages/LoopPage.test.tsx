@@ -11,7 +11,7 @@ test('Loop page renders the loop visualization', async () => {
   await screen.findByText(/Current stage:/i);
 
   // Spot-check some step titles.
-  await screen.findByText(/Step A — Gap analysis/i);
-  await screen.findByText(/Step B — Issue creation/i);
-  await screen.findByText(/Step C — Development/i);
+  await screen.findByText(/Step 1a — Gap analysis issue/i);
+  await screen.findByText(/Step 2a — Development issue creation/i);
+  await screen.findByText(/Step 3a — Capability update issue/i);
 });

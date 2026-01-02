@@ -30,6 +30,8 @@ type LoopCounts = {
   openIssues: number | null;
   openPullRequests: number | null;
   openGapAnalysisIssues: number | null;
+  openGapAnalysisIssuesWithPr?: number | null;
+  openGapAnalysisIssuesReadyForReview?: number | null;
   unpromotedPending: number | null;
 
   pendingDevelopment: number | null;
@@ -54,14 +56,14 @@ type RunningJob = {
 
 type LoopStatus = {
   nowIso: string;
-  stage: 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G';
+  stage: '1a' | '1b' | '1c' | '2a' | '2b' | '2c' | '3a' | '3b' | '3c';
   stageLabel: string;
   activeStep: number;
   counts: LoopCounts;
   runningJob: RunningJob | null;
   lastAction: null | { tsIso: string; summary: string; kind: string };
   focus?: {
-    kind: 'development' | 'capability';
+    kind: 'development' | 'capability' | 'gap';
     title?: string;
     sourceTitle?: string;
     issueNumber?: number | null;
@@ -118,21 +120,41 @@ const steps: Array<{
   details: React.ReactNode;
 }> = [
   {
-    key: 'A',
-    title: 'Step A — Gap analysis (cognitive, explicit)',
-    subtitle: 'Manual or semi-manual: compare goal vs capabilities; output one queue artefact.',
+    key: '1a',
+    title: 'Step 1a — Gap analysis issue',
+    subtitle: 'Deterministic: ensure a gap-analysis issue exists and is assigned.',
     details: (
       <>
         <Typography variant="body2" color="text.secondary">
-          Produces exactly one file in <code>planning/issue_queue/pending/</code>. The file is the handoff
-          artefact.
+          This stage ensures there is a live gap-analysis issue to work on.
         </Typography>
       </>
     ),
   },
   {
-    key: 'B',
-    title: 'Step B — Issue creation (automatic, hardwired)',
+    key: '1b',
+    title: 'Step 1b — Gap analysis execution',
+    subtitle: 'Work happens on the gap-analysis issue; a PR may be opened.',
+    details: (
+      <Typography variant="body2" color="text.secondary">
+        Operator/Copilot compares <code>goal.md</code> vs <code>system_capabilities.md</code> and produces the
+        next actionable development artefact.
+      </Typography>
+    ),
+  },
+  {
+    key: '1c',
+    title: 'Step 1c — Gap analysis PR completion & merge',
+    subtitle: 'Deterministic: merges the gap-analysis PR when it is ready and safe.',
+    details: (
+      <Typography variant="body2" color="text.secondary">
+        The orchestrator refuses to merge until the PR is not WIP and a review has been requested.
+      </Typography>
+    ),
+  },
+  {
+    key: '2a',
+    title: 'Step 2a — Development issue creation',
     subtitle: 'Deterministic plumbing: pending file → GitHub issue → assign Copilot.',
     details: (
       <Typography variant="body2" color="text.secondary">
@@ -141,8 +163,8 @@ const steps: Array<{
     ),
   },
   {
-    key: 'C',
-    title: 'Step C — Development (external / Copilot)',
+    key: '2b',
+    title: 'Step 2b — Development execution',
     subtitle: 'Copilot works the issue. PR created. Discussion happens.',
     details: (
       <Typography variant="body2" color="text.secondary">
@@ -151,8 +173,8 @@ const steps: Array<{
     ),
   },
   {
-    key: 'D',
-    title: 'Step D — PR completion & merge (automatic)',
+    key: '2c',
+    title: 'Step 2c — Development PR completion & merge',
     subtitle: 'Deterministic job: checks status and merges (or refuses if unsafe).',
     details: (
       <Typography variant="body2" color="text.secondary">
@@ -161,9 +183,10 @@ const steps: Array<{
     ),
   },
   {
-    key: 'E',
-    title: 'Step E — Capability update issue (cognitive, triggered)',
-    subtitle: 'On merge: create a new issue containing PR description + comments; ask to update capabilities.',
+    key: '3a',
+    title: 'Step 3a — Capability update issue',
+    subtitle:
+      'Triggered on merge: create a capability update issue containing PR description + comments; assign Copilot.',
     details: (
       <Typography variant="body2" color="text.secondary">
         This is the only place system self-knowledge is intentionally updated.
@@ -171,8 +194,8 @@ const steps: Array<{
     ),
   },
   {
-    key: 'F',
-    title: 'Step F — Capability update execution',
+    key: '3b',
+    title: 'Step 3b — Capability update execution',
     subtitle: 'Copilot updates system_capabilities.md. Issue is closed.',
     details: (
       <Typography variant="body2" color="text.secondary">
@@ -181,9 +204,9 @@ const steps: Array<{
     ),
   },
   {
-    key: 'G',
-    title: 'Step G — Capability PR completion & merge (automatic)',
-    subtitle: 'Deterministic job: checks status and merges the capabilities update (then we’re back to Step A).',
+    key: '3c',
+    title: 'Step 3c — Capability PR completion & merge',
+    subtitle: 'Deterministic job: checks status and merges the capabilities update (then we’re back to Step 1a).',
     details: (
       <Typography variant="body2" color="text.secondary">
         One job at a time. Reliable and boring.
@@ -195,7 +218,7 @@ const steps: Array<{
 function LoopStepIcon(props: StepIconProps): React.JSX.Element {
   const iconNumber = typeof props.icon === 'number' ? props.icon : Number(props.icon);
   const idx = Number.isFinite(iconNumber) ? iconNumber - 1 : -1;
-  const letter = idx >= 0 && idx < steps.length ? steps[idx]?.key ?? '?' : '?';
+  const stageKey = idx >= 0 && idx < steps.length ? steps[idx]?.key ?? '?' : '?';
 
   if (props.completed) {
     return <CheckCircleIcon sx={{ color: 'success.main' }} />;
@@ -218,7 +241,7 @@ function LoopStepIcon(props: StepIconProps): React.JSX.Element {
         color: props.active ? 'primary.contrastText' : 'text.secondary',
       }}
     >
-      {letter}
+      {stageKey}
     </Box>
   );
 }
@@ -267,8 +290,8 @@ export function LoopPage(): React.JSX.Element {
   const data = res.data;
   const fmt = (v: number | null | undefined): string => (typeof v === 'number' ? String(v) : '—');
 
-  const canPromote = data.stage === 'B';
-  const canMerge = data.stage === 'D' || data.stage === 'G';
+  const canPromote = data.stage === '2a';
+  const canMerge = data.stage.endsWith('c');
 
   const onPromote = (): void => {
     setPromoteBusy(true);
@@ -342,13 +365,17 @@ export function LoopPage(): React.JSX.Element {
 
                           if (capSourceTitle) return capSourceTitle;
                           if (data.focus.title && data.focus.title.trim().length > 0) return data.focus.title;
-                          return data.focus.kind === 'capability' ? 'Capability update' : 'Development';
+                          if (data.focus.kind === 'capability') return 'Capability update';
+                          if (data.focus.kind === 'gap') return 'Gap analysis';
+                          return 'Development';
                         })()}
                       </strong>
                       {typeof data.focus.issueNumber === 'number'
                         ? data.focus.kind === 'capability'
                           ? ` (capability issue #${data.focus.issueNumber})`
-                          : ` (issue #${data.focus.issueNumber})`
+                          : data.focus.kind === 'gap'
+                            ? ` (gap issue #${data.focus.issueNumber})`
+                            : ` (issue #${data.focus.issueNumber})`
                         : ''}
 
                       {data.focus.kind === 'capability' && typeof data.focus.sourcePullNumber === 'number'
@@ -515,7 +542,7 @@ export function LoopPage(): React.JSX.Element {
                   <Box>
                     <Divider sx={{ my: 1.5 }} />
                     <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-                      Step B actions
+                      Step 2a actions
                     </Typography>
                     <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems={{ sm: 'center' }}>
                       <Button
@@ -549,7 +576,7 @@ export function LoopPage(): React.JSX.Element {
                   <Box>
                     <Divider sx={{ my: 1.5 }} />
                     <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-                      Step D/G actions
+                      Merge actions
                     </Typography>
                     <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems={{ sm: 'center' }}>
                       <Button
@@ -562,7 +589,8 @@ export function LoopPage(): React.JSX.Element {
                         {mergeBusy ? 'Merging…' : 'Approve + merge ready PR'}
                       </Button>
                       <Typography variant="body2" color="text.secondary">
-                        Merges the next ready PR: capability-update PRs (Step G) take precedence; otherwise development PRs (Step D).
+                        Merges the next ready PR: capability-update PRs (Step 3c) take precedence; then gap-analysis PRs (Step 1c);
+                        otherwise development PRs (Step 2c).
                       </Typography>
                     </Stack>
 
@@ -594,7 +622,7 @@ export function LoopPage(): React.JSX.Element {
           <Card variant="outlined">
             <CardContent>
               <Typography variant="subtitle1" gutterBottom>
-                The loop (A–G)
+                The loop (1a–3c)
               </Typography>
               <Stepper activeStep={data.activeStep} orientation="vertical">
                 {steps.map((s, idx) => (

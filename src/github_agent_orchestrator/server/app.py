@@ -92,18 +92,34 @@ def _maybe_start_auto_promotion(app: FastAPI, settings: ServerSettings) -> None:
                     ref="",
                 )
                 stage = status.get("stage")
+                counts = status.get("counts") if isinstance(status, dict) else None
+                open_gap_issues = None
+                if isinstance(counts, dict):
+                    open_gap_issues = counts.get("openGapAnalysisIssues")
 
-                if stage == "B":
+                # New loop model: 1a–3c.
+                if stage == "1a":
+                    # Ensure there is a live, assigned gap-analysis issue.
+                    dashboard_module._ensure_gap_analysis_issue_exists(settings=settings, repo=repo)
+                    logger.info(
+                        "Auto gap analysis issue ensured",
+                        extra={"repo": repo, "open_gap_analysis_issues": open_gap_issues},
+                    )
+                elif stage == "2a":
                     dashboard_module._promote_next_unpromoted_development_queue_item(
                         settings=settings,
                         repo=repo,
                     )
                     logger.info("Auto promotion succeeded", extra={"repo": repo})
-                elif stage == "D":
-                    dashboard_module._merge_next_ready_development_pull_request(
+                elif stage == "3a":
+                    # Legacy path: capability updates represented by queue artefacts.
+                    dashboard_module._promote_next_unpromoted_capability_queue_item(
                         settings=settings,
                         repo=repo,
                     )
+                    logger.info("Auto capability promotion succeeded", extra={"repo": repo})
+                elif stage in {"1c", "2c", "3c"}:
+                    dashboard_module._merge_next_ready_pull_request(settings=settings, repo=repo)
                     logger.info("Auto merge succeeded", extra={"repo": repo})
             except Exception as e:
                 # 409 means "nothing to do"; treat as idle rather than an error.

@@ -40,6 +40,10 @@ _CAPABILITY_ISSUE_BODY_SOURCE_PR_RE = re.compile(
 )
 
 
+# Copilot often prefixes PR titles with "WIP" while it is still working.
+_WIP_TITLE_RE = re.compile(r"^\s*(?:\[\s*)?wip\b", re.IGNORECASE)
+
+
 # Conventions for orchestrator-created artefacts.
 #
 # These prefixes are used to (a) detect system-managed workstreams and (b) exclude them
@@ -570,6 +574,125 @@ def _is_gap_analysis_issue_title(title: str) -> bool:
     return any(lowered == t for t in _GAP_ANALYSIS_TITLES)
 
 
+def _ensure_gap_analysis_issue_exists(*, settings: ServerSettings, repo: str) -> dict[str, object]:
+    """Ensure there is exactly one open gap analysis issue (best-effort).
+
+    This is used by the server-side auto progression loop when
+    ORCHESTRATOR_AUTO_PROMOTE_ENABLED=true.
+
+    The gap analysis task remains "cognitive" (it produces a queue artefact), but this helper
+    can automatically open + assign the issue so the overall cycle can keep moving.
+    """
+
+    raw_issues = _list_open_issues_raw(settings, repository=repo)
+    for it in raw_issues:
+        if not isinstance(it, dict):
+            continue
+        if "pull_request" in it:
+            continue
+        title = it.get("title")
+        if isinstance(title, str) and _is_gap_analysis_issue_title(title):
+            num = it.get("number")
+            if isinstance(num, int):
+                # Best-effort: ensure assignment to Copilot so Step A can actually start.
+                assignees = it.get("assignees")
+                already_assigned = False
+                if isinstance(assignees, list):
+                    for a in assignees:
+                        if isinstance(a, dict) and a.get("login") == settings.copilot_assignee:
+                            already_assigned = True
+                            break
+
+                assigned: list[dict[str, Any]] | list[str] = []
+                if not already_assigned:
+                    branch = _get_default_branch(settings, repository=repo)
+                    assigned = _assign_issue_to_copilot(
+                        settings,
+                        repository=repo,
+                        issue_number=num,
+                        target_repo=repo,
+                        base_branch=branch,
+                        instructions="",
+                    )
+
+                return {
+                    "created": False,
+                    "issueNumber": num,
+                    "issueUrl": _make_github_issue_url(repo, num),
+                    "assigned": assigned,
+                }
+
+    if not settings.github_token.strip():
+        raise HTTPException(
+            status_code=409,
+            detail="ORCHESTRATOR_GITHUB_TOKEN is required to create gap analysis issues",
+        )
+
+    branch = _get_default_branch(settings, repository=repo)
+    template_body = ""
+    template_paths = (
+        "planning/issue_templates/gap-analysis.md",
+        "planning/issue_templates/gap_analysis.md",
+    )
+    last_error: Exception | None = None
+    for template_path in template_paths:
+        try:
+            template_body, _sha = _get_repo_text_file(
+                settings,
+                repository=repo,
+                path=template_path,
+                ref=branch,
+            )
+            last_error = None
+            break
+        except Exception as e:
+            last_error = e
+
+    if not template_body.strip():
+        # Fail safely: an incorrect fallback prompt here can trigger costly self-referential agent
+        # behavior. The repository should always contain the template.
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "Unable to load gap analysis template from repository. "
+                "Expected one of: planning/issue_templates/gap-analysis.md or "
+                "planning/issue_templates/gap_analysis.md"
+            ),
+        ) from last_error
+
+    issue_title = "Identify the next most important development gap"
+    # IMPORTANT: Use the template verbatim. Do not append additional 'Completion' instructions.
+    issue_body = template_body.rstrip() + "\n"
+
+    issue = _github_post_json(
+        settings,
+        url=_repo_api_url(settings, repository=repo, path="issues"),
+        payload={
+            "title": issue_title,
+            "body": issue_body,
+        },
+    )
+    issue_num = issue.get("number")
+    if not isinstance(issue_num, int):
+        raise HTTPException(status_code=502, detail="Unexpected GitHub create issue response")
+
+    assigned = _assign_issue_to_copilot(
+        settings,
+        repository=repo,
+        issue_number=issue_num,
+        target_repo=repo,
+        base_branch=branch,
+        instructions="",
+    )
+
+    return {
+        "created": True,
+        "issueNumber": issue_num,
+        "issueUrl": _make_github_issue_url(repo, issue_num),
+        "assigned": assigned,
+    }
+
+
 def _list_open_issues_raw(settings: ServerSettings, *, repository: str) -> list[dict[str, Any]]:
     # GitHub issues API includes PRs; the caller can filter.
     return _github_get_list(
@@ -830,7 +953,7 @@ def _assign_issue_to_copilot(
 
 @router.post("/loop/promote")
 def promote_next_pending_issue_queue_item(request: Request) -> dict[str, object]:
-    """Step B action: promote one pending development queue file.
+    """Step 2a action: promote one pending development queue file.
 
     Deterministic plumbing:
     - find the next unpromoted development queue file (stable filename order)
@@ -848,16 +971,18 @@ def promote_next_pending_issue_queue_item(request: Request) -> dict[str, object]
 
 @router.post("/loop/merge")
 def merge_next_ready_development_pull_request(request: Request) -> dict[str, object]:
-    """Step D/G action: approve + merge the next ready PR.
+    """Step 1c/2c/3c action: approve + merge the next ready PR.
 
     Deterministic plumbing:
-    - if a capability-update issue has a "ready for review" PR, merge that first (Step G)
-    - else find the next development queue item with an associated open PR that is "ready for review" (Step D)
+    - if a capability-update issue has a "ready for review" PR, merge that first (Step 3c)
+    - else if a gap-analysis issue has a "ready for review" PR, merge that next (Step 1c)
+    - else find the next development queue item with an associated open PR that is "ready for review" (Step 2c)
     - best-effort: mark ready for review (if draft)
     - best-effort: submit an approval review
     - attempt to merge (squash)
     - on success (dev): move the queue file to issue_queue/complete and create + assign an "Update Capability" issue
     - on success (capability): close the capability issue
+    - on success (gap): close the gap-analysis issue
 
     This endpoint intentionally performs ONE merge per call.
     """
@@ -874,7 +999,239 @@ def _merge_next_ready_pull_request(*, settings: ServerSettings, repo: str) -> di
     cap_merged = _try_merge_next_ready_capability_pull_request(settings=settings, repo=repo)
     if cap_merged is not None:
         return cap_merged
+    gap_merged = _try_merge_next_ready_gap_analysis_pull_request(settings=settings, repo=repo)
+    if gap_merged is not None:
+        return gap_merged
     return _merge_next_ready_development_pull_request(settings=settings, repo=repo)
+
+
+def _try_merge_next_ready_gap_analysis_pull_request(
+    *, settings: ServerSettings, repo: str
+) -> dict[str, object] | None:
+    """Attempt to merge a ready PR linked to an open gap-analysis issue.
+
+    Step A is modeled as a single stage, but gap analysis is often executed via a PR.
+    When that PR is ready (non-WIP + review requested, no conflicts), we can merge it
+    deterministically.
+
+    Returns:
+        A merge result dict if a gap-analysis PR was found and merged, else None.
+    """
+
+    if not settings.github_token.strip():
+        raise HTTPException(
+            status_code=409,
+            detail="ORCHESTRATOR_GITHUB_TOKEN is required to merge pull requests",
+        )
+
+    branch = _get_default_branch(settings, repository=repo)
+
+    raw_issues = _list_open_issues_raw(settings, repository=repo)
+    gap_issue_nums: list[int] = []
+    for it in raw_issues:
+        if not isinstance(it, dict):
+            continue
+        if "pull_request" in it:
+            continue
+        num = it.get("number")
+        title = it.get("title")
+        if isinstance(num, int) and isinstance(title, str) and _is_gap_analysis_issue_title(title):
+            gap_issue_nums.append(num)
+
+    if not gap_issue_nums:
+        return None
+
+    pr_review_request_cache: dict[int, bool] = {}
+    selected_issue_num: int | None = None
+    selected_pr_data: dict[str, Any] | None = None
+    selected_review_requested = False
+
+    for issue_num in sorted(set(gap_issue_nums)):
+        timeline = _list_issue_timeline_raw(settings, repository=repo, issue_number=issue_num)
+        pr_nums = _linked_pr_numbers_from_issue_timeline(timeline)
+        for pr_num in sorted(pr_nums):
+            pr_data = _get_pull_request(settings, repository=repo, pr_number=pr_num)
+            if pr_data.get("state") != "open":
+                continue
+
+            review_requested = _pull_request_has_review_request(pr_data)
+            if not review_requested:
+                cached_rr = pr_review_request_cache.get(pr_num)
+                if cached_rr is None:
+                    cached_rr = _pull_request_has_review_request_history(
+                        settings,
+                        repository=repo,
+                        pr_number=pr_num,
+                    )
+                    pr_review_request_cache[pr_num] = cached_rr
+                review_requested = cached_rr
+
+            if not _pull_request_is_merge_candidate(pr_data, review_requested=review_requested):
+                continue
+
+            selected_issue_num = issue_num
+            selected_pr_data = pr_data
+            selected_review_requested = bool(review_requested)
+            break
+        if selected_pr_data is not None:
+            break
+
+    if selected_issue_num is None or selected_pr_data is None:
+        return None
+
+    pr_number = selected_pr_data.get("number")
+    if not isinstance(pr_number, int):
+        raise HTTPException(status_code=502, detail="Unexpected pull request response (number)")
+
+    # Safety gate: never flip draft->ready or merge while a PR is WIP or before review is requested.
+    pr_title = selected_pr_data.get("title")
+    if isinstance(pr_title, str) and _pull_request_title_is_wip(pr_title):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Pull request #{pr_number} is still WIP; refusing to mark ready or merge.",
+        )
+    if not selected_review_requested:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Pull request #{pr_number} has no review-request signal; refusing to mark ready "
+                "or merge."
+            ),
+        )
+
+    # Draft PRs cannot be merged; best-effort flip to ready-for-review.
+    ready_for_review_error: str | None = None
+    if selected_pr_data.get("draft") is True:
+        pr_node_id = selected_pr_data.get("node_id")
+        graphql_url = _graphql_api_url(settings)
+        if not isinstance(pr_node_id, str) or not pr_node_id.strip():
+            ready_for_review_error = (
+                "Pull request is draft but is missing node_id; cannot mark ready"
+            )
+        else:
+            mutation = (
+                "mutation($pullRequestId: ID!) {"
+                "  markPullRequestReadyForReview(input: { pullRequestId: $pullRequestId }) {"
+                "    pullRequest { id isDraft }"
+                "  }"
+                "}"
+            )
+            try:
+                payload = _github_graphql_post(
+                    settings,
+                    query=mutation,
+                    variables={"pullRequestId": pr_node_id},
+                )
+                gql_errors = _graphql_errors_as_message(payload)
+                if gql_errors:
+                    ready_for_review_error = (
+                        f"markPullRequestReadyForReview refused for {graphql_url}: {gql_errors}"
+                    )
+            except HTTPException as e:
+                ready_for_review_error = str(e.detail)
+
+        selected_pr_data = _get_pull_request(settings, repository=repo, pr_number=pr_number)
+        if selected_pr_data.get("draft") is True:
+            detail = f"Pull request #{pr_number} is still a draft; cannot merge."
+            if ready_for_review_error:
+                detail = f"{detail} {ready_for_review_error}"
+            raise HTTPException(status_code=409, detail=detail)
+
+    # Best-effort approve.
+    approved = False
+    approval_error: str | None = None
+    try:
+        _github_post_json(
+            settings,
+            url=_repo_api_url(settings, repository=repo, path=f"pulls/{pr_number}/reviews"),
+            payload={
+                "event": "APPROVE",
+                "body": "Approved by orchestrator automation.",
+            },
+        )
+        approved = True
+    except HTTPException as e:
+        approval_error = str(e.detail)
+
+    merge_url = _repo_api_url(settings, repository=repo, path=f"pulls/{pr_number}/merge")
+    status, body = _github_put_json(
+        settings,
+        url=merge_url,
+        payload={"merge_method": "squash"},
+    )
+    if status not in {200, 201}:
+        raise HTTPException(status_code=409, detail=f"Merge refused (HTTP {status}): {body}")
+
+    merged = False
+    merge_sha: str | None = None
+    if isinstance(body, dict):
+        merged = bool(body.get("merged"))
+        raw_sha = body.get("sha")
+        merge_sha = raw_sha if isinstance(raw_sha, str) else None
+    if not merged:
+        raise HTTPException(status_code=409, detail="Merge did not complete (merged=false)")
+
+    # Best-effort: delete head branch when safe (same-repo only).
+    branch_deleted = False
+    try:
+        head = selected_pr_data.get("head")
+        head_ref: str | None = None
+        head_repo: str | None = None
+        if isinstance(head, dict):
+            head_ref = head.get("ref")
+            repo_obj = head.get("repo")
+            if isinstance(repo_obj, dict):
+                head_repo = repo_obj.get("full_name")
+        if (
+            isinstance(head_ref, str)
+            and head_ref.strip()
+            and head_ref not in {"main", "master"}
+            and head_repo == repo
+        ):
+            del_url = _repo_api_url(settings, repository=repo, path=f"git/refs/heads/{head_ref}")
+            status_del, _body_del = _github_delete_json(settings, url=del_url)
+            branch_deleted = status_del in {200, 204, 404}
+    except Exception:
+        branch_deleted = False
+
+    # Close the gap-analysis issue (best-effort).
+    issue_closed = False
+    issue_close_error: str | None = None
+    try:
+        _github_patch_json(
+            settings,
+            url=_repo_api_url(settings, repository=repo, path=f"issues/{selected_issue_num}"),
+            payload={"state": "closed"},
+        )
+        issue_closed = True
+    except HTTPException as e:
+        issue_close_error = str(e.detail)
+
+    summary = f"Merged PR #{pr_number}; closed gap analysis issue #{selected_issue_num}"
+    if issue_close_error:
+        summary = f"{summary} (warning: failed to close issue: {issue_close_error})"
+
+    # Return a superset of the dev merge schema; UI treats many fields as optional.
+    return {
+        "repo": repo,
+        "branch": branch,
+        "merged": True,
+        "mergeCommitSha": merge_sha,
+        "queuePath": None,
+        "completePath": None,
+        "developmentIssueNumber": None,
+        "pullNumber": pr_number,
+        "approved": approved,
+        "approvalError": approval_error,
+        "headBranchDeleted": branch_deleted,
+        # Reuse existing schema fields for UI linkage.
+        "capabilityIssueNumber": int(selected_issue_num),
+        "capabilityIssueCreated": False,
+        "capabilityIssueUrl": _make_github_issue_url(repo, int(selected_issue_num)),
+        "capabilityIssueAssigned": [],
+        "capabilityIssueClosed": issue_closed,
+        "summary": summary,
+    }
 
 
 def _try_merge_next_ready_capability_pull_request(
@@ -908,7 +1265,7 @@ def _try_merge_next_ready_capability_pull_request(
     if not cap_issue_nums:
         return None
 
-    pr_approval_cache: dict[int, bool] = {}
+    pr_review_request_cache: dict[int, bool] = {}
     selected_issue_num: int | None = None
     selected_pr_data: dict[str, Any] | None = None
 
@@ -920,22 +1277,19 @@ def _try_merge_next_ready_capability_pull_request(
             if pr_data.get("state") != "open":
                 continue
 
-            is_approved = False
-            if not _pull_request_has_review_request(pr_data):
-                cached_approved = pr_approval_cache.get(pr_num)
-                if cached_approved is None:
-                    reviews = _github_get_list(
+            review_requested = _pull_request_has_review_request(pr_data)
+            if not review_requested:
+                cached_rr = pr_review_request_cache.get(pr_num)
+                if cached_rr is None:
+                    cached_rr = _pull_request_has_review_request_history(
                         settings,
-                        url=_repo_api_url(
-                            settings, repository=repo, path=f"pulls/{pr_num}/reviews"
-                        ),
-                        params={"per_page": "100"},
+                        repository=repo,
+                        pr_number=pr_num,
                     )
-                    cached_approved = _pull_request_is_approved_from_reviews(reviews)
-                    pr_approval_cache[pr_num] = cached_approved
-                is_approved = cached_approved
+                    pr_review_request_cache[pr_num] = cached_rr
+                review_requested = cached_rr
 
-            if not _pull_request_is_ready_for_review(pr_data, is_approved=is_approved):
+            if not _pull_request_is_merge_candidate(pr_data, review_requested=review_requested):
                 continue
 
             selected_issue_num = issue_num
@@ -951,6 +1305,22 @@ def _try_merge_next_ready_capability_pull_request(
     pr_number = selected_pr_data.get("number")
     if not isinstance(pr_number, int):
         raise HTTPException(status_code=502, detail="Unexpected pull request response (number)")
+
+    # Safety gate: never flip draft->ready or merge while a PR is WIP or before review is requested.
+    pr_title = selected_pr_data.get("title")
+    if isinstance(pr_title, str) and _pull_request_title_is_wip(pr_title):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Pull request #{pr_number} is still WIP; refusing to mark ready or merge.",
+        )
+    if not review_requested:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Pull request #{pr_number} has no review-request signal; refusing to mark ready "
+                "or merge."
+            ),
+        )
 
     # Draft PRs cannot be merged; best-effort flip to ready-for-review.
     ready_for_review_error: str | None = None
@@ -1212,6 +1582,145 @@ def _promote_next_unpromoted_development_queue_item(
     }
 
 
+def _promote_next_unpromoted_capability_queue_item(
+    *, settings: ServerSettings, repo: str
+) -> dict[str, object]:
+    """Step E (legacy) action: promote one pending *capability* queue file.
+
+    This mirrors `_promote_next_unpromoted_development_queue_item`, but selects queue files
+    categorized as `capability` (e.g., `system-*`, `capability-*`, `capabilities-*`).
+
+    Note: the primary capability-update loop (E/F/G) is issue-driven via the
+    `Update Capability` label; this function exists for backwards compatibility
+    with queue-artefact-based capability updates.
+    """
+
+    if not settings.github_token.strip():
+        raise HTTPException(
+            status_code=409,
+            detail="ORCHESTRATOR_GITHUB_TOKEN is required to promote queue items",
+        )
+
+    branch = _get_default_branch(settings, repository=repo)
+
+    pending_paths = _list_repo_markdown_files_under(
+        settings=settings,
+        repository=repo,
+        dir_path="planning/issue_queue/pending",
+        ref=branch,
+    )
+    if not pending_paths:
+        raise HTTPException(status_code=409, detail="No pending issue-queue files to promote")
+
+    raw_issues = _list_open_issues_raw(settings, repository=repo)
+    open_issues_for_matching = [it for it in raw_issues if isinstance(it, dict)]
+
+    # Select next unpromoted *capability* item in stable order.
+    selected_path: str | None = None
+    selected_sha: str | None = None
+    selected_raw: str | None = None
+    selected_title_norm: str | None = None
+    selected_title: str | None = None
+    for p in sorted(pending_paths):
+        filename = _queue_filename(p)
+        if _queue_category_for_filename(filename) != "capability":
+            continue
+
+        content, sha = _get_repo_text_file(settings, repository=repo, path=p, ref=branch)
+        title_norm = _first_markdown_line_as_title(content)
+        if not title_norm:
+            continue
+
+        issue_num = _best_match_issue_number(title_norm, open_issues_for_matching)
+        if issue_num is not None:
+            # Already promoted (has an open issue match).
+            continue
+
+        title, _body = _parse_queue_file_for_issue(queue_id=filename, raw=content)
+        selected_path = p
+        selected_sha = sha
+        selected_raw = content
+        selected_title_norm = title_norm
+        selected_title = title
+        break
+
+    if (
+        selected_path is None
+        or selected_sha is None
+        or selected_raw is None
+        or selected_title is None
+    ):
+        raise HTTPException(status_code=409, detail="No unpromoted capability queue items found")
+
+    queue_id = _queue_filename(selected_path)
+    issue_title, issue_body = _parse_queue_file_for_issue(queue_id=queue_id, raw=selected_raw)
+
+    # Idempotency: if we have a queue marker match, reuse the existing issue.
+    existing_issue_num = _search_issue_number_by_queue_marker(
+        settings,
+        repository=repo,
+        queue_id=queue_id,
+    )
+    created = False
+    if existing_issue_num is None:
+        _ensure_repo_label_exists(settings, repository=repo, label_name=LABEL_UPDATE_CAPABILITY)
+        issue = _github_post_json(
+            settings,
+            url=_repo_api_url(settings, repository=repo, path="issues"),
+            payload={
+                "title": issue_title,
+                "body": issue_body,
+                "labels": [LABEL_UPDATE_CAPABILITY],
+            },
+        )
+        issue_num = issue.get("number")
+        if not isinstance(issue_num, int):
+            raise HTTPException(status_code=502, detail="Unexpected GitHub create issue response")
+        existing_issue_num = issue_num
+        created = True
+
+    assigned = _assign_issue_to_copilot(
+        settings,
+        repository=repo,
+        issue_number=existing_issue_num,
+        target_repo=repo,
+        base_branch=branch,
+        instructions="",
+    )
+
+    processed_path = f"planning/issue_queue/processed/{queue_id}"
+    _ensure_repo_file_present_in_processed(
+        settings,
+        repository=repo,
+        processed_path=processed_path,
+        content_text=selected_raw,
+        branch=branch,
+        message=f"Move {queue_id} to issue_queue/processed",
+    )
+    _delete_repo_file_if_present(
+        settings,
+        repository=repo,
+        path=selected_path,
+        sha=selected_sha,
+        branch=branch,
+        message=f"Remove {queue_id} from issue_queue/pending (promoted)",
+    )
+
+    issue_url = _make_github_issue_url(repo, existing_issue_num)
+    return {
+        "repo": repo,
+        "branch": branch,
+        "queuePath": selected_path,
+        "processedPath": processed_path,
+        "issueNumber": existing_issue_num,
+        "issueUrl": issue_url,
+        "created": created,
+        "assigned": assigned,
+        "normalizedTitle": selected_title_norm,
+        "summary": f"Promoted {queue_id} to issue #{existing_issue_num}",
+    }
+
+
 def _issue_has_label(issue: dict[str, Any], *, label_name: str) -> bool:
     labels = issue.get("labels")
     if not isinstance(labels, list):
@@ -1407,7 +1916,7 @@ def _merge_next_ready_development_pull_request(
         candidates.append(p)
 
     selected: dict[str, Any] | None = None
-    pr_approval_cache: dict[int, bool] = {}
+    pr_review_request_cache: dict[int, bool] = {}
     for queue_path in candidates:
         content, queue_sha = _get_repo_text_file(
             settings,
@@ -1426,22 +1935,20 @@ def _merge_next_ready_development_pull_request(
             pr_data = _get_pull_request(settings, repository=repo, pr_number=pr_num)
             if pr_data.get("state") != "open":
                 continue
-            is_approved = False
-            if not _pull_request_has_review_request(pr_data):
-                cached_approved = pr_approval_cache.get(pr_num)
-                if cached_approved is None:
-                    reviews = _github_get_list(
-                        settings,
-                        url=_repo_api_url(
-                            settings, repository=repo, path=f"pulls/{pr_num}/reviews"
-                        ),
-                        params={"per_page": "100"},
-                    )
-                    cached_approved = _pull_request_is_approved_from_reviews(reviews)
-                    pr_approval_cache[pr_num] = cached_approved
-                is_approved = cached_approved
 
-            if not _pull_request_is_ready_for_review(pr_data, is_approved=is_approved):
+            review_requested = _pull_request_has_review_request(pr_data)
+            if not review_requested:
+                cached_rr = pr_review_request_cache.get(pr_num)
+                if cached_rr is None:
+                    cached_rr = _pull_request_has_review_request_history(
+                        settings,
+                        repository=repo,
+                        pr_number=pr_num,
+                    )
+                    pr_review_request_cache[pr_num] = cached_rr
+                review_requested = cached_rr
+
+            if not _pull_request_is_merge_candidate(pr_data, review_requested=review_requested):
                 continue
             selected = {
                 "queue_path": queue_path,
@@ -1450,6 +1957,7 @@ def _merge_next_ready_development_pull_request(
                 "queue_id": _queue_filename(queue_path),
                 "issue_number": issue_num,
                 "pr": pr_data,
+                "review_requested": review_requested,
             }
             break
         if selected is not None:
@@ -1459,9 +1967,26 @@ def _merge_next_ready_development_pull_request(
         raise HTTPException(status_code=409, detail="No ready development pull requests found")
 
     pr_data = selected["pr"]
+    review_requested = bool(selected.get("review_requested"))
     pr_number = pr_data.get("number")
     if not isinstance(pr_number, int):
         raise HTTPException(status_code=502, detail="Unexpected pull request response (number)")
+
+    # Safety gate: never flip draft->ready or merge while a PR is WIP or before review is requested.
+    pr_title = pr_data.get("title")
+    if isinstance(pr_title, str) and _pull_request_title_is_wip(pr_title):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Pull request #{pr_number} is still WIP; refusing to mark ready or merge.",
+        )
+    if not review_requested:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Pull request #{pr_number} has no review-request signal; refusing to mark ready "
+                "or merge."
+            ),
+        )
 
     # If PR is a draft, try to mark it ready for review.
     # Draft PRs cannot be merged, so we fail early with a clearer 409 if we can't flip it.
@@ -1761,10 +2286,36 @@ def _linked_pr_numbers_from_issue_timeline(timeline: list[dict[str, Any]]) -> se
     return out
 
 
+def _pull_request_title_is_wip(title: str) -> bool:
+    if not isinstance(title, str):
+        return False
+    return bool(_WIP_TITLE_RE.search(title.strip()))
+
+
 def _pull_request_has_review_request(pr_data: dict[str, Any]) -> bool:
     requested_reviewers = pr_data.get("requested_reviewers")
     requested_teams = pr_data.get("requested_teams")
     return bool(requested_reviewers) or bool(requested_teams)
+
+
+def _pull_request_has_review_request_history(
+    settings: ServerSettings, *, repository: str, pr_number: int
+) -> bool:
+    """Return True if the PR has ever had a review request (best-effort).
+
+    GitHub may clear `requested_reviewers` after reviews are submitted, so we also
+    consult the PR issue timeline for `review_requested` / `review_request_removed`
+    events.
+    """
+
+    timeline = _list_issue_timeline_raw(settings, repository=repository, issue_number=pr_number)
+    for ev in timeline:
+        if not isinstance(ev, dict):
+            continue
+        event = ev.get("event")
+        if event in {"review_requested", "review_request_removed"}:
+            return True
+    return False
 
 
 def _pull_request_is_approved_from_reviews(reviews: list[dict[str, Any]]) -> bool:
@@ -1809,20 +2360,60 @@ def _pull_request_is_approved_from_reviews(reviews: list[dict[str, Any]]) -> boo
     return any(st == "APPROVED" for st in states)
 
 
-def _pull_request_is_ready_for_review(
-    pr_data: dict[str, Any], *, is_approved: bool = False
-) -> bool:
+def _pull_request_is_ready_for_review(pr_data: dict[str, Any], *, review_requested: bool) -> bool:
     # Must be open.
     if pr_data.get("state") != "open":
         return False
 
-    # Must have either an explicit review request (user or team) OR already be approved.
-    # Reason: once reviews are submitted, GitHub may clear requested reviewers even though
-    # the PR is now "ready" to merge.
-    if not (_pull_request_has_review_request(pr_data) or is_approved):
+    # Must not be draft.
+    if pr_data.get("draft") is True:
+        return False
+
+    # Must not be WIP (Copilot uses WIP as an in-progress signal).
+    title = pr_data.get("title")
+    if isinstance(title, str) and _pull_request_title_is_wip(title):
+        return False
+
+    # Must have an explicit review-request signal.
+    # We treat "review requested" as the completion marker for Copilot-authored PRs.
+    if not review_requested:
         return False
 
     # Should not have merge conflicts ("dirty" == conflicts in GitHub terminology).
+    mergeable = pr_data.get("mergeable")
+    mergeable_state = pr_data.get("mergeable_state")
+    if mergeable is False:
+        return False
+    if isinstance(mergeable_state, str):
+        return mergeable_state.lower() != "dirty"
+
+    return True
+
+
+def _pull_request_is_merge_candidate(pr_data: dict[str, Any], *, review_requested: bool) -> bool:
+    """Return True if the PR is a candidate for the merge endpoint to act on.
+
+    Unlike `_pull_request_is_ready_for_review`, this intentionally allows draft PRs,
+    because the merge endpoint may attempt to mark a draft PR as "ready for review"
+    (GraphQL mutation) *before* merging.
+
+    Safety gates still apply:
+    - PR must be open
+    - PR must not be WIP
+    - a review must have been requested (signal of Copilot completion)
+    - PR must not be conflicted
+    """
+
+    if pr_data.get("state") != "open":
+        return False
+
+    title = pr_data.get("title")
+    if isinstance(title, str) and _pull_request_title_is_wip(title):
+        return False
+
+    if not review_requested:
+        return False
+
     mergeable = pr_data.get("mergeable")
     mergeable_state = pr_data.get("mergeable_state")
     if mergeable is False:
@@ -2235,7 +2826,7 @@ def overview(request: Request) -> dict[str, object]:
 
 @router.get("/loop")
 def loop_status(request: Request) -> dict[str, object]:
-    """Return a UI-friendly summary of the orchestrator's A–G loop.
+    """Return a UI-friendly summary of the orchestrator's 1a–3c loop.
 
     The intent is to help visualize where the system currently is *without* adding
     new "intelligence". This is a best-effort stage derived from persisted state.
@@ -2298,7 +2889,18 @@ def _loop_status_for_repo(
         if isinstance(num, int) and _issue_has_label(it, label_name=LABEL_UPDATE_CAPABILITY):
             open_capability_issue_numbers.append(num)
 
-    has_open_gap_analysis_issue = any(_is_gap_analysis_issue_title(t) for t in open_issue_titles)
+    gap_issue_nums: list[int] = []
+    for it in raw_issues:
+        if not isinstance(it, dict):
+            continue
+        if "pull_request" in it:
+            continue
+        num = it.get("number")
+        title = it.get("title")
+        if isinstance(num, int) and isinstance(title, str) and _is_gap_analysis_issue_title(title):
+            gap_issue_nums.append(num)
+
+    has_open_gap_analysis_issue = bool(gap_issue_nums)
 
     raw_open_prs = _list_open_pull_requests_raw(settings, repository=active_repo, limit=100)
     open_pr_count = len(raw_open_prs)
@@ -2329,12 +2931,11 @@ def _loop_status_for_repo(
     issue_to_open_prs: dict[int, list[dict[str, Any]]] = {}
     issue_to_open_ready_prs: dict[int, list[dict[str, Any]]] = {}
     pr_lookups = 0
-    pr_review_lookups = 0
     timeline_lookups = 0
 
     open_issues_for_matching = [it for it in raw_issues if isinstance(it, dict)]
     pr_cache: dict[int, dict[str, Any]] = {}
-    pr_approval_cache: dict[int, bool] = {}
+    pr_review_request_cache: dict[int, bool] = {}
 
     queue_paths_for_linkage = list(pending_paths) + list(processed_paths)
     for queue_path in queue_paths_for_linkage:
@@ -2385,23 +2986,20 @@ def _loop_status_for_repo(
                     continue
                 open_prs.append(pr_data)
 
-                is_approved = False
-                if not _pull_request_has_review_request(pr_data):
-                    cached_approved = pr_approval_cache.get(pr_num)
-                    if cached_approved is None:
-                        reviews = _github_get_list(
+                review_requested = _pull_request_has_review_request(pr_data)
+                if not review_requested:
+                    cached_rr = pr_review_request_cache.get(pr_num)
+                    if cached_rr is None:
+                        cached_rr = _pull_request_has_review_request_history(
                             settings,
-                            url=_repo_api_url(
-                                settings, repository=active_repo, path=f"pulls/{pr_num}/reviews"
-                            ),
-                            params={"per_page": "100"},
+                            repository=active_repo,
+                            pr_number=pr_num,
                         )
-                        pr_review_lookups += 1
-                        cached_approved = _pull_request_is_approved_from_reviews(reviews)
-                        pr_approval_cache[pr_num] = cached_approved
-                    is_approved = cached_approved
+                        pr_review_request_cache[pr_num] = cached_rr
+                        timeline_lookups += 1
+                    review_requested = cached_rr
 
-                if _pull_request_is_ready_for_review(pr_data, is_approved=is_approved):
+                if _pull_request_is_ready_for_review(pr_data, review_requested=review_requested):
                     ready_prs.append(pr_data)
 
             issue_to_open_prs[issue_num] = open_prs
@@ -2444,30 +3042,82 @@ def _loop_status_for_repo(
             cap_issue_with_pr = True
             cap_open_prs_list.append(pr_data)
 
-            is_approved = False
-            if not _pull_request_has_review_request(pr_data):
-                cached_approved = pr_approval_cache.get(linked_pr_num)
-                if cached_approved is None:
-                    reviews = _github_get_list(
+            review_requested = _pull_request_has_review_request(pr_data)
+            if not review_requested:
+                cached_rr = pr_review_request_cache.get(linked_pr_num)
+                if cached_rr is None:
+                    cached_rr = _pull_request_has_review_request_history(
                         settings,
-                        url=_repo_api_url(
-                            settings,
-                            repository=active_repo,
-                            path=f"pulls/{linked_pr_num}/reviews",
-                        ),
-                        params={"per_page": "100"},
+                        repository=active_repo,
+                        pr_number=linked_pr_num,
                     )
-                    pr_review_lookups += 1
-                    cached_approved = _pull_request_is_approved_from_reviews(reviews)
-                    pr_approval_cache[linked_pr_num] = cached_approved
-                is_approved = cached_approved
+                    pr_review_request_cache[linked_pr_num] = cached_rr
+                    timeline_lookups += 1
+                review_requested = cached_rr
 
-            if _pull_request_is_ready_for_review(pr_data, is_approved=is_approved):
+            if _pull_request_is_ready_for_review(pr_data, review_requested=review_requested):
                 cap_issue_ready_for_review = True
                 cap_ready_prs_list.append(pr_data)
 
         cap_issue_to_open_prs[issue_num] = cap_open_prs_list
         cap_issue_to_open_ready_prs[issue_num] = cap_ready_prs_list
+
+    # Gap-analysis issues (Step A) are derived from titles, not queue artefacts.
+    gap_issue_nums = sorted(set(gap_issue_nums))
+    gap_issue_with_pr = False
+    gap_issue_ready_for_review = False
+    gap_issue_to_open_prs: dict[int, list[dict[str, Any]]] = {}
+    gap_issue_to_open_ready_prs: dict[int, list[dict[str, Any]]] = {}
+    for issue_num in gap_issue_nums:
+        if issue_num in issue_to_open_prs:
+            gap_open_prs_existing = list(issue_to_open_prs.get(issue_num) or [])
+            gap_ready_prs_existing = list(issue_to_open_ready_prs.get(issue_num) or [])
+            gap_issue_to_open_prs[issue_num] = gap_open_prs_existing
+            gap_issue_to_open_ready_prs[issue_num] = gap_ready_prs_existing
+            gap_issue_with_pr = gap_issue_with_pr or bool(gap_open_prs_existing)
+            gap_issue_ready_for_review = gap_issue_ready_for_review or bool(gap_ready_prs_existing)
+            continue
+
+        timeline = _list_issue_timeline_raw(
+            settings, repository=active_repo, issue_number=issue_num
+        )
+        timeline_lookups += 1
+        pr_nums = _linked_pr_numbers_from_issue_timeline(timeline)
+
+        gap_open_prs_list: list[dict[str, Any]] = []
+        gap_ready_prs_list: list[dict[str, Any]] = []
+        for linked_pr_num in sorted(pr_nums):
+            pr_data = pr_cache.get(linked_pr_num)
+            if pr_data is None:
+                pr_data = _get_pull_request(
+                    settings, repository=active_repo, pr_number=linked_pr_num
+                )
+                pr_cache[linked_pr_num] = pr_data
+                pr_lookups += 1
+            if pr_data.get("state") != "open":
+                continue
+            gap_issue_with_pr = True
+            gap_open_prs_list.append(pr_data)
+
+            review_requested = _pull_request_has_review_request(pr_data)
+            if not review_requested:
+                cached_rr = pr_review_request_cache.get(linked_pr_num)
+                if cached_rr is None:
+                    cached_rr = _pull_request_has_review_request_history(
+                        settings,
+                        repository=active_repo,
+                        pr_number=linked_pr_num,
+                    )
+                    pr_review_request_cache[linked_pr_num] = cached_rr
+                    timeline_lookups += 1
+                review_requested = cached_rr
+
+            if _pull_request_is_ready_for_review(pr_data, review_requested=review_requested):
+                gap_issue_ready_for_review = True
+                gap_ready_prs_list.append(pr_data)
+
+        gap_issue_to_open_prs[issue_num] = gap_open_prs_list
+        gap_issue_to_open_ready_prs[issue_num] = gap_ready_prs_list
 
     dev_pending_paths = [p for p in pending_paths if _queue_filename(p) in set(dev_pending)]
     cap_pending_paths = [p for p in pending_paths if _queue_filename(p) in set(cap_pending)]
@@ -2509,76 +3159,93 @@ def _loop_status_for_repo(
     ]
 
     # --- Stage selection (priority is loop order) ---
+    # 1a/1b/1c: gap-analysis issue lifecycle
+    # 2a/2b/2c: development issue lifecycle (queue -> issue -> PR -> merge)
+    # 3a/3b/3c: capability update issue lifecycle
     if has_open_gap_analysis_issue:
-        stage = "A"
-        stage_label = "Gap analysis"
-        active_step = 0
-        stage_reason = "open gap analysis issue detected"
+        if gap_issue_ready_for_review:
+            stage = "1c"
+            stage_label = "1c — Gap analysis PR ready for merge"
+            active_step = 2
+            stage_reason = "open gap analysis issue has an associated open PR ready for review"
+        elif gap_issue_with_pr:
+            stage = "1b"
+            stage_label = "1b — Gap analysis execution"
+            active_step = 1
+            stage_reason = "open gap analysis issue has an associated open PR"
+        else:
+            stage = "1a"
+            stage_label = "1a — Gap analysis issue"
+            active_step = 0
+            stage_reason = "open gap analysis issue detected (no PR yet)"
     elif cap_issue_nums:
         if cap_issue_ready_for_review:
-            stage = "G"
-            stage_label = "Capability PR ready for merge"
-            active_step = 6
+            stage = "3c"
+            stage_label = "3c — Capability PR ready for merge"
+            active_step = 8
             stage_reason = (
                 "open capability update issue exists and has an associated open PR ready for review"
             )
         elif cap_issue_with_pr:
-            stage = "F"
-            stage_label = "Capability update execution"
-            active_step = 5
+            stage = "3b"
+            stage_label = "3b — Capability update execution"
+            active_step = 7
             stage_reason = "open capability update issue exists and has an associated open PR"
         else:
-            stage = "E"
-            stage_label = "Capability update issue"
-            active_step = 4
+            stage = "3a"
+            stage_label = "3a — Capability update issue"
+            active_step = 6
             stage_reason = "open capability update issue exists (no PR yet)"
     elif dev_pending or dev_processed:
         if dev_unpromoted:
-            stage = "B"
-            stage_label = "Issue creation"
-            active_step = 1
+            stage = "2a"
+            stage_label = "2a — Development issue creation"
+            active_step = 3
             stage_reason = (
                 "pending development queue file(s) exist without an associated open issue"
             )
         elif dev_ready_for_review:
-            stage = "D"
-            stage_label = "PR ready for review"
-            active_step = 3
+            stage = "2c"
+            stage_label = "2c — Development PR ready for merge"
+            active_step = 5
             stage_reason = "development work has an open PR with review requested and no conflicts"
-        elif dev_with_pr:
-            stage = "C"
-            stage_label = "Development (Copilot)"
-            active_step = 2
-            stage_reason = "pending development queue file(s) have an associated open PR"
         else:
-            stage = "C"
-            stage_label = "Development (Copilot)"
-            active_step = 2
-            stage_reason = (
-                "pending development queue file(s) have an associated open issue but no PR yet"
-            )
+            stage = "2b"
+            stage_label = "2b — Development execution"
+            active_step = 4
+            if dev_with_pr:
+                stage_reason = "pending development queue file(s) have an associated open PR"
+            else:
+                stage_reason = (
+                    "pending development queue file(s) have an associated open issue but no PR yet"
+                )
     elif cap_pending or cap_processed:
         # Legacy path: capability update represented by queue artefacts.
         if cap_unpromoted:
-            stage = "E"
-            stage_label = "Capability update queued"
-            active_step = 4
+            stage = "3a"
+            stage_label = "3a — Capability update queued"
+            active_step = 6
             stage_reason = (
                 "pending capability update queue file(s) exist without an associated open issue"
             )
+        elif cap_ready_for_review:
+            stage = "3c"
+            stage_label = "3c — Capability PR ready for merge"
+            active_step = 8
+            stage_reason = "pending capability update queue file(s) have an associated ready PR"
         else:
-            stage = "F"
-            stage_label = "Capability update in progress"
-            active_step = 5
+            stage = "3b"
+            stage_label = "3b — Capability update in progress"
+            active_step = 7
             stage_reason = "pending capability update queue file(s) have an associated open PR"
     elif processed_count > 0:
-        stage = "C"
-        stage_label = "Development (Copilot)"
-        active_step = 2
+        stage = "2b"
+        stage_label = "2b — Development execution"
+        active_step = 4
         stage_reason = "processed queue artefacts exist"
     else:
-        stage = "A"
-        stage_label = "Gap analysis"
+        stage = "1a"
+        stage_label = "1a — Gap analysis issue"
         active_step = 0
         stage_reason = "no pending/processed artefacts"
 
@@ -2601,10 +3268,36 @@ def _loop_status_for_repo(
         return sorted(paths)[0]
 
     focus: dict[str, object] | None = None
-    if stage in {"B", "C", "D"}:
-        if stage == "B":
+    if stage in {"1a", "1b", "1c"} and gap_issue_nums:
+        issue_num = gap_issue_nums[0]
+        title = open_issue_titles_by_number.get(issue_num) or ""
+
+        prs = gap_issue_to_open_prs.get(issue_num) or []
+        ready_prs = gap_issue_to_open_ready_prs.get(issue_num) or []
+        selected_pr = ready_prs[0] if ready_prs else (prs[0] if prs else None)
+
+        gap_focus_pr_num: int | None = None
+        gap_focus_pr_url: str | None = None
+        if isinstance(selected_pr, dict):
+            raw_pr_num = selected_pr.get("number")
+            if isinstance(raw_pr_num, int):
+                gap_focus_pr_num = raw_pr_num
+            raw_pr_url = selected_pr.get("html_url")
+            if isinstance(raw_pr_url, str) and raw_pr_url.strip():
+                gap_focus_pr_url = raw_pr_url
+
+        focus = {
+            "kind": "gap",
+            "title": title,
+            "issueNumber": issue_num,
+            "issueUrl": _make_github_issue_url(active_repo, issue_num),
+            "pullNumber": gap_focus_pr_num,
+            "pullUrl": gap_focus_pr_url,
+        }
+    elif stage in {"2a", "2b", "2c"}:
+        if stage == "2a":
             focus_path = _first_path(dev_unpromoted)
-        elif stage == "D":
+        elif stage == "2c":
             focus_path = _first_path(dev_ready_for_review)
         else:
             # Prefer items that already have PRs, then fall back to any inflight dev item.
@@ -2645,7 +3338,7 @@ def _loop_status_for_repo(
                 "pullNumber": focus_pr_num,
                 "pullUrl": focus_pr_url,
             }
-    elif stage in {"E", "F", "G"} and cap_issue_nums:
+    elif stage in {"3a", "3b", "3c"} and cap_issue_nums:
         issue_num = sorted(cap_issue_nums)[0]
         title = open_issue_titles_by_number.get(issue_num) or ""
 
@@ -2734,7 +3427,9 @@ def _loop_status_for_repo(
             "complete": complete_count,
             "openIssues": len(open_issue_titles),
             "openPullRequests": open_pr_count,
-            "openGapAnalysisIssues": (1 if has_open_gap_analysis_issue else 0),
+            "openGapAnalysisIssues": len(gap_issue_nums),
+            "openGapAnalysisIssuesWithPr": (1 if gap_issue_with_pr else 0),
+            "openGapAnalysisIssuesReadyForReview": (1 if gap_issue_ready_for_review else 0),
             "unpromotedPending": len(
                 [p for p in pending_paths if queue_issue_numbers.get(p) is None]
             ),
@@ -2760,7 +3455,6 @@ def _loop_status_for_repo(
             "gapAnalysisIssueTitles": list(_GAP_ANALYSIS_TITLES),
             "issueTimelineLookups": timeline_lookups,
             "pullRequestLookups": pr_lookups,
-            "pullRequestReviewLookups": pr_review_lookups,
         },
         "warnings": warnings,
         "focus": focus,

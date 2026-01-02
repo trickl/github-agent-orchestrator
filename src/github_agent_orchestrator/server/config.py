@@ -40,7 +40,10 @@ class ServerSettings(BaseSettings):
         default=False,
         validation_alias="ORCHESTRATOR_AUTO_PROMOTE_ENABLED",
         description=(
-            "If true, the server will periodically attempt Step B promotion (pending file -> issue -> assign)."
+            "If true, the server will periodically attempt deterministic loop progression. "
+            "This includes Step 1a kick-off (open + assign a gap analysis issue when none exists), "
+            "Step 2a promotion (pending file -> issue -> assign), Step 1c/2c/3c merges (when safe), "
+            "and Step 3a legacy capability promotion for capability queue artefacts."
         ),
     )
     auto_promote_interval_seconds: float = Field(

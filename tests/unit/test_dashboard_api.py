@@ -136,8 +136,8 @@ def test_loop_status_endpoint(monkeypatch, tmp_path: Path) -> None:
 
     loop = client.get("/api/loop").json()
     # Pending development queue files exist and none are promoted to issues => Step B
-    assert loop["stage"] == "B"
-    assert loop["activeStep"] == 1
+    assert loop["stage"] == "2a"
+    assert loop["activeStep"] == 3
     assert loop["counts"]["pending"] == 2
     assert loop["counts"]["openIssues"] == 0
     assert loop["counts"]["openPullRequests"] == 0
@@ -189,8 +189,8 @@ def test_loop_status_stage_c_when_issue_exists_but_no_pr(monkeypatch, tmp_path: 
     client = TestClient(create_app())
     loop = client.get("/api/loop").json()
 
-    assert loop["stage"] == "C"
-    assert loop["activeStep"] == 2
+    assert loop["stage"] == "2b"
+    assert loop["activeStep"] == 4
     assert loop["counts"]["pending"] == 1
     assert loop["counts"]["openIssues"] == 1
     assert loop["counts"]["unpromotedPending"] == 0
@@ -255,7 +255,8 @@ def test_loop_status_stage_d_when_processed_has_ready_pr(monkeypatch, tmp_path: 
         lambda *_a, **_k: {
             "number": 5,
             "state": "open",
-            "draft": True,
+            "draft": False,
+            "title": "Dev: One",
             "requested_reviewers": [{"login": "alice"}],
             "requested_teams": [],
             "mergeable_state": "clean",
@@ -265,11 +266,11 @@ def test_loop_status_stage_d_when_processed_has_ready_pr(monkeypatch, tmp_path: 
     client = TestClient(create_app())
     loop = client.get("/api/loop").json()
 
-    assert loop["stage"] == "D"
-    assert loop["activeStep"] == 3
+    assert loop["stage"] == "2c"
+    assert loop["activeStep"] == 5
 
 
-def test_loop_status_stage_d_when_processed_has_approved_pr_even_without_review_request(
+def test_loop_status_stage_d_when_processed_has_review_requested_event_even_without_requested_reviewers(
     monkeypatch, tmp_path: Path
 ) -> None:
     planning = tmp_path / "planning"
@@ -306,6 +307,147 @@ def test_loop_status_stage_d_when_processed_has_approved_pr_even_without_review_
     )
     monkeypatch.setattr(dashboard_router, "_list_open_pull_requests_raw", lambda *_a, **_k: [])
 
+    def fake_timeline(*_a, **kwargs):
+        # Issue -> PR cross reference.
+        if kwargs.get("issue_number") == 101:
+            return [
+                {
+                    "event": "cross-referenced",
+                    "source": {"issue": {"number": 5, "pull_request": {}}},
+                }
+            ]
+        # PR issue timeline contains the explicit review request signal (requested reviewers can be cleared).
+        if kwargs.get("issue_number") == 5:
+            return [{"event": "review_requested"}]
+        return []
+
+    monkeypatch.setattr(dashboard_router, "_list_issue_timeline_raw", fake_timeline)
+
+    # PR is open and conflict-free, but requested_reviewers is empty (GitHub clears it after review).
+    monkeypatch.setattr(
+        dashboard_router,
+        "_get_pull_request",
+        lambda *_a, **_k: {
+            "number": 5,
+            "state": "open",
+            "draft": False,
+            "title": "Dev: One",
+            "requested_reviewers": [],
+            "requested_teams": [],
+            "mergeable_state": "clean",
+        },
+    )
+
+    client = TestClient(create_app())
+    loop = client.get("/api/loop").json()
+
+    assert loop["stage"] == "2c"
+    assert loop["activeStep"] == 5
+
+
+def test_loop_status_does_not_advance_when_pr_is_wip(monkeypatch, tmp_path: Path) -> None:
+    planning = tmp_path / "planning"
+    agent_state = tmp_path / "agent_state"
+
+    monkeypatch.setenv("ORCHESTRATOR_PLANNING_ROOT", str(planning))
+    monkeypatch.setenv("AGENT_STATE_PATH", str(agent_state))
+    monkeypatch.setenv("ORCHESTRATOR_UI_DIST", str(tmp_path / "ui" / "dist"))
+    monkeypatch.setenv("ORCHESTRATOR_DEFAULT_REPO", "acme/repo")
+
+    import github_agent_orchestrator.server.dashboard_router as dashboard_router
+
+    def fake_list_repo_md(*_args, **kwargs):
+        dir_path = kwargs.get("dir_path")
+        if dir_path == "planning/issue_queue/pending":
+            return []
+        if dir_path == "planning/issue_queue/processed":
+            return ["planning/issue_queue/processed/dev-1.md"]
+        if dir_path == "planning/issue_queue/complete":
+            return []
+        return []
+
+    monkeypatch.setattr(dashboard_router, "_list_repo_markdown_files_under", fake_list_repo_md)
+    monkeypatch.setattr(
+        dashboard_router,
+        "_get_repo_text_file",
+        lambda *_a, **_k: ("Dev: One\n\nBody\n", "sha-1"),
+    )
+    monkeypatch.setattr(
+        dashboard_router,
+        "_list_open_issues_raw",
+        lambda *_a, **_k: [{"number": 101, "title": "Dev: One", "state": "open"}],
+    )
+    monkeypatch.setattr(dashboard_router, "_list_open_pull_requests_raw", lambda *_a, **_k: [])
+    monkeypatch.setattr(
+        dashboard_router,
+        "_list_issue_timeline_raw",
+        lambda *_a, **_k: [
+            {
+                "event": "cross-referenced",
+                "source": {"issue": {"number": 5, "pull_request": {}}},
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        dashboard_router,
+        "_get_pull_request",
+        lambda *_a, **_k: {
+            "number": 5,
+            "state": "open",
+            "draft": False,
+            "title": "WIP: Dev: One",
+            "requested_reviewers": [{"login": "alice"}],
+            "requested_teams": [],
+            "mergeable_state": "clean",
+        },
+    )
+
+    client = TestClient(create_app())
+    loop = client.get("/api/loop").json()
+
+    assert loop["stage"] == "2b"
+    assert loop["activeStep"] == 4
+
+
+def test_loop_status_stage_a_exposes_gap_pr_ready_for_merge(monkeypatch, tmp_path: Path) -> None:
+    planning = tmp_path / "planning"
+    agent_state = tmp_path / "agent_state"
+
+    monkeypatch.setenv("ORCHESTRATOR_PLANNING_ROOT", str(planning))
+    monkeypatch.setenv("AGENT_STATE_PATH", str(agent_state))
+    monkeypatch.setenv("ORCHESTRATOR_UI_DIST", str(tmp_path / "ui" / "dist"))
+    monkeypatch.setenv("ORCHESTRATOR_DEFAULT_REPO", "acme/repo")
+
+    import github_agent_orchestrator.server.dashboard_router as dashboard_router
+
+    # No queue artefacts; loop is governed by open gap-analysis issue.
+    def fake_list_repo_md(*_args, **kwargs):
+        dir_path = kwargs.get("dir_path")
+        if dir_path in {
+            "planning/issue_queue/pending",
+            "planning/issue_queue/processed",
+            "planning/issue_queue/complete",
+        }:
+            return []
+        return []
+
+    monkeypatch.setattr(dashboard_router, "_list_repo_markdown_files_under", fake_list_repo_md)
+
+    monkeypatch.setattr(
+        dashboard_router,
+        "_list_open_issues_raw",
+        lambda *_a, **_k: [
+            {
+                "number": 42,
+                "title": "Identify the next most important development gap",
+                "state": "open",
+                "assignees": [],
+            }
+        ],
+    )
+    monkeypatch.setattr(dashboard_router, "_list_open_pull_requests_raw", lambda *_a, **_k: [])
+
+    # Gap-analysis issue timeline cross-references PR #5.
     monkeypatch.setattr(
         dashboard_router,
         "_list_issue_timeline_raw",
@@ -317,7 +459,6 @@ def test_loop_status_stage_d_when_processed_has_approved_pr_even_without_review_
         ],
     )
 
-    # PR is open and conflict-free, but requested_reviewers is empty (GitHub clears it after review).
     monkeypatch.setattr(
         dashboard_router,
         "_get_pull_request",
@@ -325,31 +466,28 @@ def test_loop_status_stage_d_when_processed_has_approved_pr_even_without_review_
             "number": 5,
             "state": "open",
             "draft": False,
-            "requested_reviewers": [],
+            "title": "Gap analysis results",
+            "requested_reviewers": [{"login": "alice"}],
             "requested_teams": [],
             "mergeable_state": "clean",
+            "html_url": "https://github.com/acme/repo/pull/5",
         },
     )
-
-    def fake_github_get_list(*_a, **kwargs):
-        url = str(kwargs.get("url") or "")
-        if url.endswith("/pulls/5/reviews"):
-            return [
-                {
-                    "state": "APPROVED",
-                    "submitted_at": "2026-01-01T00:00:00Z",
-                    "user": {"login": "alice"},
-                }
-            ]
-        return []
-
-    monkeypatch.setattr(dashboard_router, "_github_get_list", fake_github_get_list)
 
     client = TestClient(create_app())
     loop = client.get("/api/loop").json()
 
-    assert loop["stage"] == "D"
-    assert loop["activeStep"] == 3
+    assert loop["stage"] == "1c"
+    assert loop["activeStep"] == 2
+    assert loop["counts"]["openGapAnalysisIssues"] == 1
+    assert loop["counts"]["openGapAnalysisIssuesWithPr"] == 1
+    assert loop["counts"]["openGapAnalysisIssuesReadyForReview"] == 1
+
+    focus = loop.get("focus")
+    assert isinstance(focus, dict)
+    assert focus.get("kind") == "gap"
+    assert focus.get("issueNumber") == 42
+    assert focus.get("pullNumber") == 5
 
 
 def test_loop_promote_endpoint_promotes_one_file(monkeypatch, tmp_path: Path) -> None:
@@ -493,8 +631,8 @@ def test_loop_status_stage_e_when_open_update_capability_issue_exists(
 
     client = TestClient(create_app())
     loop = client.get("/api/loop").json()
-    assert loop["stage"] == "E"
-    assert loop["activeStep"] == 4
+    assert loop["stage"] == "3a"
+    assert loop["activeStep"] == 6
 
     focus = loop.get("focus")
     assert isinstance(focus, dict)
@@ -603,8 +741,8 @@ def test_loop_status_stage_g_when_open_update_capability_issue_has_ready_pr(
 
     client = TestClient(create_app())
     loop = client.get("/api/loop").json()
-    assert loop["stage"] == "G"
-    assert loop["activeStep"] == 6
+    assert loop["stage"] == "3c"
+    assert loop["activeStep"] == 8
 
     focus = loop.get("focus")
     assert isinstance(focus, dict)
@@ -823,8 +961,138 @@ def test_loop_merge_endpoint_merges_ready_capability_pr_and_closes_issue(
     assert data["merged"] is True
     assert data["pullNumber"] == 5
     assert data["capabilityIssueNumber"] == 202
-    assert data["capabilityIssueCreated"] is False
-    assert data.get("developmentIssueNumber") is None
+
+
+def test_promote_next_unpromoted_capability_queue_item_promotes_one_file(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("ORCHESTRATOR_GITHUB_TOKEN", "test-token")
+
+    import github_agent_orchestrator.server.dashboard_router as dashboard_router
+
+    monkeypatch.setattr(dashboard_router, "_get_default_branch", lambda *_a, **_k: "main")
+    monkeypatch.setattr(dashboard_router, "_ensure_repo_label_exists", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        dashboard_router,
+        "_list_repo_markdown_files_under",
+        lambda *_a, **_k: ["planning/issue_queue/pending/system-1.md"],
+    )
+    monkeypatch.setattr(
+        dashboard_router,
+        "_get_repo_text_file",
+        lambda *_a, **_k: ("System: Update capability\n\nBody\n", "sha-1"),
+    )
+    monkeypatch.setattr(dashboard_router, "_list_open_issues_raw", lambda *_a, **_k: [])
+    monkeypatch.setattr(
+        dashboard_router,
+        "_search_issue_number_by_queue_marker",
+        lambda *_a, **_k: None,
+    )
+
+    def fake_post_json(*_a, **kwargs):
+        url = str(kwargs.get("url") or "")
+        payload = kwargs.get("payload")
+        if url.endswith("/issues"):
+            assert isinstance(payload, dict)
+            assert payload.get("labels") == ["Update Capability"]
+            return {"number": 321}
+        if url.endswith("/issues/321/assignees"):
+            return {"assignees": [{"login": "copilot-swe-agent[bot]"}]}
+        raise AssertionError(f"Unexpected POST url: {url}")
+
+    monkeypatch.setattr(dashboard_router, "_github_post_json", fake_post_json)
+    monkeypatch.setattr(dashboard_router, "_github_put_json", lambda *_a, **_k: (201, {}))
+    monkeypatch.setattr(dashboard_router, "_github_delete_json", lambda *_a, **_k: (204, None))
+
+    out = dashboard_router._promote_next_unpromoted_capability_queue_item(
+        settings=dashboard_router.ServerSettings(),
+        repo="acme/repo",
+    )
+    assert out["issueNumber"] == 321
+    assert str(out["queuePath"]).endswith("planning/issue_queue/pending/system-1.md")
+    assert str(out["processedPath"]).endswith("planning/issue_queue/processed/system-1.md")
+
+
+def test_ensure_gap_analysis_issue_exists_creates_and_assigns(monkeypatch) -> None:
+    monkeypatch.setenv("ORCHESTRATOR_GITHUB_TOKEN", "test-token")
+
+    import github_agent_orchestrator.server.dashboard_router as dashboard_router
+
+    monkeypatch.setattr(dashboard_router, "_get_default_branch", lambda *_a, **_k: "main")
+    monkeypatch.setattr(dashboard_router, "_list_open_issues_raw", lambda *_a, **_k: [])
+    monkeypatch.setattr(
+        dashboard_router,
+        "_get_repo_text_file",
+        lambda *_a, **_k: ("# Gap Analysis\n\nDo the thing\n", "sha"),
+    )
+
+    created: dict[str, object] = {}
+
+    def fake_post_json(*_a, **kwargs):
+        url = str(kwargs.get("url") or "")
+        payload = kwargs.get("payload")
+        if url.endswith("/issues"):
+            assert isinstance(payload, dict)
+            assert "gap" in str(payload.get("title") or "").lower()
+            created.update(payload)
+            return {"number": 777}
+        raise AssertionError(f"Unexpected POST url: {url}")
+
+    monkeypatch.setattr(dashboard_router, "_github_post_json", fake_post_json)
+    monkeypatch.setattr(
+        dashboard_router,
+        "_assign_issue_to_copilot",
+        lambda *_a, **_k: [{"login": "copilot-swe-agent[bot]"}],
+    )
+
+    out = dashboard_router._ensure_gap_analysis_issue_exists(
+        settings=dashboard_router.ServerSettings(),
+        repo="acme/repo",
+    )
+    assert out["created"] is True
+    assert out["issueNumber"] == 777
+    assert out["assigned"]
+    created_body = str(created.get("body") or "")
+    assert created_body.strip() == "# Gap Analysis\n\nDo the thing"
+    assert "Completion:" not in created_body
+    assert "Open a PR" not in created_body
+    assert "Create one development task" not in created_body
+
+
+def test_ensure_gap_analysis_issue_exists_assigns_existing_when_unassigned(monkeypatch) -> None:
+    monkeypatch.setenv("ORCHESTRATOR_GITHUB_TOKEN", "test-token")
+
+    import github_agent_orchestrator.server.dashboard_router as dashboard_router
+
+    monkeypatch.setattr(dashboard_router, "_get_default_branch", lambda *_a, **_k: "main")
+    monkeypatch.setattr(
+        dashboard_router,
+        "_list_open_issues_raw",
+        lambda *_a, **_k: [
+            {
+                "number": 42,
+                "title": "Identify the next most important development gap",
+                "assignees": [],
+            }
+        ],
+    )
+
+    called: dict[str, object] = {}
+
+    def fake_assign(*_a, **kwargs):
+        called.update(kwargs)
+        return [{"login": "copilot-swe-agent[bot]"}]
+
+    monkeypatch.setattr(dashboard_router, "_assign_issue_to_copilot", fake_assign)
+
+    out = dashboard_router._ensure_gap_analysis_issue_exists(
+        settings=dashboard_router.ServerSettings(),
+        repo="acme/repo",
+    )
+    assert out["created"] is False
+    assert out["issueNumber"] == 42
+    assert out["assigned"]
+    assert called.get("issue_number") == 42
 
 
 def test_loop_merge_endpoint_fails_cleanly_when_pr_stays_draft(monkeypatch, tmp_path: Path) -> None:
@@ -911,3 +1179,102 @@ def test_loop_merge_endpoint_fails_cleanly_when_pr_stays_draft(monkeypatch, tmp_
     assert "still a draft" in detail
     assert "markpullrequestreadyforreview" in detail
     assert "graphql" in detail
+
+
+def test_loop_merge_endpoint_merges_ready_gap_analysis_pr_and_closes_issue(
+    monkeypatch, tmp_path: Path
+) -> None:
+    planning = tmp_path / "planning"
+    agent_state = tmp_path / "agent_state"
+
+    monkeypatch.setenv("ORCHESTRATOR_PLANNING_ROOT", str(planning))
+    monkeypatch.setenv("AGENT_STATE_PATH", str(agent_state))
+    monkeypatch.setenv("ORCHESTRATOR_UI_DIST", str(tmp_path / "ui" / "dist"))
+    monkeypatch.setenv("ORCHESTRATOR_DEFAULT_REPO", "acme/repo")
+    monkeypatch.setenv("ORCHESTRATOR_GITHUB_TOKEN", "test-token")
+    monkeypatch.setenv("COPILOT_ASSIGNEE", "copilot-swe-agent[bot]")
+
+    import github_agent_orchestrator.server.dashboard_router as dashboard_router
+
+    monkeypatch.setattr(dashboard_router, "_get_default_branch", lambda *_a, **_k: "main")
+
+    # An open gap-analysis issue exists.
+    monkeypatch.setattr(
+        dashboard_router,
+        "_list_open_issues_raw",
+        lambda *_a, **_k: [
+            {
+                "number": 42,
+                "title": "Identify the next most important development gap",
+                "state": "open",
+            }
+        ],
+    )
+
+    # Issue timeline cross-references PR #5.
+    monkeypatch.setattr(
+        dashboard_router,
+        "_list_issue_timeline_raw",
+        lambda *_a, **_k: [
+            {
+                "event": "cross-referenced",
+                "source": {"issue": {"number": 5, "pull_request": {}}},
+            }
+        ],
+    )
+
+    monkeypatch.setattr(dashboard_router, "_github_get_list", lambda *_a, **_k: [])
+
+    # PR is open, non-draft, review requested, and conflict-free.
+    monkeypatch.setattr(
+        dashboard_router,
+        "_get_pull_request",
+        lambda *_a, **_k: {
+            "number": 5,
+            "state": "open",
+            "draft": False,
+            "requested_reviewers": [{"login": "alice"}],
+            "requested_teams": [],
+            "mergeable_state": "clean",
+            "title": "Gap analysis results",
+            "body": "Gap analysis body",
+            "head": {"ref": "feature/gap", "repo": {"full_name": "acme/repo"}},
+        },
+    )
+
+    # Best-effort approval.
+    def fake_post_json(*_a, **kwargs):
+        url = str(kwargs.get("url") or "")
+        if url.endswith("/pulls/5/reviews"):
+            return {"id": 1}
+        raise AssertionError(f"Unexpected POST url: {url}")
+
+    monkeypatch.setattr(dashboard_router, "_github_post_json", fake_post_json)
+
+    # Merge call.
+    def fake_put_json(*_a, **kwargs):
+        url = str(kwargs.get("url") or "")
+        if url.endswith("/pulls/5/merge"):
+            return 200, {"merged": True, "sha": "deadbeef"}
+        return 500, {"message": "unexpected"}
+
+    monkeypatch.setattr(dashboard_router, "_github_put_json", fake_put_json)
+    monkeypatch.setattr(dashboard_router, "_github_delete_json", lambda *_a, **_k: (204, None))
+
+    # Close issue.
+    def fake_patch_json(*_a, **kwargs):
+        url = str(kwargs.get("url") or "")
+        if url.endswith("/issues/42"):
+            return {"number": 42, "state": "closed"}
+        raise AssertionError(f"Unexpected PATCH url: {url}")
+
+    monkeypatch.setattr(dashboard_router, "_github_patch_json", fake_patch_json)
+
+    client = TestClient(create_app())
+    resp = client.post("/api/loop/merge")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["merged"] is True
+    assert data["pullNumber"] == 5
+    # Reused merge schema field points at the closed gap-analysis issue.
+    assert data["capabilityIssueNumber"] == 42
