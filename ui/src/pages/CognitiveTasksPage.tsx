@@ -1,7 +1,6 @@
 import React from 'react';
 import { Alert, Box, Typography } from '@mui/material';
 import { apiFetch } from '../lib/apiClient';
-import { endpoints } from '../lib/endpoints';
 import { useApiResource } from '../lib/useApiResource';
 import { ErrorState } from '../components/ErrorState';
 import { LoadingState } from '../components/LoadingState';
@@ -13,7 +12,7 @@ import {
 } from '../features/cognitiveTasks/CognitiveTasksList';
 
 export function CognitiveTasksPage(): React.JSX.Element {
-  const tasksRes = useApiResource(() => apiFetch<CognitiveTask[]>(endpoints.cognitiveTasks()), []);
+  const tasksRes = useApiResource(() => apiFetch<CognitiveTask[]>('/cognitive-tasks'), []);
 
   const [filters, setFilters] = React.useState<CognitiveTasksListFilters>({
     search: '',

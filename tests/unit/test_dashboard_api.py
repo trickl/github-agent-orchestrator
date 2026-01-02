@@ -550,6 +550,63 @@ def test_loop_promote_endpoint_promotes_one_file(monkeypatch, tmp_path: Path) ->
     assert data["processedPath"].endswith("planning/issue_queue/processed/dev-1.md")
 
 
+def test_loop_gap_analysis_ensure_endpoint_creates_and_assigns(monkeypatch, tmp_path: Path) -> None:
+    planning = tmp_path / "planning"
+    agent_state = tmp_path / "agent_state"
+
+    monkeypatch.setenv("ORCHESTRATOR_PLANNING_ROOT", str(planning))
+    monkeypatch.setenv("AGENT_STATE_PATH", str(agent_state))
+    monkeypatch.setenv("ORCHESTRATOR_UI_DIST", str(tmp_path / "ui" / "dist"))
+    monkeypatch.setenv("ORCHESTRATOR_DEFAULT_REPO", "acme/repo")
+    monkeypatch.setenv("ORCHESTRATOR_GITHUB_TOKEN", "test-token")
+    monkeypatch.setenv("COPILOT_ASSIGNEE", "copilot-swe-agent[bot]")
+
+    import github_agent_orchestrator.server.dashboard_router as dashboard_router
+
+    monkeypatch.setattr(dashboard_router, "_get_default_branch", lambda *_a, **_k: "main")
+    monkeypatch.setattr(dashboard_router, "_list_open_issues_raw", lambda *_a, **_k: [])
+    monkeypatch.setattr(
+        dashboard_router,
+        "_get_repo_text_file",
+        lambda *_a, **_k: ("# Gap Analysis\n\nDo the thing\n", "sha"),
+    )
+
+    def fake_get_json(*_a, **kwargs):
+        url = str(kwargs.get("url") or "")
+        # Assignment safety gate reads the issue after creation.
+        if url.endswith("/repos/acme/repo/issues/777"):
+            return {
+                "number": 777,
+                "title": "Identify the next most important development gap",
+                "body": "x",
+            }
+        raise AssertionError(f"Unexpected GET url: {url}")
+
+    monkeypatch.setattr(dashboard_router, "_github_get_json", fake_get_json)
+
+    def fake_post_json(*_a, **kwargs):
+        url = str(kwargs.get("url") or "")
+        payload = kwargs.get("payload")
+        if url.endswith("/issues"):
+            assert isinstance(payload, dict)
+            return {"number": 777}
+        if url.endswith("/issues/777/assignees"):
+            return {"assignees": [{"login": "copilot-swe-agent[bot]"}]}
+        raise AssertionError(f"Unexpected POST url: {url}")
+
+    monkeypatch.setattr(dashboard_router, "_github_post_json", fake_post_json)
+
+    client = TestClient(create_app())
+    resp = client.post("/api/loop/gap-analysis/ensure")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["repo"] == "acme/repo"
+    assert data["branch"] == "main"
+    assert data["issueNumber"] == 777
+    assert data["created"] is True
+    assert "summary" in data
+
+
 def test_loop_status_stage_e_when_open_update_capability_issue_exists(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -1093,6 +1150,59 @@ def test_ensure_gap_analysis_issue_exists_assigns_existing_when_unassigned(monke
     assert out["issueNumber"] == 42
     assert out["assigned"]
     assert called.get("issue_number") == 42
+
+
+def test_ensure_gap_analysis_issue_exists_repairs_unsafe_existing_issue_before_assign(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("ORCHESTRATOR_GITHUB_TOKEN", "test-token")
+
+    import github_agent_orchestrator.server.dashboard_router as dashboard_router
+
+    monkeypatch.setattr(dashboard_router, "_get_default_branch", lambda *_a, **_k: "main")
+    monkeypatch.setattr(
+        dashboard_router,
+        "_list_open_issues_raw",
+        lambda *_a, **_k: [
+            {
+                "number": 99,
+                "title": "Identify the next most important development gap",
+                "assignees": [],
+                "body": "# Gap Analysis\n\nCompletion:\n- Open a PR that adds exactly one new file\n",
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        dashboard_router,
+        "_get_repo_text_file",
+        lambda *_a, **_k: ("# Gap Analysis\n\nUse the template\n", "sha"),
+    )
+
+    patched: dict[str, object] = {}
+
+    def fake_patch_json(*_a, **kwargs):
+        patched.update({"url": kwargs.get("url"), "payload": kwargs.get("payload")})
+        return {"number": 99}
+
+    monkeypatch.setattr(dashboard_router, "_github_patch_json", fake_patch_json)
+
+    assigned_called: dict[str, object] = {}
+
+    def fake_assign(*_a, **kwargs):
+        assigned_called.update(kwargs)
+        return [{"login": "copilot-swe-agent[bot]"}]
+
+    monkeypatch.setattr(dashboard_router, "_assign_issue_to_copilot", fake_assign)
+
+    out = dashboard_router._ensure_gap_analysis_issue_exists(
+        settings=dashboard_router.ServerSettings(),
+        repo="acme/repo",
+    )
+    assert out["created"] is False
+    assert out["issueNumber"] == 99
+    assert assigned_called.get("issue_number") == 99
+    assert isinstance(patched.get("payload"), dict)
+    assert str(patched["payload"].get("body") or "").strip() == "# Gap Analysis\n\nUse the template"
 
 
 def test_loop_merge_endpoint_fails_cleanly_when_pr_stays_draft(monkeypatch, tmp_path: Path) -> None:

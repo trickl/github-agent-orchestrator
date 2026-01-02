@@ -574,6 +574,103 @@ def _is_gap_analysis_issue_title(title: str) -> bool:
     return any(lowered == t for t in _GAP_ANALYSIS_TITLES)
 
 
+_GAP_ANALYSIS_TEMPLATE_PATHS: tuple[str, ...] = (
+    "planning/issue_templates/gap-analysis.md",
+    "planning/issue_templates/gap_analysis.md",
+)
+
+
+def _load_gap_analysis_template_or_raise(
+    *, settings: ServerSettings, repo: str, branch: str
+) -> str:
+    """Load the gap analysis issue template from the repository.
+
+    Important: do not fall back to a hard-coded prompt here. Bad fallback prompts can trigger
+    runaway self-referential agent behaviour.
+    """
+
+    last_error: Exception | None = None
+    for template_path in _GAP_ANALYSIS_TEMPLATE_PATHS:
+        try:
+            template_body, _sha = _get_repo_text_file(
+                settings,
+                repository=repo,
+                path=template_path,
+                ref=branch,
+            )
+            if template_body.strip():
+                return template_body
+        except Exception as e:
+            last_error = e
+
+    raise HTTPException(
+        status_code=502,
+        detail=(
+            "Unable to load gap analysis template from repository. "
+            "Expected one of: planning/issue_templates/gap-analysis.md or "
+            "planning/issue_templates/gap_analysis.md"
+        ),
+    ) from last_error
+
+
+def _gap_analysis_issue_body_looks_unsafe(body: str) -> bool:
+    """Detect unsafe gap-analysis issue bodies.
+
+    We intentionally look for very specific known-bad phrases (from the previous incident)
+    to avoid blocking legitimate issue bodies elsewhere.
+    """
+
+    lowered = body.lower()
+    forbidden = (
+        "open a pr that adds exactly one new file",
+        "open a pr that adds exactly one new file under /planning/issue_queue/pending/",
+        "create one development task in planning/issue_queue/pending/",
+    )
+    return any(tok in lowered for tok in forbidden)
+
+
+def _repair_gap_analysis_issue_body_if_unsafe(
+    *,
+    settings: ServerSettings,
+    repo: str,
+    issue_number: int,
+    branch: str,
+    existing_body: str,
+) -> bool:
+    """Replace an unsafe gap-analysis issue body with the repo template.
+
+    Returns True if a repair was performed.
+    """
+
+    if not existing_body.strip():
+        return False
+    if not _gap_analysis_issue_body_looks_unsafe(existing_body):
+        return False
+
+    if not settings.github_token.strip():
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "ORCHESTRATOR_GITHUB_TOKEN is required to repair unsafe gap analysis issue bodies"
+            ),
+        )
+
+    repaired_body = (
+        _load_gap_analysis_template_or_raise(
+            settings=settings,
+            repo=repo,
+            branch=branch,
+        ).rstrip()
+        + "\n"
+    )
+    _github_patch_json(
+        settings,
+        url=_repo_api_url(settings, repository=repo, path=f"issues/{issue_number}"),
+        payload={"body": repaired_body},
+    )
+    return True
+
+
 def _ensure_gap_analysis_issue_exists(*, settings: ServerSettings, repo: str) -> dict[str, object]:
     """Ensure there is exactly one open gap analysis issue (best-effort).
 
@@ -583,6 +680,8 @@ def _ensure_gap_analysis_issue_exists(*, settings: ServerSettings, repo: str) ->
     The gap analysis task remains "cognitive" (it produces a queue artefact), but this helper
     can automatically open + assign the issue so the overall cycle can keep moving.
     """
+
+    branch = _get_default_branch(settings, repository=repo)
 
     raw_issues = _list_open_issues_raw(settings, repository=repo)
     for it in raw_issues:
@@ -594,6 +693,18 @@ def _ensure_gap_analysis_issue_exists(*, settings: ServerSettings, repo: str) ->
         if isinstance(title, str) and _is_gap_analysis_issue_title(title):
             num = it.get("number")
             if isinstance(num, int):
+                # If an unsafe gap-analysis issue already exists, repair it before assigning.
+                # This avoids costly self-referential instructions.
+                body = it.get("body")
+                if isinstance(body, str):
+                    _repair_gap_analysis_issue_body_if_unsafe(
+                        settings=settings,
+                        repo=repo,
+                        issue_number=num,
+                        branch=branch,
+                        existing_body=body,
+                    )
+
                 # Best-effort: ensure assignment to Copilot so Step A can actually start.
                 assignees = it.get("assignees")
                 already_assigned = False
@@ -605,7 +716,6 @@ def _ensure_gap_analysis_issue_exists(*, settings: ServerSettings, repo: str) ->
 
                 assigned: list[dict[str, Any]] | list[str] = []
                 if not already_assigned:
-                    branch = _get_default_branch(settings, repository=repo)
                     assigned = _assign_issue_to_copilot(
                         settings,
                         repository=repo,
@@ -628,37 +738,9 @@ def _ensure_gap_analysis_issue_exists(*, settings: ServerSettings, repo: str) ->
             detail="ORCHESTRATOR_GITHUB_TOKEN is required to create gap analysis issues",
         )
 
-    branch = _get_default_branch(settings, repository=repo)
-    template_body = ""
-    template_paths = (
-        "planning/issue_templates/gap-analysis.md",
-        "planning/issue_templates/gap_analysis.md",
+    template_body = _load_gap_analysis_template_or_raise(
+        settings=settings, repo=repo, branch=branch
     )
-    last_error: Exception | None = None
-    for template_path in template_paths:
-        try:
-            template_body, _sha = _get_repo_text_file(
-                settings,
-                repository=repo,
-                path=template_path,
-                ref=branch,
-            )
-            last_error = None
-            break
-        except Exception as e:
-            last_error = e
-
-    if not template_body.strip():
-        # Fail safely: an incorrect fallback prompt here can trigger costly self-referential agent
-        # behavior. The repository should always contain the template.
-        raise HTTPException(
-            status_code=502,
-            detail=(
-                "Unable to load gap analysis template from repository. "
-                "Expected one of: planning/issue_templates/gap-analysis.md or "
-                "planning/issue_templates/gap_analysis.md"
-            ),
-        ) from last_error
 
     issue_title = "Identify the next most important development gap"
     # IMPORTANT: Use the template verbatim. Do not append additional 'Completion' instructions.
@@ -923,6 +1005,44 @@ def _assign_issue_to_copilot(
     base_branch: str,
     instructions: str,
 ) -> list[str]:
+    # Safety: before assigning, repair known-unsafe gap-analysis issue bodies.
+    # This guard lives here (the single assignment choke-point) so ALL call sites benefit.
+    try:
+        issue = _github_get_json(
+            settings,
+            url=_repo_api_url(settings, repository=repository, path=f"issues/{issue_number}"),
+        )
+        title = issue.get("title")
+        body = issue.get("body")
+        if isinstance(title, str) and _is_gap_analysis_issue_title(title) and isinstance(body, str):
+            _repair_gap_analysis_issue_body_if_unsafe(
+                settings=settings,
+                repo=repository,
+                issue_number=issue_number,
+                branch=base_branch,
+                existing_body=body,
+            )
+        elif isinstance(body, str) and _gap_analysis_issue_body_looks_unsafe(body):
+            # These phrases should only appear in a gap analysis issue; refuse to assign
+            # anything else until it is corrected.
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Refusing to assign issue #{issue_number}: body contains known-unsafe gap-analysis "
+                    "instructions"
+                ),
+            )
+    except HTTPException as e:
+        # Only block assignment when we are explicitly refusing due to known-unsafe instructions.
+        # Any other HTTPException here is likely from the best-effort issue fetch and should not
+        # prevent assignment.
+        if e.status_code == 409:
+            raise
+    except Exception:
+        # Best-effort: if we can't read the issue body for any reason, don't block assignment.
+        # (The GitHub assignment API can still succeed, and other safety gates exist elsewhere.)
+        pass
+
     payload: dict[str, Any] = {"assignees": [settings.copilot_assignee]}
     agent_assignment: dict[str, str] = {}
     if target_repo.strip():
@@ -967,6 +1087,31 @@ def promote_next_pending_issue_queue_item(request: Request) -> dict[str, object]
     settings = _settings(request)
     repo = _active_repo(request, settings)
     return _promote_next_unpromoted_development_queue_item(settings=settings, repo=repo)
+
+
+@router.post("/loop/gap-analysis/ensure")
+def ensure_gap_analysis_issue(request: Request) -> dict[str, object]:
+    """Step 1a action: ensure a gap-analysis issue exists and is assigned.
+
+    This is primarily useful when auto-promotion is disabled.
+    """
+
+    settings = _settings(request)
+    repo = _active_repo(request, settings)
+    out = _ensure_gap_analysis_issue_exists(settings=settings, repo=repo)
+
+    # Keep shape similar to other action endpoints.
+    created = bool(out.get("created"))
+    num = out.get("issueNumber")
+    summary = "Gap analysis issue ensured"
+    if isinstance(num, int):
+        summary = f"{'Created' if created else 'Ensured'} gap analysis issue #{num}"
+    return {
+        **out,
+        "repo": repo,
+        "branch": _get_default_branch(settings, repository=repo),
+        "summary": summary,
+    }
 
 
 @router.post("/loop/merge")

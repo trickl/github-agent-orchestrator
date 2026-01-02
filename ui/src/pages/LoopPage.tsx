@@ -93,6 +93,16 @@ type PromoteResult = {
   summary: string;
 };
 
+type GapEnsureResult = {
+  repo: string;
+  branch: string;
+  created: boolean;
+  issueNumber: number;
+  issueUrl: string | null;
+  assigned: string[];
+  summary: string;
+};
+
 type MergeResult = {
   repo: string;
   branch: string;
@@ -248,6 +258,9 @@ function LoopStepIcon(props: StepIconProps): React.JSX.Element {
 
 export function LoopPage(): React.JSX.Element {
   const res = useApiResource(() => apiFetch<LoopStatus>('/loop'), []);
+  const [gapBusy, setGapBusy] = React.useState(false);
+  const [gapError, setGapError] = React.useState<string | null>(null);
+  const [gapResult, setGapResult] = React.useState<GapEnsureResult | null>(null);
   const [promoteBusy, setPromoteBusy] = React.useState(false);
   const [promoteError, setPromoteError] = React.useState<string | null>(null);
   const [promoteResult, setPromoteResult] = React.useState<PromoteResult | null>(null);
@@ -290,8 +303,27 @@ export function LoopPage(): React.JSX.Element {
   const data = res.data;
   const fmt = (v: number | null | undefined): string => (typeof v === 'number' ? String(v) : '—');
 
+  const canEnsureGap = data.stage === '1a';
   const canPromote = data.stage === '2a';
   const canMerge = data.stage.endsWith('c');
+
+  const onEnsureGap = (): void => {
+    setGapBusy(true);
+    setGapError(null);
+    setGapResult(null);
+
+    void apiFetch<GapEnsureResult>('/loop/gap-analysis/ensure', { method: 'POST' })
+      .then((out) => {
+        setGapResult(out);
+        res.reload();
+      })
+      .catch((e: unknown) => {
+        setGapError(e instanceof Error ? e.message : String(e));
+      })
+      .finally(() => {
+        setGapBusy(false);
+      });
+  };
 
   const onPromote = (): void => {
     setPromoteBusy(true);
@@ -537,6 +569,43 @@ export function LoopPage(): React.JSX.Element {
                     Planning Docs
                   </Button>
                 </Stack>
+
+                {canEnsureGap ? (
+                  <Box>
+                    <Divider sx={{ my: 1.5 }} />
+                    <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                      Step 1a actions
+                    </Typography>
+                    <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems={{ sm: 'center' }}>
+                      <Button variant="contained" size="small" onClick={onEnsureGap} disabled={gapBusy}>
+                        {gapBusy ? 'Ensuring…' : 'Ensure gap analysis issue'}
+                      </Button>
+                      <Typography variant="body2" color="text.secondary">
+                        Creates (or finds) the Gap Analysis issue and assigns Copilot.
+                      </Typography>
+                    </Stack>
+
+                    {gapError ? (
+                      <Typography sx={{ mt: 1 }} variant="body2" color="error">
+                        {gapError}
+                      </Typography>
+                    ) : null}
+
+                    {gapResult ? (
+                      <Typography sx={{ mt: 1 }} variant="body2" color="text.secondary">
+                        {gapResult.summary}{' '}
+                        {gapResult.issueUrl ? (
+                          <>
+                            —{' '}
+                            <a href={gapResult.issueUrl} target="_blank" rel="noreferrer">
+                              view issue
+                            </a>
+                          </>
+                        ) : null}
+                      </Typography>
+                    ) : null}
+                  </Box>
+                ) : null}
 
                 {canPromote ? (
                   <Box>

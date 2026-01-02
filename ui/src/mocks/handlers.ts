@@ -158,6 +158,19 @@ export const handlers = [
     });
   }),
 
+  http.post('*/loop/gap-analysis/ensure', async () => {
+    await delay(250);
+    return HttpResponse.json({
+      repo: 'acme/repo',
+      branch: 'main',
+      created: true,
+      issueNumber: 42,
+      issueUrl: 'https://github.com/acme/repo/issues/42',
+      assigned: ['copilot-swe-agent[bot]'],
+      summary: 'Created gap analysis issue #42',
+    });
+  }),
+
   http.post('*/loop/merge', async () => {
     await delay(350);
     return HttpResponse.json({
