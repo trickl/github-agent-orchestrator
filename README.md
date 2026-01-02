@@ -48,7 +48,7 @@ All “thinking” happens inside Copilot-authored PRs.
 * **💾 Local JSON state** (`agent_state/issues.json`)
 * **🛡️ Idempotent-safe** issue creation (by title, locally)
 * **🌐 REST server adapter** (FastAPI + OpenAPI docs)
-* **🔎 Linked PR monitoring** (polling via GitHub GraphQL)
+* **🔎 Linked PR monitoring** (polling via GitHub REST issue timeline)
 * **📥 Issue queue promotion** (convert queued artefacts into GitHub issues)
 * **✅ Safe-ish PR merge automation** (mark ready, merge, optionally delete branch)
 * **🧠 Post-merge capability update issue** (create a system-capabilities update issue from a merged PR)

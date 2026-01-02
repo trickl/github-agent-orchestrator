@@ -10,7 +10,6 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
-from urllib.parse import urlparse, urlunparse
 
 import requests
 from github import Auth, Github
@@ -76,7 +75,7 @@ class PullRequestDetails:
     base_ref: str
     base_repo_full_name: str
 
-    # Optional GraphQL node ID (used for GraphQL mutations/fallbacks).
+    # Optional GitHub node ID.
     node_id: str | None = None
 
 
@@ -187,6 +186,39 @@ class GitHubClient:
         if clean_path:
             return f"{self._rest_base_url}/repos/{repo}/{clean_path}"
         return f"{self._rest_base_url}/repos/{repo}"
+
+    def _graphql_url(self) -> str:
+        """Return the GitHub GraphQL endpoint for the configured REST base URL.
+
+        GitHub.com uses: https://api.github.com/graphql
+        GitHub Enterprise Server often uses REST at /api/v3 and GraphQL at /api/graphql.
+
+        Note: There is no REST endpoint to convert draft PRs to ready-for-review.
+        See: https://github.com/orgs/community/discussions/70061
+        """
+
+        base = self._rest_base_url.rstrip("/")
+        if base.endswith("/api/v3"):
+            return base[: -len("/api/v3")] + "/api/graphql"
+        return f"{base}/graphql"
+
+    def _graphql_post(
+        self,
+        *,
+        query: str,
+        variables: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        url = self._graphql_url()
+        payload: dict[str, Any] = {"query": query}
+        if variables is not None:
+            payload["variables"] = variables
+
+        resp = self._session.post(url, json=payload, timeout=30)
+        resp.raise_for_status()
+        data: Any = resp.json()
+        if not isinstance(data, dict):
+            raise ValueError("Unexpected GraphQL response")
+        return data
 
     def get_repository_default_branch(self, *, repository: str | None = None) -> str:
         repo = (repository or self._repository_name).strip()
@@ -562,65 +594,6 @@ class GitHubClient:
         discussion.sort(key=lambda d: d.created_at)
         return discussion
 
-    def _graphql_url(self) -> str:
-        """Derive the GitHub GraphQL endpoint from the configured REST base URL.
-
-        GitHub.com:
-            REST: https://api.github.com
-            GQL:  https://api.github.com/graphql
-
-        GitHub Enterprise typically exposes REST as:
-            https://github.example.com/api/v3
-        and GraphQL as:
-            https://github.example.com/api/graphql
-        """
-
-        parsed = urlparse(self._rest_base_url)
-        path = parsed.path.rstrip("/")
-
-        if path.endswith("/api/v3"):
-            path = path[: -len("/api/v3")] + "/api/graphql"
-        elif path.endswith("/api"):
-            path = path[: -len("/api")] + "/api/graphql"
-        elif path == "":
-            # e.g. https://api.github.com
-            path = "/graphql"
-        else:
-            # Best-effort fallback.
-            path = path + "/graphql"
-
-        return urlunparse(parsed._replace(path=path))
-
-    def _repo_owner_and_name(self) -> tuple[str, str]:
-        try:
-            owner, name = self._repository_name.split("/", 1)
-        except ValueError as e:
-            raise ValueError(
-                "repository must be in the form 'owner/repo' to use GraphQL queries"
-            ) from e
-        if not owner.strip() or not name.strip():
-            raise ValueError("repository must be in the form 'owner/repo'")
-        return owner, name
-
-    def _graphql(self, *, query: str, variables: dict[str, Any]) -> dict[str, Any]:
-        url = self._graphql_url()
-        resp = self._session.post(url, json={"query": query, "variables": variables}, timeout=30)
-        resp.raise_for_status()
-        payload: dict[str, Any] = resp.json()
-        errors = payload.get("errors")
-        if errors:
-            # Avoid dumping the entire response; keep logs small and actionable.
-            messages = []
-            if isinstance(errors, list):
-                for item in errors:
-                    if isinstance(item, dict):
-                        msg = item.get("message")
-                        if isinstance(msg, str):
-                            messages.append(msg)
-            message = "; ".join(messages) if messages else "Unknown GraphQL error"
-            raise RuntimeError(f"GitHub GraphQL error: {message}")
-        return payload
-
     def _parse_assignees_from_issue_json(self, data: dict[str, Any]) -> list[str]:
         raw_assignees = data.get("assignees")
         if not isinstance(raw_assignees, list):
@@ -701,30 +674,71 @@ class GitHubClient:
         )
 
     @staticmethod
-    def _parse_pull_request_node(node: Any) -> LinkedPullRequest | None:
-        if not isinstance(node, dict):
+    def _linked_pr_numbers_from_issue_timeline(timeline: Any) -> set[int]:
+        if not isinstance(timeline, list):
+            return set()
+
+        def _extract_pr_number(ev: dict[str, Any]) -> int | None:
+            # Common: cross-referenced event with nested source.issue.pull_request
+            source = ev.get("source")
+            if isinstance(source, dict):
+                issue = source.get("issue")
+                if isinstance(issue, dict) and "pull_request" in issue:
+                    num = issue.get("number")
+                    if isinstance(num, int):
+                        return num
+
+            # Connected events may include a "subject" that is a PR.
+            subject = ev.get("subject")
+            if isinstance(subject, dict) and "pull_request" in subject:
+                num = subject.get("number")
+                if isinstance(num, int):
+                    return num
+
             return None
 
-        number = node.get("number")
-        url = node.get("url")
-        title = node.get("title")
-        state = node.get("state")
+        out: set[int] = set()
+        for raw in timeline:
+            if not isinstance(raw, dict):
+                continue
+            event = raw.get("event")
+            if event not in {"cross-referenced", "connected"}:
+                continue
+            num = _extract_pr_number(raw)
+            if num is not None:
+                out.add(num)
+        return out
 
+    @staticmethod
+    def _parse_linked_pull_request_rest(data: Any) -> LinkedPullRequest | None:
+        if not isinstance(data, dict):
+            return None
+
+        number = data.get("number")
         if not isinstance(number, int) or number <= 0:
             return None
+
+        # Prefer the human URL; fall back to API URL only if necessary.
+        url = data.get("html_url")
+        if not isinstance(url, str) or not url.strip():
+            url = data.get("url")
         if not isinstance(url, str) or not url.strip():
             return None
+
+        title = data.get("title")
         if not isinstance(title, str):
             title = ""
+
+        state = data.get("state")
         if not isinstance(state, str):
             state = ""
 
-        is_draft = bool(node.get("isDraft"))
-        merged = bool(node.get("merged"))
+        is_draft = bool(data.get("draft"))
+        merged = bool(data.get("merged"))
 
-        merged_at = node.get("mergedAt")
-        closed_at = node.get("closedAt")
-        updated_at = node.get("updatedAt")
+        merged_at = data.get("merged_at")
+        closed_at = data.get("closed_at")
+        updated_at = data.get("updated_at")
 
         return LinkedPullRequest(
             number=number,
@@ -745,116 +759,37 @@ class GitHubClient:
         - PRs that are known to close the issue (via closing keywords)
         - PRs connected/cross-referenced in the issue timeline
 
-        This is implemented via GraphQL because the REST issues endpoint doesn't directly
-        expose the linked PR graph.
+        This is implemented via the REST issue timeline API.
         """
 
-        owner, name = self._repo_owner_and_name()
-        query = """
-        query($owner: String!, $name: String!, $issueNumber: Int!) {
-          repository(owner: $owner, name: $name) {
-            issue(number: $issueNumber) {
-                            closedByPullRequestsReferences(first: 20) {
-                nodes {
-                  number
-                  url
-                  title
-                  state
-                  isDraft
-                  merged
-                  mergedAt
-                  closedAt
-                  updatedAt
-                }
-              }
-              timelineItems(first: 50, itemTypes: [CONNECTED_EVENT, CROSS_REFERENCED_EVENT]) {
-                nodes {
-                  __typename
-                  ... on ConnectedEvent {
-                    subject {
-                      __typename
-                      ... on PullRequest {
-                        number
-                        url
-                        title
-                        state
-                        isDraft
-                        merged
-                        mergedAt
-                        closedAt
-                        updatedAt
-                      }
-                    }
-                  }
-                  ... on CrossReferencedEvent {
-                    source {
-                      __typename
-                      ... on PullRequest {
-                        number
-                        url
-                        title
-                        state
-                        isDraft
-                        merged
-                        mergedAt
-                        closedAt
-                        updatedAt
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-        """
-
-        payload = self._graphql(
-            query=query,
-            variables={"owner": owner, "name": name, "issueNumber": issue_number},
+        timeline_url = self._issues_url(issue_number=issue_number, suffix="timeline")
+        headers = dict(self._session.headers)
+        accept = headers.get("Accept")
+        if not isinstance(accept, str) or not accept.strip():
+            accept = "application/vnd.github+json"
+        headers["Accept"] = ", ".join([accept, "application/vnd.github.mockingbird-preview+json"])
+        resp = self._session.get(
+            timeline_url,
+            headers=headers,
+            params={"per_page": "100"},
+            timeout=30,
         )
-        data = payload.get("data")
-        if not isinstance(data, dict):
-            return []
+        resp.raise_for_status()
+        timeline: Any = resp.json()
 
-        repo = data.get("repository")
-        if not isinstance(repo, dict):
-            return []
-        issue = repo.get("issue")
-        if not isinstance(issue, dict):
-            return []
+        pr_numbers = sorted(self._linked_pr_numbers_from_issue_timeline(timeline))
+        linked: list[LinkedPullRequest] = []
+        for pr_number in pr_numbers:
+            pr_url = self._pulls_url(pull_number=pr_number)
+            pr_resp = self._session.get(pr_url, timeout=30)
+            if pr_resp.status_code == 404:
+                continue
+            pr_resp.raise_for_status()
+            pr = self._parse_linked_pull_request_rest(pr_resp.json())
+            if pr is not None:
+                linked.append(pr)
 
-        by_number: dict[int, LinkedPullRequest] = {}
-
-        closing = issue.get("closedByPullRequestsReferences")
-        if isinstance(closing, dict):
-            nodes = closing.get("nodes")
-            if isinstance(nodes, list):
-                for node in nodes:
-                    pr = self._parse_pull_request_node(node)
-                    if pr is not None:
-                        by_number[pr.number] = pr
-
-        timeline = issue.get("timelineItems")
-        if isinstance(timeline, dict):
-            nodes = timeline.get("nodes")
-            if isinstance(nodes, list):
-                for event in nodes:
-                    if not isinstance(event, dict):
-                        continue
-                    typename = event.get("__typename")
-                    if typename == "ConnectedEvent":
-                        subject = event.get("subject")
-                        pr = self._parse_pull_request_node(subject)
-                        if pr is not None:
-                            by_number[pr.number] = pr
-                    elif typename == "CrossReferencedEvent":
-                        source = event.get("source")
-                        pr = self._parse_pull_request_node(source)
-                        if pr is not None:
-                            by_number[pr.number] = pr
-
-        linked = sorted(by_number.values(), key=lambda p: p.number)
+        linked.sort(key=lambda p: p.number)
         logger.info(
             "Linked pull requests fetched",
             extra={
@@ -971,42 +906,53 @@ class GitHubClient:
         simply fetch and return the current PR state.
         """
 
-        url = self._pulls_url(pull_number=pull_number, suffix="ready_for_review")
-        resp = self._session.post(url, timeout=30)
-        if resp.status_code in {409, 422}:
-            # Already ready, or state doesn't allow transition (e.g. already merged).
-            return self.get_pull_request(pull_number=pull_number)
-        if resp.status_code == 404:
-            # This endpoint can return 404 even when the PR exists (e.g. token perms or
-            # some enterprise/policy configurations). Fall back to GraphQL, which supports
-            # the same operation.
-            pr = self.get_pull_request(pull_number=pull_number)
-            if pr.node_id:
-                try:
-                    query = """
-mutation($pr:ID!) {
-  markPullRequestReadyForReview(input:{pullRequestId:$pr}) {
-    pullRequest { isDraft number }
-  }
-}
-"""
-                    self._graphql(query=query, variables={"pr": pr.node_id})
-                    logger.info(
-                        "Pull request marked ready for review (GraphQL fallback)",
-                        extra={"repo": self._repository_name, "pull_number": pr.number},
-                    )
-                except Exception:
-                    logger.exception(
-                        "Failed to mark PR ready for review via GraphQL (continuing)",
-                        extra={"repo": self._repository_name, "pull_number": pr.number},
-                    )
-            return self.get_pull_request(pull_number=pull_number)
-        resp.raise_for_status()
-        data: dict[str, Any] = resp.json()
-        pr = self._parse_pull_request_json(data)
+        pr = self.get_pull_request(pull_number=pull_number)
+        if not pr.draft:
+            return pr
+
+        if not isinstance(pr.node_id, str) or not pr.node_id.strip():
+            raise ValueError("Pull request is draft but node_id is missing; cannot mark ready")
+
+        # There is no REST API endpoint for this; GitHub requires GraphQL.
+        # https://github.com/orgs/community/discussions/70061
+        mutation = (
+            "mutation($pullRequestId: ID!) {"
+            "  markPullRequestReadyForReview(input: { pullRequestId: $pullRequestId }) {"
+            "    pullRequest { id isDraft }"
+            "  }"
+            "}"
+        )
+
+        payload = self._graphql_post(query=mutation, variables={"pullRequestId": pr.node_id})
+
+        errors = payload.get("errors")
+        if isinstance(errors, list) and errors:
+            messages: list[str] = []
+            for err in errors:
+                if isinstance(err, dict):
+                    msg = err.get("message")
+                    if isinstance(msg, str) and msg.strip():
+                        messages.append(msg.strip())
+            message = "; ".join(messages) if messages else str(errors)
+
+            # If the PR is already ready, callers want the current state.
+            if "not a draft" in message.lower() or "not draft" in message.lower():
+                return self.get_pull_request(pull_number=pull_number)
+
+            raise RuntimeError(
+                f"markPullRequestReadyForReview failed for PR #{pull_number}: {message}"
+            )
+
+        # GraphQL mutation succeeded; refetch for full details and consistency.
+        pr = self.get_pull_request(pull_number=pull_number)
         logger.info(
             "Pull request marked ready for review",
-            extra={"repo": self._repository_name, "pull_number": pr.number, "draft": pr.draft},
+            extra={
+                "repo": self._repository_name,
+                "pull_number": pr.number,
+                "draft": pr.draft,
+                "graphql_url": self._graphql_url(),
+            },
         )
         return pr
 

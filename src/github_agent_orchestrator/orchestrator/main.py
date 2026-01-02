@@ -224,7 +224,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     gap_cycle.add_argument(
         "--labels",
-        default="planning,gap-analysis",
+        default="Gap Analysis",
         help="Comma-separated labels to apply to the created issue",
     )
     gap_cycle.add_argument(
@@ -304,7 +304,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     promote_queue.add_argument(
         "--labels",
-        default="planning",
+        default="Development",
         help="Comma-separated labels to apply when creating an issue",
     )
     promote_queue.add_argument(
@@ -358,7 +358,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sys_caps_after_merge.add_argument(
         "--labels",
-        default="planning,system-capabilities",
+        default="Update Capability",
         help="Comma-separated labels to apply to the created issue",
     )
     sys_caps_after_merge.add_argument(

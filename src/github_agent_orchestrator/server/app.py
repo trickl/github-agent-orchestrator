@@ -8,6 +8,7 @@ Design principle: no legacy compatibility surfaces. Old interfaces are removed.
 from __future__ import annotations
 
 import logging
+import threading
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -15,6 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
+import github_agent_orchestrator.server.dashboard_router as dashboard_module
 from github_agent_orchestrator.server.config import ServerSettings
 from github_agent_orchestrator.server.dashboard_router import router as dashboard_router
 
@@ -49,8 +51,77 @@ def create_app() -> FastAPI:
     # Dashboard UI API (mounted at /api)
     app.include_router(dashboard_router, prefix="/api")
 
+    _maybe_start_auto_promotion(app, settings)
+
     _maybe_mount_ui(app, settings)
     return app
+
+
+def _maybe_start_auto_promotion(app: FastAPI, settings: ServerSettings) -> None:
+    if not settings.auto_promote_enabled:
+        return
+    if not settings.github_token.strip():
+        logger.warning(
+            "Auto promotion enabled but no GitHub token configured; skipping",
+            extra={"setting": "ORCHESTRATOR_AUTO_PROMOTE_ENABLED"},
+        )
+        return
+    if not settings.default_repo.strip():
+        logger.warning(
+            "Auto promotion enabled but no default repo configured; skipping",
+            extra={"setting": "ORCHESTRATOR_DEFAULT_REPO"},
+        )
+        return
+
+    stop = threading.Event()
+    app.state._auto_promote_stop = stop
+
+    interval = max(5.0, float(settings.auto_promote_interval_seconds))
+    repo = settings.default_repo.strip()
+
+    def _runner() -> None:
+        logger.info(
+            "Auto loop progression started",
+            extra={"repo": repo, "interval_seconds": interval},
+        )
+        while not stop.is_set():
+            try:
+                status = dashboard_module._loop_status_for_repo(
+                    settings=settings,
+                    active_repo=repo,
+                    ref="",
+                )
+                stage = status.get("stage")
+
+                if stage == "B":
+                    dashboard_module._promote_next_unpromoted_development_queue_item(
+                        settings=settings,
+                        repo=repo,
+                    )
+                    logger.info("Auto promotion succeeded", extra={"repo": repo})
+                elif stage == "D":
+                    dashboard_module._merge_next_ready_development_pull_request(
+                        settings=settings,
+                        repo=repo,
+                    )
+                    logger.info("Auto merge succeeded", extra={"repo": repo})
+            except Exception as e:
+                # 409 means "nothing to do"; treat as idle rather than an error.
+                if getattr(e, "status_code", None) == 409:
+                    pass
+                else:
+                    logger.exception("Auto progression attempt failed", extra={"repo": repo})
+
+            stop.wait(interval)
+
+        logger.info("Auto loop progression stopped", extra={"repo": repo})
+
+    t = threading.Thread(target=_runner, name="auto-promote-queue", daemon=True)
+    t.start()
+
+    @app.on_event("shutdown")
+    def _stop_auto_promote() -> None:
+        stop.set()
 
 
 def _maybe_mount_ui(app: FastAPI, settings: ServerSettings) -> None:

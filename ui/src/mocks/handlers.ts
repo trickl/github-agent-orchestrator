@@ -141,6 +141,43 @@ export const handlers = [
     });
   }),
 
+  http.post('*/loop/promote', async () => {
+    await delay(250);
+    return HttpResponse.json({
+      repo: 'acme/repo',
+      branch: 'main',
+      queuePath: 'planning/issue_queue/pending/dev-1.md',
+      processedPath: 'planning/issue_queue/processed/dev-1.md',
+      issueNumber: 123,
+      issueUrl: 'https://github.com/acme/repo/issues/123',
+      created: true,
+      assigned: ['copilot-swe-agent[bot]'],
+      summary: 'Promoted dev-1.md to issue #123',
+    });
+  }),
+
+  http.post('*/loop/merge', async () => {
+    await delay(350);
+    return HttpResponse.json({
+      repo: 'acme/repo',
+      branch: 'main',
+      merged: true,
+      mergeCommitSha: 'deadbeef',
+      queuePath: 'planning/issue_queue/processed/dev-1.md',
+      completePath: 'planning/issue_queue/complete/dev-1.md',
+      developmentIssueNumber: 123,
+      pullNumber: 5,
+      approved: true,
+      approvalError: null,
+      headBranchDeleted: true,
+      capabilityIssueNumber: 456,
+      capabilityIssueCreated: true,
+      capabilityIssueUrl: 'https://github.com/acme/repo/issues/456',
+      capabilityIssueAssigned: ['copilot-swe-agent[bot]'],
+      summary: 'Merged PR #5; created capability issue #456',
+    });
+  }),
+
   http.get('*/issues', async ({ request }) => {
     await delay(150);
     const url = new URL(request.url);

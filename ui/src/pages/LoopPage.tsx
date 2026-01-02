@@ -18,7 +18,6 @@ import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import { Link as RouterLink } from 'react-router-dom';
 
 import { apiFetch } from '../lib/apiClient';
-import { endpoints } from '../lib/endpoints';
 import { useApiResource } from '../lib/useApiResource';
 import { ErrorState } from '../components/ErrorState';
 import { LoadingState } from '../components/LoadingState';
@@ -65,6 +64,37 @@ type LoopStatus = {
   ref?: string | null;
   stageReason?: string;
   warnings?: string[];
+};
+
+type PromoteResult = {
+  repo: string;
+  branch: string;
+  queuePath: string;
+  processedPath: string;
+  issueNumber: number;
+  issueUrl: string | null;
+  created: boolean;
+  assigned: string[];
+  summary: string;
+};
+
+type MergeResult = {
+  repo: string;
+  branch: string;
+  merged: boolean;
+  mergeCommitSha: string | null;
+  queuePath: string;
+  completePath: string;
+  developmentIssueNumber: number;
+  pullNumber: number;
+  approved: boolean;
+  approvalError: string | null;
+  headBranchDeleted: boolean;
+  capabilityIssueNumber: number;
+  capabilityIssueCreated: boolean;
+  capabilityIssueUrl: string | null;
+  capabilityIssueAssigned: string[];
+  summary: string;
 };
 
 const steps: Array<{
@@ -180,7 +210,13 @@ function LoopStepIcon(props: StepIconProps): React.JSX.Element {
 }
 
 export function LoopPage(): React.JSX.Element {
-  const res = useApiResource(() => apiFetch<LoopStatus>(endpoints.loop()), []);
+  const res = useApiResource(() => apiFetch<LoopStatus>('/loop'), []);
+  const [promoteBusy, setPromoteBusy] = React.useState(false);
+  const [promoteError, setPromoteError] = React.useState<string | null>(null);
+  const [promoteResult, setPromoteResult] = React.useState<PromoteResult | null>(null);
+  const [mergeBusy, setMergeBusy] = React.useState(false);
+  const [mergeError, setMergeError] = React.useState<string | null>(null);
+  const [mergeResult, setMergeResult] = React.useState<MergeResult | null>(null);
 
   if (res.loading) {
     return (
@@ -216,6 +252,45 @@ export function LoopPage(): React.JSX.Element {
 
   const data = res.data;
   const fmt = (v: number | null | undefined): string => (typeof v === 'number' ? String(v) : '—');
+
+  const canPromote = data.stage === 'B';
+  const canMerge = data.stage === 'D';
+
+  const onPromote = (): void => {
+    setPromoteBusy(true);
+    setPromoteError(null);
+    setPromoteResult(null);
+
+    void apiFetch<PromoteResult>('/loop/promote', { method: 'POST' })
+      .then((out) => {
+        setPromoteResult(out);
+        res.reload();
+      })
+      .catch((e: unknown) => {
+        setPromoteError(e instanceof Error ? e.message : String(e));
+      })
+      .finally(() => {
+        setPromoteBusy(false);
+      });
+  };
+
+  const onMerge = (): void => {
+    setMergeBusy(true);
+    setMergeError(null);
+    setMergeResult(null);
+
+    void apiFetch<MergeResult>('/loop/merge', { method: 'POST' })
+      .then((out) => {
+        setMergeResult(out);
+        res.reload();
+      })
+      .catch((e: unknown) => {
+        setMergeError(e instanceof Error ? e.message : String(e));
+      })
+      .finally(() => {
+        setMergeBusy(false);
+      });
+  };
 
   return (
     <div>
@@ -335,6 +410,83 @@ export function LoopPage(): React.JSX.Element {
                     Planning Docs
                   </Button>
                 </Stack>
+
+                {canPromote ? (
+                  <Box>
+                    <Divider sx={{ my: 1.5 }} />
+                    <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                      Step B actions
+                    </Typography>
+                    <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems={{ sm: 'center' }}>
+                      <Button
+                        variant="contained"
+                        size="small"
+                        onClick={onPromote}
+                        disabled={promoteBusy}
+                      >
+                        {promoteBusy ? 'Promoting…' : 'Promote next queue item'}
+                      </Button>
+                      <Typography variant="body2" color="text.secondary">
+                        Creates the GitHub issue, assigns Copilot, and moves the file to <code>processed/</code>.
+                      </Typography>
+                    </Stack>
+
+                    {promoteError ? (
+                      <Typography sx={{ mt: 1 }} variant="body2" color="error">
+                        {promoteError}
+                      </Typography>
+                    ) : null}
+
+                    {promoteResult ? (
+                      <Typography sx={{ mt: 1 }} variant="body2" color="text.secondary">
+                        {promoteResult.summary}
+                      </Typography>
+                    ) : null}
+                  </Box>
+                ) : null}
+
+                {canMerge ? (
+                  <Box>
+                    <Divider sx={{ my: 1.5 }} />
+                    <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                      Step D actions
+                    </Typography>
+                    <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems={{ sm: 'center' }}>
+                      <Button
+                        variant="contained"
+                        size="small"
+                        color="success"
+                        onClick={onMerge}
+                        disabled={mergeBusy}
+                      >
+                        {mergeBusy ? 'Merging…' : 'Approve + merge ready PR'}
+                      </Button>
+                      <Typography variant="body2" color="text.secondary">
+                        Attempts to approve and merge the next ready development PR, then creates a capability update issue.
+                      </Typography>
+                    </Stack>
+
+                    {mergeError ? (
+                      <Typography sx={{ mt: 1 }} variant="body2" color="error">
+                        {mergeError}
+                      </Typography>
+                    ) : null}
+
+                    {mergeResult ? (
+                      <Typography sx={{ mt: 1 }} variant="body2" color="text.secondary">
+                        {mergeResult.summary}{' '}
+                        {mergeResult.capabilityIssueUrl ? (
+                          <>
+                            —{' '}
+                            <a href={mergeResult.capabilityIssueUrl} target="_blank" rel="noreferrer">
+                              view issue
+                            </a>
+                          </>
+                        ) : null}
+                      </Typography>
+                    ) : null}
+                  </Box>
+                ) : null}
               </Stack>
             </CardContent>
           </Card>

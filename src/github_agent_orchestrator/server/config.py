@@ -27,6 +27,28 @@ class ServerSettings(BaseSettings):
         default="https://api.github.com", validation_alias="GITHUB_BASE_URL"
     )
 
+    copilot_assignee: str = Field(
+        default="copilot-swe-agent[bot]",
+        validation_alias="COPILOT_ASSIGNEE",
+        description=(
+            "GitHub login used for Copilot coding agent issue assignment. "
+            "Override via COPILOT_ASSIGNEE if your org uses a different login."
+        ),
+    )
+
+    auto_promote_enabled: bool = Field(
+        default=False,
+        validation_alias="ORCHESTRATOR_AUTO_PROMOTE_ENABLED",
+        description=(
+            "If true, the server will periodically attempt Step B promotion (pending file -> issue -> assign)."
+        ),
+    )
+    auto_promote_interval_seconds: float = Field(
+        default=30.0,
+        validation_alias="ORCHESTRATOR_AUTO_PROMOTE_INTERVAL_SECONDS",
+        description="Polling interval (seconds) for auto promotion when enabled.",
+    )
+
     # Active repository context for the dashboard. If set, issue lists and overview
     # will be scoped to this repo by default.
     default_repo: str = Field(default="", validation_alias="ORCHESTRATOR_DEFAULT_REPO")
