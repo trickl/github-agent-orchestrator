@@ -69,22 +69,21 @@ This system is built on two principles:
 
 ## Mental model
 
-- **Copilot**: does all reasoning and implementation
-- **GitHub**: is the persistent memory and execution arena
-- **The orchestrator**: enforces the loop and invariants
+- **Github Copilot**: does all reasoning and software development
+- **GitHub Target Repository**: comtains code plus orchestration state
+- **The orchestrator script**: oversees and manages the control loop (stateless)
 
 Concretely:
 
 - Issues = **intent**
 - PRs = **execution**
 - Reviews = **reflection**
-- Repository files = **memory**
+- Orchestrator Repository files = **memory**
 
-Nothing important lives only inside an LLM context.
 
 ---
 
-## The control loop
+## The main control loop
 
 The system continuously iterates over two explicit states:
 
@@ -97,11 +96,10 @@ Each loop:
 2. Identify a single concrete gap
 3. Produce one task artefact
 4. Execute it via Copilot (issue → PR)
-5. Update the current state
-6. Reset context
-7. Repeat
+5. Update the current state upon completion
+6. Repeat
 
-There is **no growing prompt**.
+There is **no growing prompt comtext**.
 
 ### Control-loop diagram
 
