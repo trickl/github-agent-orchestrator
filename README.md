@@ -36,7 +36,9 @@ This approach does not scale:
 All long-term state lives in the repository.
 Each iteration operates over a fixed, minimal context derived from explicit files, not accumulated conversation.
 
-This is a **development control loop**, not a chat loop.
+This is a **development control loop** for building out applications and services not a chat loop. 
+The goal is stable, unsupervised productive development over a period of up to 12 hours.
+This unlocks significant producitvity gains as it can be run **overnight** and **while at work**.
 
 ---
 
