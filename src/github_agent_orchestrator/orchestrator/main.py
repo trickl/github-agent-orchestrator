@@ -460,6 +460,44 @@ def build_parser() -> argparse.ArgumentParser:
         help="Timeout while attempting to merge",
     )
 
+    auto_resume_copilot = subparsers.add_parser(
+        "auto-resume-copilot",
+        help=(
+            "Detect a Copilot rate-limit stop message on a PR and (if due) post a resume nudge. "
+            "This uses the same logic as the server loop status automation."
+        ),
+    )
+    auto_resume_copilot.add_argument(
+        "--repo",
+        "--repository",
+        dest="repository",
+        required=True,
+        help="Target repository in the form 'owner/repo'",
+    )
+    auto_resume_copilot.add_argument(
+        "--pr-number",
+        type=int,
+        required=True,
+        help="Pull request number to inspect",
+    )
+    auto_resume_copilot.add_argument(
+        "--delay-minutes",
+        type=int,
+        default=None,
+        help=(
+            "Optional override for ORCHESTRATOR_AUTO_RESUME_COPILOT_ON_RATE_LIMIT_DELAY_MINUTES "
+            "(default 45)"
+        ),
+    )
+    auto_resume_copilot.add_argument(
+        "--force-enabled",
+        action="store_true",
+        help=(
+            "Force auto-resume enabled for this run, even if ORCHESTRATOR_AUTO_RESUME_COPILOT_ON_RATE_LIMIT "
+            "is not set."
+        ),
+    )
+
     return parser
 
 
@@ -921,6 +959,70 @@ def main(argv: list[str] | None = None) -> int:
                 return 0
             finally:
                 github.close()
+
+        if args.command == "auto-resume-copilot":
+            # This command intentionally reuses the server dashboard logic directly so that
+            # behavior matches production automation.
+            import github_agent_orchestrator.server.dashboard_router as dashboard_router
+            from github_agent_orchestrator.server.config import ServerSettings
+
+            server_settings = ServerSettings()
+            if args.force_enabled:
+                server_settings = server_settings.model_copy(
+                    update={"auto_resume_copilot_on_rate_limit": True}
+                )
+            if args.delay_minutes is not None:
+                server_settings = server_settings.model_copy(
+                    update={"auto_resume_copilot_on_rate_limit_delay_minutes": args.delay_minutes}
+                )
+
+            if not server_settings.github_token.strip():
+                print(
+                    "No GitHub token configured (set ORCHESTRATOR_GITHUB_TOKEN).",
+                    file=sys.stderr,
+                )
+                return 2
+
+            msg = dashboard_router._maybe_auto_resume_copilot_after_rate_limit(
+                settings=server_settings,
+                repository=args.repository,
+                pr_number=args.pr_number,
+            )
+            print(msg or "No auto-resume action taken.")
+
+            # Confirm by checking that the resume nudge exists in issue comments.
+            try:
+                comments = dashboard_router._list_issue_comments_raw(
+                    server_settings,
+                    repository=args.repository,
+                    issue_number=args.pr_number,
+                )
+            except Exception as e:
+                print(f"Failed to verify issue comments: {e}", file=sys.stderr)
+                return 1
+
+            found = False
+            for it in comments:
+                if not isinstance(it, dict):
+                    continue
+                comment_body = it.get("body")
+                if isinstance(
+                    comment_body, str
+                ) and dashboard_router._comment_body_is_copilot_resume_nudge(comment_body):
+                    found = True
+                    break
+
+            if found:
+                print(
+                    f"Confirmed: resume nudge comment is present on {args.repository} PR #{args.pr_number}."
+                )
+                return 0
+
+            print(
+                f"Not confirmed: resume nudge comment not present on {args.repository} PR #{args.pr_number}.",
+                file=sys.stderr,
+            )
+            return 4
 
         logger.error("Unknown command", extra={"command": args.command})
         return 2

@@ -52,6 +52,25 @@ class ServerSettings(BaseSettings):
         description="Polling interval (seconds) for auto promotion when enabled.",
     )
 
+    auto_resume_copilot_on_rate_limit: bool = Field(
+        default=False,
+        validation_alias="ORCHESTRATOR_AUTO_RESUME_COPILOT_ON_RATE_LIMIT",
+        description=(
+            "If true, the server may automatically post a '@copilot ... resume' comment on a PR "
+            "after detecting a Copilot rate limit stop message and waiting the configured delay."
+        ),
+    )
+    auto_resume_copilot_on_rate_limit_delay_minutes: int = Field(
+        default=45,
+        validation_alias="ORCHESTRATOR_AUTO_RESUME_COPILOT_ON_RATE_LIMIT_DELAY_MINUTES",
+        description=(
+            "Delay (minutes) to wait after the Copilot rate limit comment timestamp before "
+            "posting an auto-resume comment."
+        ),
+        ge=1,
+        le=240,
+    )
+
     # Active repository context for the dashboard. If set, issue lists and overview
     # will be scoped to this repo by default.
     default_repo: str = Field(default="", validation_alias="ORCHESTRATOR_DEFAULT_REPO")

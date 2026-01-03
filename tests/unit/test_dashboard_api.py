@@ -345,6 +345,343 @@ def test_loop_status_stage_d_when_processed_has_review_requested_event_even_with
     assert loop["activeStep"] == 5
 
 
+def test_loop_status_auto_resumes_copilot_after_rate_limit_delay(
+    monkeypatch, tmp_path: Path
+) -> None:
+    planning = tmp_path / "planning"
+    agent_state = tmp_path / "agent_state"
+
+    monkeypatch.setenv("ORCHESTRATOR_PLANNING_ROOT", str(planning))
+    monkeypatch.setenv("AGENT_STATE_PATH", str(agent_state))
+    monkeypatch.setenv("ORCHESTRATOR_UI_DIST", str(tmp_path / "ui" / "dist"))
+    monkeypatch.setenv("ORCHESTRATOR_DEFAULT_REPO", "acme/repo")
+
+    # Enable auto-resume and ensure GitHub token is present so posting is allowed.
+    monkeypatch.setenv("ORCHESTRATOR_GITHUB_TOKEN", "ghp_test")
+    monkeypatch.setenv("ORCHESTRATOR_AUTO_RESUME_COPILOT_ON_RATE_LIMIT", "true")
+    monkeypatch.setenv("ORCHESTRATOR_AUTO_RESUME_COPILOT_ON_RATE_LIMIT_DELAY_MINUTES", "45")
+
+    import github_agent_orchestrator.server.dashboard_router as dashboard_router
+
+    def fake_list_repo_md(*_args, **kwargs):
+        dir_path = kwargs.get("dir_path")
+        if dir_path == "planning/issue_queue/pending":
+            return []
+        if dir_path == "planning/issue_queue/processed":
+            return ["planning/issue_queue/processed/dev-1.md"]
+        if dir_path == "planning/issue_queue/complete":
+            return []
+        return []
+
+    monkeypatch.setattr(dashboard_router, "_list_repo_markdown_files_under", fake_list_repo_md)
+    monkeypatch.setattr(
+        dashboard_router,
+        "_get_repo_text_file",
+        lambda *_a, **_k: ("Dev: One\n\nBody\n", "sha-1"),
+    )
+    monkeypatch.setattr(
+        dashboard_router,
+        "_list_open_issues_raw",
+        lambda *_a, **_k: [{"number": 101, "title": "Dev: One", "state": "open"}],
+    )
+    monkeypatch.setattr(dashboard_router, "_list_open_pull_requests_raw", lambda *_a, **_k: [])
+
+    # Issue -> PR cross-reference.
+    monkeypatch.setattr(
+        dashboard_router,
+        "_list_issue_timeline_raw",
+        lambda *_a, **_k: [
+            {
+                "event": "cross-referenced",
+                "source": {"issue": {"number": 5, "pull_request": {}}},
+            }
+        ],
+    )
+
+    # PR is open but not yet merge-candidate (no review request signal), so stage remains 2b.
+    monkeypatch.setattr(
+        dashboard_router,
+        "_get_pull_request",
+        lambda *_a, **_k: {
+            "number": 5,
+            "state": "open",
+            "draft": False,
+            "title": "Dev: One",
+            "requested_reviewers": [],
+            "requested_teams": [],
+            "mergeable_state": "clean",
+            "html_url": "https://github.com/acme/repo/pull/5",
+        },
+    )
+
+    # The PR has a Copilot-authored rate limit stop comment at t=00:00Z.
+    monkeypatch.setattr(
+        dashboard_router,
+        "_list_issue_comments_raw",
+        lambda *_a, **_k: [
+            {
+                "id": 1,
+                "created_at": "2026-01-03T00:00:00Z",
+                "user": {"login": "copilot-swe-agent"},
+                "body": (
+                    "Sorry, you've hit a rate limit that restricts the number of Copilot model "
+                    "requests you can make within a specific time period. Please try again in 46 minutes.\n"
+                    "To retry, leave a comment on this pull request asking Copilot to try again."
+                ),
+            }
+        ],
+    )
+
+    # Freeze time at 00:46Z so we're past the 45-minute delay.
+    monkeypatch.setattr(
+        dashboard_router,
+        "_utc_now",
+        lambda: dashboard_router._dt_from_iso("2026-01-03T00:46:00Z"),
+    )
+
+    posted: dict[str, object] = {}
+
+    def fake_post_json(_settings, *, url: str, payload: dict[str, object]):
+        posted["url"] = url
+        posted["payload"] = payload
+        return {"ok": True}
+
+    monkeypatch.setattr(dashboard_router, "_github_post_json", fake_post_json)
+
+    client = TestClient(create_app())
+    loop = client.get("/api/loop").json()
+
+    assert loop["stage"] == "2b"
+    assert posted["url"].endswith("/repos/acme/repo/issues/5/comments")
+    assert posted["payload"] == {"body": "@copilot please can you attempt to resume this work now?"}
+
+
+def test_loop_status_auto_resumes_copilot_from_graphql_timeline_fallback(
+    monkeypatch, tmp_path: Path
+) -> None:
+    planning = tmp_path / "planning"
+    agent_state = tmp_path / "agent_state"
+
+    monkeypatch.setenv("ORCHESTRATOR_PLANNING_ROOT", str(planning))
+    monkeypatch.setenv("AGENT_STATE_PATH", str(agent_state))
+    monkeypatch.setenv("ORCHESTRATOR_UI_DIST", str(tmp_path / "ui" / "dist"))
+    monkeypatch.setenv("ORCHESTRATOR_DEFAULT_REPO", "acme/repo")
+
+    monkeypatch.setenv("ORCHESTRATOR_GITHUB_TOKEN", "ghp_test")
+    monkeypatch.setenv("ORCHESTRATOR_AUTO_RESUME_COPILOT_ON_RATE_LIMIT", "true")
+    monkeypatch.setenv("ORCHESTRATOR_AUTO_RESUME_COPILOT_ON_RATE_LIMIT_DELAY_MINUTES", "45")
+
+    import github_agent_orchestrator.server.dashboard_router as dashboard_router
+
+    def fake_list_repo_md(*_args, **kwargs):
+        dir_path = kwargs.get("dir_path")
+        if dir_path == "planning/issue_queue/pending":
+            return []
+        if dir_path == "planning/issue_queue/processed":
+            return ["planning/issue_queue/processed/dev-1.md"]
+        if dir_path == "planning/issue_queue/complete":
+            return []
+        return []
+
+    monkeypatch.setattr(dashboard_router, "_list_repo_markdown_files_under", fake_list_repo_md)
+    monkeypatch.setattr(
+        dashboard_router,
+        "_get_repo_text_file",
+        lambda *_a, **_k: ("Dev: One\n\nBody\n", "sha-1"),
+    )
+    monkeypatch.setattr(
+        dashboard_router,
+        "_list_open_issues_raw",
+        lambda *_a, **_k: [{"number": 101, "title": "Dev: One", "state": "open"}],
+    )
+    monkeypatch.setattr(dashboard_router, "_list_open_pull_requests_raw", lambda *_a, **_k: [])
+    monkeypatch.setattr(
+        dashboard_router,
+        "_list_issue_timeline_raw",
+        lambda *_a, **_k: [
+            {
+                "event": "cross-referenced",
+                "source": {"issue": {"number": 5, "pull_request": {}}},
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        dashboard_router,
+        "_get_pull_request",
+        lambda *_a, **_k: {
+            "number": 5,
+            "state": "open",
+            "draft": False,
+            "title": "Dev: One",
+            "requested_reviewers": [],
+            "requested_teams": [],
+            "mergeable_state": "clean",
+            "html_url": "https://github.com/acme/repo/pull/5",
+        },
+    )
+
+    # REST issue comments are empty, so the implementation should fall back to GraphQL.
+    monkeypatch.setattr(dashboard_router, "_list_issue_comments_raw", lambda *_a, **_k: [])
+
+    def fake_graphql_post(*_a, **_k):
+        return {
+            "data": {
+                "repository": {
+                    "pullRequest": {
+                        "timelineItems": {
+                            "nodes": [
+                                {
+                                    "__typename": "IssueComment",
+                                    "createdAt": "2026-01-03T00:00:00Z",
+                                    "body": (
+                                        "Sorry, you've hit a rate limit that restricts the number of "
+                                        "Copilot model requests you can make within a specific time period. "
+                                        "Please try again in 46 minutes.\n"
+                                        "To retry, leave a comment on this pull request asking Copilot to try again."
+                                    ),
+                                    "author": {"login": "copilot-swe-agent"},
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        }
+
+    monkeypatch.setattr(dashboard_router, "_github_graphql_post", fake_graphql_post)
+
+    monkeypatch.setattr(
+        dashboard_router,
+        "_utc_now",
+        lambda: dashboard_router._dt_from_iso("2026-01-03T00:46:00Z"),
+    )
+
+    posted: dict[str, object] = {}
+
+    def fake_post_json(_settings, *, url: str, payload: dict[str, object]):
+        posted["url"] = url
+        posted["payload"] = payload
+        return {"ok": True}
+
+    monkeypatch.setattr(dashboard_router, "_github_post_json", fake_post_json)
+
+    client = TestClient(create_app())
+    _loop = client.get("/api/loop").json()
+
+    assert posted["url"].endswith("/repos/acme/repo/issues/5/comments")
+    assert posted["payload"] == {"body": "@copilot please can you attempt to resume this work now?"}
+
+
+def test_loop_status_auto_resumes_copilot_from_issue_events_fallback(
+    monkeypatch, tmp_path: Path
+) -> None:
+    planning = tmp_path / "planning"
+    agent_state = tmp_path / "agent_state"
+
+    monkeypatch.setenv("ORCHESTRATOR_PLANNING_ROOT", str(planning))
+    monkeypatch.setenv("AGENT_STATE_PATH", str(agent_state))
+    monkeypatch.setenv("ORCHESTRATOR_UI_DIST", str(tmp_path / "ui" / "dist"))
+    monkeypatch.setenv("ORCHESTRATOR_DEFAULT_REPO", "acme/repo")
+
+    monkeypatch.setenv("ORCHESTRATOR_GITHUB_TOKEN", "ghp_test")
+    monkeypatch.setenv("ORCHESTRATOR_AUTO_RESUME_COPILOT_ON_RATE_LIMIT", "true")
+    monkeypatch.setenv("ORCHESTRATOR_AUTO_RESUME_COPILOT_ON_RATE_LIMIT_DELAY_MINUTES", "45")
+
+    import github_agent_orchestrator.server.dashboard_router as dashboard_router
+
+    def fake_list_repo_md(*_args, **kwargs):
+        dir_path = kwargs.get("dir_path")
+        if dir_path == "planning/issue_queue/pending":
+            return []
+        if dir_path == "planning/issue_queue/processed":
+            return ["planning/issue_queue/processed/dev-1.md"]
+        if dir_path == "planning/issue_queue/complete":
+            return []
+        return []
+
+    monkeypatch.setattr(dashboard_router, "_list_repo_markdown_files_under", fake_list_repo_md)
+    monkeypatch.setattr(
+        dashboard_router,
+        "_get_repo_text_file",
+        lambda *_a, **_k: ("Dev: One\n\nBody\n", "sha-1"),
+    )
+    monkeypatch.setattr(
+        dashboard_router,
+        "_list_open_issues_raw",
+        lambda *_a, **_k: [{"number": 101, "title": "Dev: One", "state": "open"}],
+    )
+    monkeypatch.setattr(dashboard_router, "_list_open_pull_requests_raw", lambda *_a, **_k: [])
+    monkeypatch.setattr(
+        dashboard_router,
+        "_list_issue_timeline_raw",
+        lambda *_a, **_k: [
+            {
+                "event": "cross-referenced",
+                "source": {"issue": {"number": 5, "pull_request": {}}},
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        dashboard_router,
+        "_get_pull_request",
+        lambda *_a, **_k: {
+            "number": 5,
+            "state": "open",
+            "draft": False,
+            "title": "Dev: One",
+            "requested_reviewers": [],
+            "requested_teams": [],
+            "mergeable_state": "clean",
+            "html_url": "https://github.com/acme/repo/pull/5",
+        },
+    )
+
+    # No comments, and GraphQL returns no nodes (best-effort fallback).
+    monkeypatch.setattr(dashboard_router, "_list_issue_comments_raw", lambda *_a, **_k: [])
+    monkeypatch.setattr(
+        dashboard_router, "_list_pull_request_timeline_items_via_graphql", lambda *_a, **_k: []
+    )
+
+    # Issue events show a Copilot work failure at t=00:00Z.
+    monkeypatch.setattr(
+        dashboard_router,
+        "_list_issue_events_raw",
+        lambda *_a, **_k: [
+            {
+                "event": "copilot_work_started",
+                "created_at": "2026-01-03T00:00:00Z",
+                "performed_via_github_app": {"slug": "copilot-swe-agent"},
+            },
+            {
+                "event": "copilot_work_finished_failure",
+                "created_at": "2026-01-03T00:00:00Z",
+                "performed_via_github_app": {"slug": "copilot-swe-agent"},
+            },
+        ],
+    )
+
+    monkeypatch.setattr(
+        dashboard_router,
+        "_utc_now",
+        lambda: dashboard_router._dt_from_iso("2026-01-03T00:46:00Z"),
+    )
+
+    posted: dict[str, object] = {}
+
+    def fake_post_json(_settings, *, url: str, payload: dict[str, object]):
+        posted["url"] = url
+        posted["payload"] = payload
+        return {"ok": True}
+
+    monkeypatch.setattr(dashboard_router, "_github_post_json", fake_post_json)
+
+    client = TestClient(create_app())
+    _loop = client.get("/api/loop").json()
+
+    assert posted["url"].endswith("/repos/acme/repo/issues/5/comments")
+    assert posted["payload"] == {"body": "@copilot please can you attempt to resume this work now?"}
+
+
 def test_loop_status_does_not_advance_when_pr_is_wip(monkeypatch, tmp_path: Path) -> None:
     planning = tmp_path / "planning"
     agent_state = tmp_path / "agent_state"
@@ -441,7 +778,6 @@ def test_loop_status_stage_a_exposes_gap_pr_ready_for_merge(monkeypatch, tmp_pat
                 "number": 42,
                 "title": "Identify the next most important development gap",
                 "state": "open",
-                "assignees": [],
             }
         ],
     )

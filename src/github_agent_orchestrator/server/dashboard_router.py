@@ -11,7 +11,7 @@ import base64
 import difflib
 import re
 from contextlib import suppress
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from importlib import resources
 from pathlib import Path
 from typing import Any
@@ -68,6 +68,13 @@ _QUEUE_CAPABILITY_PREFIXES: tuple[str, ...] = (
 _GAP_ANALYSIS_TITLES: tuple[str, ...] = ("identify the next most important development gap",)
 
 
+_COPILOT_RATE_LIMIT_RESUME_COMMENT = "@copilot please can you attempt to resume this work now?"
+
+
+def _utc_now() -> datetime:
+    return datetime.now(tz=UTC)
+
+
 def _settings(request: Request) -> ServerSettings:
     settings = getattr(request.app.state, "settings", None)
     if not isinstance(settings, ServerSettings):
@@ -77,14 +84,290 @@ def _settings(request: Request) -> ServerSettings:
 
 
 def _utc_now_iso() -> str:
-    return datetime.now(tz=UTC).isoformat()
+    return _utc_now().isoformat()
 
 
 def _dt_from_iso(value: str) -> datetime:
     try:
         return datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
-        return datetime.now(tz=UTC)
+        return _utc_now()
+
+
+def _copilot_login_candidates(settings: ServerSettings) -> set[str]:
+    """Return likely GitHub logins for the Copilot coding agent account.
+
+    GitHub sometimes represents the bot login with/without a "[bot]" suffix.
+    """
+
+    raw = settings.copilot_assignee.strip()
+    out: set[str] = {"copilot-swe-agent"}
+    if raw:
+        cleaned = raw.strip().lstrip("@").strip()
+        out.add(cleaned.lower())
+        out.add(cleaned.replace("[bot]", "").strip().lower())
+    return {c for c in out if c}
+
+
+def _comment_body_looks_like_copilot_rate_limit(body: str) -> bool:
+    lower = (body or "").lower()
+    if "hit a rate limit" not in lower:
+        return False
+    # The Copilot agent's error text includes Copilot-specific phrasing.
+    if "copilot" not in lower:
+        return False
+    return ("try again" in lower) or ("minutes" in lower) or ("retry" in lower)
+
+
+def _comment_body_is_copilot_resume_nudge(body: str) -> bool:
+    return _COPILOT_RATE_LIMIT_RESUME_COMMENT.lower() in (body or "").lower()
+
+
+def _list_issue_comments_raw(
+    settings: ServerSettings, *, repository: str, issue_number: int
+) -> list[dict[str, Any]]:
+    return _github_get_list(
+        settings,
+        url=_repo_api_url(settings, repository=repository, path=f"issues/{issue_number}/comments"),
+        params={"per_page": "100"},
+    )
+
+
+def _list_issue_events_raw(
+    settings: ServerSettings, *, repository: str, issue_number: int
+) -> list[dict[str, Any]]:
+    """List issue/PR events (REST).
+
+    GitHub surfaces Copilot SWE Agent lifecycle events here (e.g.
+    `copilot_work_started`, `copilot_work_finished_failure`).
+    """
+
+    return _github_get_list(
+        settings,
+        url=_repo_api_url(settings, repository=repository, path=f"issues/{issue_number}/events"),
+        params={"per_page": "100"},
+    )
+
+
+def _list_pull_request_timeline_items_via_graphql(
+    settings: ServerSettings, *, repository: str, pr_number: int
+) -> list[dict[str, Any]]:
+    """Fetch PR timeline items via GraphQL.
+
+    We use this as a fallback signal source for Copilot-specific system messages that
+    may not surface via the REST issue comments endpoint.
+
+    Notes:
+        - This intentionally only extracts a minimal subset of timeline item shapes.
+        - It is best-effort: failures are handled by the caller.
+    """
+
+    repo = repository.strip().strip("/")
+    if not repo or "/" not in repo:
+        return []
+    owner, name = repo.split("/", 1)
+
+    query = (
+        "query($owner: String!, $name: String!, $number: Int!) {"
+        "  repository(owner: $owner, name: $name) {"
+        "    pullRequest(number: $number) {"
+        "      timelineItems(first: 100, itemTypes: [ISSUE_COMMENT, PULL_REQUEST_REVIEW]) {"
+        "        nodes {"
+        "          __typename "
+        "          ... on IssueComment { createdAt body author { login } }"
+        "          ... on PullRequestReview { createdAt body state author { login } }"
+        "        }"
+        "      }"
+        "    }"
+        "  }"
+        "}"
+    )
+
+    payload = _github_graphql_post(
+        settings,
+        query=query,
+        variables={"owner": owner, "name": name, "number": pr_number},
+    )
+    gql_errors = _graphql_errors_as_message(payload)
+    if gql_errors:
+        raise HTTPException(status_code=502, detail=f"GraphQL timelineItems error: {gql_errors}")
+
+    data = payload.get("data") if isinstance(payload, dict) else None
+    repo_data = data.get("repository") if isinstance(data, dict) else None
+    pr_data = repo_data.get("pullRequest") if isinstance(repo_data, dict) else None
+    items = pr_data.get("timelineItems") if isinstance(pr_data, dict) else None
+    nodes = items.get("nodes") if isinstance(items, dict) else None
+    if not isinstance(nodes, list):
+        return []
+
+    out: list[dict[str, Any]] = []
+    for n in nodes:
+        if not isinstance(n, dict):
+            continue
+        created_at = n.get("createdAt")
+        body = n.get("body")
+        if not isinstance(created_at, str) or not isinstance(body, str):
+            continue
+        author = n.get("author")
+        login = author.get("login") if isinstance(author, dict) else None
+        out.append(
+            {
+                "created_at": created_at,
+                "body": body,
+                "user": ({"login": login} if isinstance(login, str) else None),
+                "__typename": n.get("__typename"),
+            }
+        )
+    return out
+
+
+def _maybe_auto_resume_copilot_after_rate_limit(
+    *,
+    settings: ServerSettings,
+    repository: str,
+    pr_number: int,
+) -> str | None:
+    """If enabled, post a resume comment after detecting a Copilot rate limit stop message.
+
+    The mechanism is intentionally simple and idempotent:
+    - Detect the latest Copilot-authored rate-limit comment on the PR.
+    - Wait N minutes (default 45) after that comment's timestamp.
+    - Post a single resume nudge comment tagging @copilot.
+    - Never post if a resume nudge already exists after that rate-limit comment.
+    """
+
+    if not settings.auto_resume_copilot_on_rate_limit:
+        return None
+    if not settings.github_token.strip():
+        return None
+
+    delay_minutes = int(settings.auto_resume_copilot_on_rate_limit_delay_minutes)
+    now = _utc_now()
+
+    try:
+        comments = _list_issue_comments_raw(settings, repository=repository, issue_number=pr_number)
+    except HTTPException:
+        # Best-effort only: do not break status rendering.
+        return None
+
+    # Fallback: some Copilot system messages do not surface in REST issue comments.
+    if not comments:
+        with suppress(HTTPException):
+            comments = _list_pull_request_timeline_items_via_graphql(
+                settings, repository=repository, pr_number=pr_number
+            )
+
+    candidates = _copilot_login_candidates(settings)
+
+    rate_limit: dict[str, Any] | None = None
+    for it in comments:
+        if not isinstance(it, dict):
+            continue
+        body = it.get("body")
+        if not isinstance(body, str) or not body.strip():
+            continue
+        if not _comment_body_looks_like_copilot_rate_limit(body):
+            continue
+        user = it.get("user")
+        login = user.get("login") if isinstance(user, dict) else None
+        if isinstance(login, str) and login.strip() and login.strip().lower() not in candidates:
+            continue
+        created_at = it.get("created_at")
+        if not isinstance(created_at, str) or not created_at.strip():
+            continue
+        # Keep the latest rate-limit comment.
+        if rate_limit is None or str(created_at) > str(rate_limit.get("created_at") or ""):
+            rate_limit = it
+
+    # Final fallback: Copilot agent lifecycle events may be present even when
+    # no issue comments exist (common for the Copilot SWE Agent experience).
+    # We treat a `copilot_work_finished_failure` event as a stop signal that can
+    # be retried via an @copilot comment after a delay.
+    events: list[dict[str, Any]] = []
+    if rate_limit is None:
+        with suppress(HTTPException):
+            events = _list_issue_events_raw(settings, repository=repository, issue_number=pr_number)
+
+        latest_failure_iso: str | None = None
+        for ev in events:
+            if not isinstance(ev, dict):
+                continue
+            if ev.get("event") != "copilot_work_finished_failure":
+                continue
+            created_at = ev.get("created_at")
+            if not isinstance(created_at, str) or not created_at.strip():
+                continue
+
+            # Best-effort: ensure the event was produced via the Copilot SWE Agent app.
+            app = ev.get("performed_via_github_app")
+            slug = app.get("slug") if isinstance(app, dict) else None
+            if (
+                isinstance(slug, str)
+                and slug.strip()
+                and slug.strip().lower() != "copilot-swe-agent"
+            ):
+                continue
+
+            if latest_failure_iso is None or created_at > latest_failure_iso:
+                latest_failure_iso = created_at
+
+        if latest_failure_iso is None:
+            return None
+
+        # If Copilot has started work again after the failure, don't nudge.
+        for ev in events:
+            if not isinstance(ev, dict):
+                continue
+            created_at = ev.get("created_at")
+            if not isinstance(created_at, str) or created_at <= latest_failure_iso:
+                continue
+            if ev.get("event") in {"copilot_work_started", "copilot_work_finished_success"}:
+                return None
+
+        rate_limit = {
+            "created_at": latest_failure_iso,
+            "user": {"login": "copilot-swe-agent"},
+            "body": "",
+        }
+
+    rate_ts_iso = str(rate_limit.get("created_at") or "")
+    rate_dt = _dt_from_iso(rate_ts_iso)
+    due_dt = rate_dt + timedelta(minutes=delay_minutes)
+    if now < due_dt:
+        remaining = int(max(0, (due_dt - now).total_seconds()) // 60)
+        return (
+            f"Copilot rate limit detected on PR #{pr_number} at {rate_ts_iso}; "
+            f"auto-resume eligible in ~{remaining} minutes."
+        )
+
+    # Do not post if a resume nudge already exists after the rate-limit comment.
+    for it in comments:
+        if not isinstance(it, dict):
+            continue
+        created_at = it.get("created_at")
+        if not isinstance(created_at, str) or created_at <= rate_ts_iso:
+            continue
+        body = it.get("body")
+        if isinstance(body, str) and _comment_body_is_copilot_resume_nudge(body):
+            return None
+
+        # If Copilot has posted anything else after the rate-limit comment, assume it resumed.
+        user = it.get("user")
+        login = user.get("login") if isinstance(user, dict) else None
+        if (
+            isinstance(login, str)
+            and login.strip().lower() in candidates
+            and isinstance(body, str)
+            and not _comment_body_looks_like_copilot_rate_limit(body)
+        ):
+            return None
+
+    _github_post_json(
+        settings,
+        url=_repo_api_url(settings, repository=repository, path=f"issues/{pr_number}/comments"),
+        payload={"body": _COPILOT_RATE_LIMIT_RESUME_COMMENT},
+    )
+    return f"Posted auto-resume comment on PR #{pr_number} after Copilot rate limit."
 
 
 def _make_github_issue_url(repo: str, issue_number: int) -> str | None:
@@ -3579,6 +3862,19 @@ def _loop_status_for_repo(
             "sourcePullNumber": source_pr_number,
             "sourcePullUrl": source_pr_url,
         }
+
+    # Best-effort automation: if configured, auto-nudge Copilot to resume after a rate limit stop.
+    # This is intentionally scoped to the focused PR only to avoid scanning the entire repo.
+    if settings.auto_resume_copilot_on_rate_limit and isinstance(focus, dict):
+        focus_pull_number = focus.get("pullNumber")
+        if isinstance(focus_pull_number, int) and focus_pull_number > 0:
+            msg = _maybe_auto_resume_copilot_after_rate_limit(
+                settings=settings,
+                repository=active_repo,
+                pr_number=focus_pull_number,
+            )
+            if isinstance(msg, str) and msg.strip():
+                warnings.append(msg)
 
     return {
         "nowIso": _utc_now_iso(),
