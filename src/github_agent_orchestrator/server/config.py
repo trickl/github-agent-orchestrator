@@ -57,18 +57,41 @@ class ServerSettings(BaseSettings):
         validation_alias="ORCHESTRATOR_AUTO_RESUME_COPILOT_ON_RATE_LIMIT",
         description=(
             "If true, the server may automatically post a '@copilot ... resume' comment on a PR "
-            "after detecting a Copilot rate limit stop message and waiting the configured delay."
+            "after detecting that Copilot SWE Agent has stopped (via issue lifecycle events) and "
+            "waiting the configured delay."
         ),
     )
     auto_resume_copilot_on_rate_limit_delay_minutes: int = Field(
         default=45,
         validation_alias="ORCHESTRATOR_AUTO_RESUME_COPILOT_ON_RATE_LIMIT_DELAY_MINUTES",
         description=(
-            "Delay (minutes) to wait after the Copilot rate limit comment timestamp before "
-            "posting an auto-resume comment."
+            "Delay (minutes) to wait after the Copilot stop/failure timestamp before posting an "
+            "auto-resume comment."
         ),
         ge=1,
         le=240,
+    )
+
+    auto_resume_copilot_max_nudges: int = Field(
+        default=3,
+        validation_alias="ORCHESTRATOR_AUTO_RESUME_COPILOT_MAX_NUDGES",
+        description=(
+            "Maximum number of auto-resume nudges that may be posted within the active window "
+            "(see ORCHESTRATOR_AUTO_RESUME_COPILOT_NUDGE_WINDOW_MINUTES). Set to 0 to disable "
+            "posting while keeping detection enabled."
+        ),
+        ge=0,
+        le=20,
+    )
+    auto_resume_copilot_nudge_window_minutes: int = Field(
+        default=1440,
+        validation_alias="ORCHESTRATOR_AUTO_RESUME_COPILOT_NUDGE_WINDOW_MINUTES",
+        description=(
+            "Rolling window (minutes) used to count previously-posted resume nudges when enforcing "
+            "the nudge budget."
+        ),
+        ge=10,
+        le=10080,
     )
 
     # Active repository context for the dashboard. If set, issue lists and overview

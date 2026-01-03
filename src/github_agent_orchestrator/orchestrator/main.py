@@ -463,7 +463,7 @@ def build_parser() -> argparse.ArgumentParser:
     auto_resume_copilot = subparsers.add_parser(
         "auto-resume-copilot",
         help=(
-            "Detect a Copilot rate-limit stop message on a PR and (if due) post a resume nudge. "
+            "Detect a Copilot SWE Agent stop/failure on a PR and (if due) post a resume nudge. "
             "This uses the same logic as the server loop status automation."
         ),
     )
