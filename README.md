@@ -82,84 +82,148 @@ The issue instructs Copilot to:
 - identify the next concrete development task
 - write **exactly one** handoff artefact into `/planning/issue_queue/pending/`
 
-Nothing else happens at this step.
 
-**How to run it:**
+# GitHub Agent Orchestrator
 
-- **UI:** Step 1a → “Ensure gap analysis issue”.
-- **API:** `POST /api/loop/gap-analysis/ensure`
+[![Tests](https://github.com/trickl/github-agent-orchestrator/workflows/Tests/badge.svg)](https://github.com/trickl/github-agent-orchestrator/actions)
+[![Lint](https://github.com/trickl/github-agent-orchestrator/workflows/Lint/badge.svg)](https://github.com/trickl/github-agent-orchestrator/actions)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Safety note: the gap-analysis issue body is loaded from an orchestrator-owned local template.
+A Git-native **control loop for long-horizon, AI-assisted software development**, built around
+**bounded context**, **explicit state**, and **Copilot-only cognition**.
 
-Keeping this step explicit is intentional: it’s where prioritisation and judgment live.
+This project is intentionally **not** a monolithic agent and does **not** rely on growing conversational context.
+Instead, all planning, execution, and reflection are driven by **Git-tracked artefacts** and executed entirely via
+**GitHub Copilot**.
 
-### Step 2a — Promote the next queued development task
+---
 
-The orchestrator processes `/planning/issue_queue/pending/` and promotes the next file into a GitHub issue.
-This step is deliberately “boring plumbing”:
+## Why this exists
 
-- reads the next queue file
-- creates the GitHub issue
-- assigns it to Copilot
-- moves the queue file to `processed/`
+Most agent systems follow a familiar pattern:
 
-Rate limiting is intentional: **one issue per call/cycle**.
+> Keep adding requests and responses to a growing context window and ask the model what to do next.
 
-### Step 2b — Development execution (Copilot)
+This approach does not scale:
 
-Copilot works the issue and produces a PR. Review/discussion happens in GitHub.
-This is outside the orchestrator’s intelligence.
+- Context grows without bound
+- Costs increase over time
+- Summarisation becomes necessary
+- Detail is lost
+- State becomes implicit and hallucinated
+- Long-running tasks drift or collapse
 
-### Step 2c — Development PR ready for merge
+**GitHub Agent Orchestrator enforces a different invariant:**
 
-The loop classifies a PR as ready when it is:
+> **The LLM context is always bounded.**
 
-- not WIP
-- has a review-request signal
-- not conflicted
+All long-term state lives in the repository.
+Each iteration operates over a fixed, minimal context derived from explicit files, not accumulated conversation.
 
-The merge action is deterministic: it merges **one** ready PR per call.
+This is a **development control loop**, not a chat loop.
 
-### Step 3a — Capability update issue (created after a merge)
+---
 
-After merging a development PR, the orchestrator creates a *new* “Update Capability” issue whose body:
+## Core insight: bounded context + repo-derived control
 
-- includes the PR description
-- includes PR comments/discussion (chronological)
-- explicitly requests an update to `/planning/state/system_capabilities.md` to reflect the merge
+This system is built on two principles:
 
-This is the place the system’s *self-knowledge* is updated.
+1. **Bounded context**
+   Each iteration runs with a fixed, small prompt. There is no accumulated history and no summarisation.
 
-### Step 3b — Capability update execution
+2. **Repo-derived control**
+   All planning decisions are materialised as Git-tracked artefacts and executed via **GitHub Copilot**.
+   No other model is required for planning, prioritisation, or reflection.
 
-That capability-update issue is worked (typically by Copilot). The capabilities document is updated
-to match reality.
+### Traditional agent systems vs this system
 
-### Step 3c — Capability PR ready for merge
+| | Traditional agents | GitHub Agent Orchestrator |
+|---|---|---|
+| Context | Grows over time | Fixed per iteration |
+| Memory | Prompt history | Git-tracked files |
+| Planning | Implicit, conversational | Explicit, artefact-driven |
+| Models | Multiple / ad hoc | Copilot only |
+| State | Hallucinated | Versioned |
+| Auditability | Low | High |
+| Cost profile | Increases | Stable |
 
-When the capability PR is ready (same readiness rules), the orchestrator can merge it.
+---
 
-With updated capabilities, Step 1a can be run again and the loop continues.
+## Mental model
 
-### Parallel / periodic track — Review tasks
+- **Copilot**: does all reasoning and implementation
+- **GitHub**: is the persistent memory and execution arena
+- **The orchestrator**: enforces the loop and invariants
 
-Independently, you can inject review issues every *N* completed development tasks (e.g. complexity
-review, architecture drift, refactoring, test coverage). These are just additional issues flowing
-through the same pipeline; they don’t disturb the main loop.
+Concretely:
 
-Most actions are exposed as explicit endpoints/buttons so you can drive the system manually (dashboard)
-or periodically (cron/CI/webhooks), while keeping the behavior deterministic and inspectable.
+- Issues = **intent**
+- PRs = **execution**
+- Reviews = **reflection**
+- Repository files = **memory**
 
-## Design: artefact-driven orchestration
+Nothing important lives only inside an LLM context.
 
-### Canonical folders (finalised)
+---
 
-The orchestration loop is driven by a small set of canonical artefacts:
+## The control loop
 
+The system continuously iterates over two explicit states:
+
+- **Target state**: `/planning/vision/goal.md`
+- **Current state**: `/planning/state/system_capabilities.md`
+
+Each loop:
+
+1. Compare target vs current
+2. Identify a single concrete gap
+3. Produce one task artefact
+4. Execute it via Copilot (issue → PR)
+5. Update the current state
+6. Reset context
+7. Repeat
+
+There is **no growing prompt**.
+
+### Control-loop diagram
+
+```mermaid
+flowchart TD
+    Goal["Target State<br/>goal.md"]
+    Cap["Current State<br/>system_capabilities.md"]
+
+    Gap["Gap Analysis<br/>(bounded context)"]
+
+    Queue["Task Artefact<br/>/planning/issue_queue/pending"]
+    Issue["GitHub Issue"]
+    PR["PR + Review"]
+    Merge["Merge"]
+
+    Update["Update Capabilities<br/>system_capabilities.md"]
+
+    Goal --> Gap
+    Cap --> Gap
+    Gap --> Queue
+    Queue --> Issue
+    Issue --> PR
+    PR --> Merge
+    Merge --> Update
+    Update --> Cap
+
+    Cap -.->|"Next iteration<br/>(context resets)"| Gap
 ```
+
+---
+
+## Canonical artefacts
+
+The entire loop is driven by a small, explicit set of Git-tracked artefacts:
+
+```text
 /planning
     /vision
-        goal.md              # User-owned, rarely changes
+        goal.md
     /state
         system_capabilities.md
     /reviews
@@ -170,60 +234,61 @@ The orchestration loop is driven by a small set of canonical artefacts:
         complete/
 ```
 
-Note: **issue templates are orchestrator-owned**. They are shipped with this project and are not
-expected to exist in the target repo.
+The `/planning/issue_queue` directory is the handoff boundary between Copilot’s reasoning and the orchestrator’s
+control.
 
-The `/planning/issue_queue` folder is the explicit handoff boundary between reasoning and orchestration.
+---
 
-### The four canonical issue types (never mix)
+## Canonical task types
 
-1) **Gap Analysis (Plan → Build)**
+These are never mixed.
 
-- Purpose: compare `goal.md` vs `system_capabilities.md` and identify the next development step.
-- Output: exactly one file in `/planning/issue_queue/pending/dev-<timestamp>.md`.
-- Constraints: no code changes, no issue creation; output must be a candidate task (not a fix).
+### 1. Gap analysis
 
-2) **Development Task (Build Something)**
+- Compares goal vs capabilities
+- Produces exactly one task artefact
+- No code changes
 
-- Input: one file from `/planning/issue_queue/pending/`.
-- Output: code + tests and an updated `/planning/state/system_capabilities.md`.
-- Promotion: the orchestrator converts the file into a GitHub issue, assigns to Copilot, then moves the file to `processed/`.
+### 2. Development task
 
-3) **Review Task (Critique)**
+- Implements one concrete change
+- Updates `system_capabilities.md`
 
-- Purpose: assess the system from one lens (architecture, correctness, mission alignment, capability completeness).
-- Output: exactly one review document in `/planning/reviews/`.
-- Constraints: analysis only (no fixes, no new tasks).
+### 3. Review task
 
-4) **Review Consumption (Critique → Action)**
+- Critique only (architecture, complexity, coverage, etc.)
+- Produces a review artefact
 
-- Purpose: translate critique into candidate work without acting on it.
-- Input: one specific review file.
-- Output: one or more files in `/planning/issue_queue/pending/review-<timestamp>-<n>.md`.
+### 4. Review consumption
 
-### Loop constraint (rate limiting)
+- Translates critique into candidate tasks
+- No execution
 
-The orchestrator is intentionally rate-limited:
+---
 
-1. Scan `/planning/issue_queue/pending`.
-2. If files exist:
-     - Convert the next file → GitHub issue
-     - Move file → `issue_queue/processed`
-     - Assign to Copilot
-     - Exit (one issue per cycle)
-3. Else:
-     - Optionally create a meta-issue (gap analysis, system state update, review)
-4. Sleep / poll
+## Features
 
-### User role (explicit)
+- Minimal CLI for driving the loop
+- Repo-derived loop state (no database, no local state)
+- Copilot-only planning and execution
+- Structured JSON logs (used by the dashboard and API)
+- Optional REST server and UI dashboard for observability
+
+---
+
+## User role
 
 The user owns exactly one artefact:
 
-- `/planning/vision/goal.md`
+```text
+/planning/vision/goal.md
+```
 
 Everything else is derived.
 
-## Quick Start
+---
+
+## Quick start
 
 ### Installation
 
@@ -232,266 +297,55 @@ pip install github-agent-orchestrator
 ```
 
 For development:
+
 ```bash
 git clone https://github.com/trickl/github-agent-orchestrator.git
 cd github-agent-orchestrator
 pip install -e ".[dev]"
-```
-
-With local LLaMA support:
-```bash
-pip install "github-agent-orchestrator[llama]"
 ```
 
 ### Configuration
 
-Create a `.env` file or set environment variables:
-
 ```bash
-# GitHub Configuration
-# Use a dedicated variable to avoid collisions with other tools/services that
-# may also use GITHUB_TOKEN.
 ORCHESTRATOR_GITHUB_TOKEN=ghp_...
-
-# Who to assign issues to (default is often the Copilot SWE agent bot).
 COPILOT_ASSIGNEE=copilot-swe-agent[bot]
-
-# Optional (defaults shown)
-GITHUB_BASE_URL=https://api.github.com
 LOG_LEVEL=INFO
-AGENT_STATE_PATH=agent_state
-
-# REST server (optional)
-# The dashboard reads loop state from this repo unless overridden via `?repo=owner/name`.
-ORCHESTRATOR_DEFAULT_REPO=owner/repo
-ORCHESTRATOR_HOST=127.0.0.1
-ORCHESTRATOR_PORT=8000
 ```
-
-### Basic Usage (CLI)
-
-```bash
-orchestrator create-issue \
-  --repo "owner/repo" \
-  --title "Phase 1: bootstrap" \
-  --body "Create minimal local orchestrator" \
-  --labels "agent,phase-1"
-```
-
-### Programmatic Usage
-
-```python
-from github_agent_orchestrator.orchestrator.config import OrchestratorSettings
-from github_agent_orchestrator.orchestrator.github.client import GitHubClient
-from github_agent_orchestrator.orchestrator.github.issue_service import IssueService, IssueStore
-from github_agent_orchestrator.orchestrator.logging import configure_logging
-
-settings = OrchestratorSettings()
-configure_logging(settings.log_level)
-
-github = GitHubClient(
-    token=settings.github_token,
-    repository="owner/repo",  # provided explicitly (not from .env)
-    base_url=settings.github_base_url,
-)
-
-service = IssueService(
-    github=github,
-    store=IssueStore(settings.issues_state_file),
-)
-
-record = service.create_issue(
-    title="Hello",
-    body="Created from Python",
-    labels=["agent"],
-)
-
-print(record)
-
-```
-
-## REST Server (FastAPI)
-
-Run the REST API (serves OpenAPI docs automatically):
-
-```bash
-orchestrator-server
-```
-
-If you're running from source without the console script on your PATH:
-
-```bash
-python -m github_agent_orchestrator.server
-```
-
-Useful endpoints:
-
-- OpenAPI JSON: `http://127.0.0.1:8000/api/openapi.json`
-- Swagger UI: `http://127.0.0.1:8000/api/docs`
-
-The server exposes endpoints under:
-
-- `/api` (dashboard API used by the React UI)
-
-## React + Vite UI (minimal scaffold)
-
-A minimal UI scaffold is in `ui/`. It calls the REST API via a dev proxy.
-
-1) Start the backend:
-
-```bash
-orchestrator-server
-```
-
-2) Start the UI dev server:
-
-```bash
-cd ui
-npm install
-npm run dev
-```
-
-
-## Architecture
-
-The Phase 1/1A implementation spans two layers:
-
-- `src/github_agent_orchestrator/server/`: dashboard API + loop classification/actions (repo-derived)
-- `src/github_agent_orchestrator/orchestrator/`: lower-level primitives (CLI, GitHub client/service)
-
-```
-src/github_agent_orchestrator/
-├── server/
-│   ├── dashboard_router.py   # Loop status + action endpoints (/api/loop/*)
-│   └── templates/            # Orchestrator-owned templates shipped with the package
-└── orchestrator/
-    ├── config.py             # .env + env var settings
-    ├── logging.py            # JSON logging
-    ├── main.py               # CLI entrypoint
-    └── github/
-        ├── client.py         # PyGithub wrapper
-        └── issue_service.py  # Issue creation + (optional) local persistence
-```
-
-Key components:
-
-* `dashboard_router.py`: repo-derived loop status and deterministic, one-step actions
-* `OrchestratorSettings`: loads config from `.env`
-* `GitHubClient`: authenticates and creates issues
-* `IssueService`: idempotent-safe issue creation and (optional) local persistence
-
-## Development
-
-### Setup
-
-```bash
-# Clone and install
-git clone https://github.com/trickl/github-agent-orchestrator.git
-cd github-agent-orchestrator
-pip install -e ".[dev]"
-
-# Install pre-commit hooks
-pre-commit install
-```
-
-### Running Tests
-
-```bash
-# Run all tests
-pytest
-
-# Run with coverage
-pytest --cov=src/github_agent_orchestrator
-
-# Run specific test file
-pytest tests/unit/test_config.py
-```
-
-### Code Quality
-
-```bash
-# Linting
-ruff check src/ tests/
-
-# Auto-fix linting issues
-ruff check --fix src/ tests/
-
-# Formatting
-black src/ tests/
-
-# Import sorting
-isort src/ tests/
-
-# Type checking
-mypy src/
-```
-
-## Documentation
-
-Full documentation is available in the `docs/` directory:
-
-- [Architecture](docs/architecture.rst) - System design and components
-- [API Reference](docs/api.rst) - Complete API documentation
-- [Usage Guide](docs/usage.rst) - Detailed usage examples
-- [Contributing](CONTRIBUTING.md) - Contribution guidelines
-
-Build documentation locally:
-
-```bash
-cd docs
-make html
-open _build/html/index.html
-```
-
-## Roadmap
-
-See [ROADMAP.md](ROADMAP.md) for planned features and development timeline.
-
-### Current Status (v0.1.0)
-- ✅ Artefact-driven loop classification (9 stages: 1a–3c)
-- ✅ Dashboard UI + REST API for status + actions
-- ✅ Issue queue promotion (one-per-cycle)
-- ✅ Guardrailed merge automation (WIP/review-request/conflict gates)
-- ✅ Post-merge capability update issue flow
-- ✅ Safety rails for gap-analysis prompt content
-- ✅ Comprehensive testing and documentation
-
-### Coming Soon (v0.2.0)
-- 🚧 Webhook/event-driven mode (reduce polling)
-- 🚧 Better multi-repo ergonomics + onboarding helpers
-- 🚧 Richer dashboard diagnostics (why a stage was selected)
-- 🚧 Enhanced error handling and recovery
-
-## Contributing
-
-We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
-### Quick Contribution Guide
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Make your changes with tests
-4. Run quality checks (`pre-commit run --all-files`)
-5. Commit your changes (`git commit -m 'Add amazing feature'`)
-6. Push to your fork (`git push origin feature/amazing-feature`)
-7. Open a Pull Request
-
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Acknowledgments
-
-- Built with [OpenAI](https://openai.com/) and [llama-cpp-python](https://github.com/abetlen/llama-cpp-python)
-- GitHub integration via [PyGithub](https://github.com/PyGithub/PyGithub)
-- Configuration management with [Pydantic](https://github.com/pydantic/pydantic)
-
-## Support
-
-- 📖 [Documentation](docs/)
-- 🐛 [Issue Tracker](https://github.com/trickl/github-agent-orchestrator/issues)
-- 💬 [Discussions](https://github.com/trickl/github-agent-orchestrator/discussions)
 
 ---
 
-Made with ❤️ by the Trickl team
+## REST server and dashboard (optional)
+
+```bash
+orchestrator-server
+```
+
+- OpenAPI: http://127.0.0.1:8000/api/openapi.json
+- Swagger UI: http://127.0.0.1:8000/api/docs
+
+The dashboard is observational only; it does not alter system behaviour.
+
+---
+
+## Current status
+
+- Artefact-driven development control loop
+- Bounded-context execution
+- Copilot-only planning and implementation
+- Repo-derived state (no database)
+- Optional dashboard and REST API
+- Comprehensive tests
+
+---
+
+## To do
+
+- Periodic automated review cycles (e.g. complexity, test coverage, visual QA)
+- Improved error handling and recovery
+
+---
+
+## License
+
+MIT License — see LICENSE.
+npm run dev
