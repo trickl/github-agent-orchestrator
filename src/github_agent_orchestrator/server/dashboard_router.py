@@ -10,7 +10,9 @@ from __future__ import annotations
 import base64
 import difflib
 import re
+from contextlib import suppress
 from datetime import UTC, datetime
+from importlib import resources
 from pathlib import Path
 from typing import Any
 
@@ -583,34 +585,57 @@ _GAP_ANALYSIS_TEMPLATE_PATHS: tuple[str, ...] = (
 def _load_gap_analysis_template_or_raise(
     *, settings: ServerSettings, repo: str, branch: str
 ) -> str:
-    """Load the gap analysis issue template from the repository.
+    """Load the gap analysis issue template.
+
+    This template is an orchestrator-owned artefact and should NOT be fetched from the target
+    repository. Fetching from the target repo is both brittle (template often doesn't exist
+    there) and risks reintroducing unsafe prompt mutations.
+
+    We load from the local orchestrator installation (packaged resource) and fall back to a
+    local source checkout if running from a git working tree.
 
     Important: do not fall back to a hard-coded prompt here. Bad fallback prompts can trigger
     runaway self-referential agent behaviour.
     """
 
-    last_error: Exception | None = None
-    for template_path in _GAP_ANALYSIS_TEMPLATE_PATHS:
-        try:
-            template_body, _sha = _get_repo_text_file(
-                settings,
-                repository=repo,
-                path=template_path,
-                ref=branch,
-            )
-            if template_body.strip():
-                return template_body
-        except Exception as e:
-            last_error = e
+    # Keep arguments "used" for ruff's ARG checks, but do not use them for network access.
+    _ = (settings, repo, branch)
+
+    # 1) Packaged resource (works for installed distributions).
+    with suppress(Exception):
+        packaged = resources.files("github_agent_orchestrator.server").joinpath(
+            "templates/gap-analysis.md"
+        )
+        content = packaged.read_text(encoding="utf-8")
+        if content.strip():
+            return content
+
+    # 2) Local checkout (this repo / source install).
+    candidate_roots: list[Path] = [Path.cwd()]
+    # Best-effort: in some packaging layouts the parent chain isn't stable.
+    with suppress(Exception):
+        candidate_roots.append(Path(__file__).resolve().parents[3])
+
+    for root in candidate_roots:
+        for template_path in _GAP_ANALYSIS_TEMPLATE_PATHS:
+            candidate = root / template_path
+            try:
+                if candidate.exists() and candidate.is_file():
+                    content = candidate.read_text(encoding="utf-8")
+                    if content.strip():
+                        return content
+            except Exception:
+                # Keep searching other candidates.
+                continue
 
     raise HTTPException(
         status_code=502,
         detail=(
-            "Unable to load gap analysis template from repository. "
+            "Unable to load gap analysis template from the local orchestrator install. "
             "Expected one of: planning/issue_templates/gap-analysis.md or "
             "planning/issue_templates/gap_analysis.md"
         ),
-    ) from last_error
+    )
 
 
 def _gap_analysis_issue_body_looks_unsafe(body: str) -> bool:
@@ -3144,7 +3169,7 @@ def _loop_status_for_repo(
                         timeline_lookups += 1
                     review_requested = cached_rr
 
-                if _pull_request_is_ready_for_review(pr_data, review_requested=review_requested):
+                if _pull_request_is_merge_candidate(pr_data, review_requested=review_requested):
                     ready_prs.append(pr_data)
 
             issue_to_open_prs[issue_num] = open_prs
@@ -3200,7 +3225,7 @@ def _loop_status_for_repo(
                     timeline_lookups += 1
                 review_requested = cached_rr
 
-            if _pull_request_is_ready_for_review(pr_data, review_requested=review_requested):
+            if _pull_request_is_merge_candidate(pr_data, review_requested=review_requested):
                 cap_issue_ready_for_review = True
                 cap_ready_prs_list.append(pr_data)
 
@@ -3257,7 +3282,7 @@ def _loop_status_for_repo(
                     timeline_lookups += 1
                 review_requested = cached_rr
 
-            if _pull_request_is_ready_for_review(pr_data, review_requested=review_requested):
+            if _pull_request_is_merge_candidate(pr_data, review_requested=review_requested):
                 gap_issue_ready_for_review = True
                 gap_ready_prs_list.append(pr_data)
 

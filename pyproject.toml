@@ -74,7 +74,7 @@ orchestrator-server = "github_agent_orchestrator.server.main:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-github_agent_orchestrator = ["py.typed"]
+github_agent_orchestrator = ["py.typed", "server/templates/*.md"]
 
 [tool.black]
 line-length = 100

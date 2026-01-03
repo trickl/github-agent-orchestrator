@@ -490,6 +490,79 @@ def test_loop_status_stage_a_exposes_gap_pr_ready_for_merge(monkeypatch, tmp_pat
     assert focus.get("pullNumber") == 5
 
 
+def test_loop_status_stage_1c_when_gap_pr_is_draft_but_review_requested(
+    monkeypatch, tmp_path: Path
+) -> None:
+    planning = tmp_path / "planning"
+    agent_state = tmp_path / "agent_state"
+
+    monkeypatch.setenv("ORCHESTRATOR_PLANNING_ROOT", str(planning))
+    monkeypatch.setenv("AGENT_STATE_PATH", str(agent_state))
+    monkeypatch.setenv("ORCHESTRATOR_UI_DIST", str(tmp_path / "ui" / "dist"))
+    monkeypatch.setenv("ORCHESTRATOR_DEFAULT_REPO", "acme/repo")
+
+    import github_agent_orchestrator.server.dashboard_router as dashboard_router
+
+    # No queue artefacts; loop is governed by open gap-analysis issue.
+    monkeypatch.setattr(
+        dashboard_router,
+        "_list_repo_markdown_files_under",
+        lambda *_a, **_k: [],
+    )
+
+    monkeypatch.setattr(
+        dashboard_router,
+        "_list_open_issues_raw",
+        lambda *_a, **_k: [
+            {
+                "number": 42,
+                "title": "Identify the next most important development gap",
+                "state": "open",
+                "assignees": [],
+            }
+        ],
+    )
+    monkeypatch.setattr(dashboard_router, "_list_open_pull_requests_raw", lambda *_a, **_k: [])
+
+    # Gap-analysis issue timeline cross-references PR #5.
+    monkeypatch.setattr(
+        dashboard_router,
+        "_list_issue_timeline_raw",
+        lambda *_a, **_k: [
+            {
+                "event": "cross-referenced",
+                "source": {"issue": {"number": 5, "pull_request": {}}},
+            }
+        ],
+    )
+
+    # Draft PR with review requested should still count as "ready" for the merge step,
+    # because the merge endpoint may mark it ready-for-review before merging.
+    monkeypatch.setattr(
+        dashboard_router,
+        "_get_pull_request",
+        lambda *_a, **_k: {
+            "number": 5,
+            "state": "open",
+            "draft": True,
+            "title": "Add development task: Render components",
+            "requested_reviewers": [{"login": "alice"}],
+            "requested_teams": [],
+            "mergeable_state": "clean",
+            "html_url": "https://github.com/acme/repo/pull/5",
+        },
+    )
+
+    client = TestClient(create_app())
+    loop = client.get("/api/loop").json()
+
+    assert loop["stage"] == "1c"
+    assert loop["activeStep"] == 2
+    assert loop["counts"]["openGapAnalysisIssues"] == 1
+    assert loop["counts"]["openGapAnalysisIssuesWithPr"] == 1
+    assert loop["counts"]["openGapAnalysisIssuesReadyForReview"] == 1
+
+
 def test_loop_promote_endpoint_promotes_one_file(monkeypatch, tmp_path: Path) -> None:
     planning = tmp_path / "planning"
     agent_state = tmp_path / "agent_state"
@@ -1079,8 +1152,8 @@ def test_ensure_gap_analysis_issue_exists_creates_and_assigns(monkeypatch) -> No
     monkeypatch.setattr(dashboard_router, "_list_open_issues_raw", lambda *_a, **_k: [])
     monkeypatch.setattr(
         dashboard_router,
-        "_get_repo_text_file",
-        lambda *_a, **_k: ("# Gap Analysis\n\nDo the thing\n", "sha"),
+        "_load_gap_analysis_template_or_raise",
+        lambda **_k: "# Gap Analysis\n\nDo the thing\n",
     )
 
     created: dict[str, object] = {}
@@ -1174,8 +1247,8 @@ def test_ensure_gap_analysis_issue_exists_repairs_unsafe_existing_issue_before_a
     )
     monkeypatch.setattr(
         dashboard_router,
-        "_get_repo_text_file",
-        lambda *_a, **_k: ("# Gap Analysis\n\nUse the template\n", "sha"),
+        "_load_gap_analysis_template_or_raise",
+        lambda **_k: "# Gap Analysis\n\nUse the template\n",
     )
 
     patched: dict[str, object] = {}
