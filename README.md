@@ -5,7 +5,7 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Minimal, local-first GitHub orchestrator (Phase 1/1A).
+Minimal GitHub orchestrator with an artefact-driven loop and a dashboard (Phase 1/1A).
 
 This project is intentionally **not** a monolithic “agent”. It is a Git-native **orchestrator / task compiler**
 that enables *long-horizon* software execution by keeping the system’s reasoning external, inspectable, and
@@ -42,49 +42,60 @@ All “thinking” happens inside Copilot-authored PRs.
 
 ## Features
 
-* **🔐 GitHub auth via token** (PyGithub)
+* **🔐 GitHub auth via token** (REST + PyGithub)
 * **🧾 Structured JSON logs** (stdlib `logging`)
 * **🧩 Minimal CLI** (`orchestrator create-issue`)
-* **💾 Local JSON state** (`agent_state/issues.json`)
-* **🛡️ Idempotent-safe** issue creation (by title, locally)
-* **🌐 REST server adapter** (FastAPI + OpenAPI docs)
-* **🔎 Linked PR monitoring** (polling via GitHub REST issue timeline)
-* **📥 Issue queue promotion** (convert queued artefacts into GitHub issues)
-* **✅ Safe-ish PR merge automation** (mark ready, merge, optionally delete branch)
-* **🧠 Post-merge capability update issue** (create a system-capabilities update issue from a merged PR)
+* **🌐 REST server + dashboard** (FastAPI + OpenAPI docs + React UI)
+* **🧭 Repo-derived loop status** (driven by git-tracked planning artefacts + GitHub state; no DB)
+* **📥 Issue queue promotion** (convert `/planning/issue_queue/pending/*` → GitHub issues, one-per-cycle)
+* **🔎 Linked PR monitoring** (issue timeline cross-references)
+* **✅ PR merge automation (guardrailed)**
+    - refuses WIP
+    - requires a review-request signal
+    - refuses conflicted PRs
+    - can flip draft → ready-for-review before merging (best-effort)
+* **🧠 Capability update loop** (create + merge a system-capabilities update after a dev merge)
+* **🛡️ Gap-analysis safety rails**
+    - gap analysis issue body is template-driven (no “open a PR…” self-referential prompts)
+    - unsafe legacy bodies are repaired before assignment
+* **📦 Orchestrator-owned cognitive templates are local**
+    - e.g. the gap-analysis template is shipped with this project and is **not** fetched from the target repo
 
-## Main processing loop (A–G)
+## Core loop (1a–3c)
 
-This system runs a simple, explicit loop. **The only sources of truth are:**
+This system runs a simple, explicit loop. **The sources of truth are:**
 
-- a goal / plan document: `/planning/vision/goal.md`
-- a system capabilities document: `/planning/state/system_capabilities.md`
+- a goal / plan document in the *target repo*: `/planning/vision/goal.md`
+- a system capabilities document in the *target repo*: `/planning/state/system_capabilities.md`
+- the queue folders in the *target repo*: `/planning/issue_queue/*`
+- the resulting GitHub issues/PRs
 
-Everything else is derived from those artefacts and the resulting GitHub history.
+Everything else is derived from those artefacts and GitHub history.
 
-### Step A — Gap analysis (cognitive, explicit)
+### Step 1a — Ensure gap-analysis issue exists (create/assign)
 
-You manually (or semi-manually) trigger a *Gap Analysis* cognitive task.
+The orchestrator ensures there is a single open **Gap Analysis** issue and assigns it to Copilot.
 
-That task:
+The issue instructs Copilot to:
 
-- compares the goal vs current capabilities
-- identifies the next concrete development task
-- writes **exactly one** handoff artefact into `/planning/issue_queue/pending/`
+- compare the goal vs current capabilities
+- identify the next concrete development task
+- write **exactly one** handoff artefact into `/planning/issue_queue/pending/`
 
 Nothing else happens at this step.
 
-**Triggering gap analysis (manual for now):**
+**How to run it:**
 
-- **UI:** run the Gap Analysis cognitive task from the dashboard (Cognitive Tasks).
-- **CLI:** create an issue from `planning/issue_templates/gap-analysis.md` and assign it to Copilot.
+- **UI:** Step 1a → “Ensure gap analysis issue”.
+- **API:** `POST /api/loop/gap-analysis/ensure`
 
-Keeping this step manual is intentional during early validation: it’s where prioritisation and
-judgment live.
+Safety note: the gap-analysis issue body is loaded from an orchestrator-owned local template.
 
-### Step B — Issue creation (automatic, hardwired)
+Keeping this step explicit is intentional: it’s where prioritisation and judgment live.
 
-The orchestrator processes the pending directory and promotes the next file into a GitHub issue.
+### Step 2a — Promote the next queued development task
+
+The orchestrator processes `/planning/issue_queue/pending/` and promotes the next file into a GitHub issue.
 This step is deliberately “boring plumbing”:
 
 - reads the next queue file
@@ -92,36 +103,43 @@ This step is deliberately “boring plumbing”:
 - assigns it to Copilot
 - moves the queue file to `processed/`
 
-Rate limiting is intentional: **one issue per cycle**.
+Rate limiting is intentional: **one issue per call/cycle**.
 
-### Step C — Development (external / Copilot)
+### Step 2b — Development execution (Copilot)
 
 Copilot works the issue and produces a PR. Review/discussion happens in GitHub.
 This is outside the orchestrator’s intelligence.
 
-### Step D — PR completion & merge (automatic)
+### Step 2c — Development PR ready for merge
 
-Another orchestrator job detects linked PRs, checks they’re complete/safe, and merges them (or
-refuses). Again: deterministic, reliable automation.
+The loop classifies a PR as ready when it is:
 
-### Step E — Capability update issue (cognitive, triggered)
+- not WIP
+- has a review-request signal
+- not conflicted
 
-On merge, a cognitive task creates a *new* issue whose body:
+The merge action is deterministic: it merges **one** ready PR per call.
+
+### Step 3a — Capability update issue (created after a merge)
+
+After merging a development PR, the orchestrator creates a *new* “Update Capability” issue whose body:
 
 - includes the PR description
 - includes PR comments/discussion (chronological)
 - explicitly requests an update to `/planning/state/system_capabilities.md` to reflect the merge
 
-This is the only place the system’s *self-knowledge* is updated.
+This is the place the system’s *self-knowledge* is updated.
 
-### Step F — Capability update execution
+### Step 3b — Capability update execution
 
 That capability-update issue is worked (typically by Copilot). The capabilities document is updated
-to match reality, and the issue is closed.
+to match reality.
 
-### Step G — Repeat
+### Step 3c — Capability PR ready for merge
 
-With updated capabilities, gap analysis can be run again and the loop continues.
+When the capability PR is ready (same readiness rules), the orchestrator can merge it.
+
+With updated capabilities, Step 1a can be run again and the loop continues.
 
 ### Parallel / periodic track — Review tasks
 
@@ -129,9 +147,8 @@ Independently, you can inject review issues every *N* completed development task
 review, architecture drift, refactoring, test coverage). These are just additional issues flowing
 through the same pipeline; they don’t disturb the main loop.
 
-To test the loop in a real scenario, we intentionally keep **Step A (gap analysis) manual for now**.
-Everything else (B–F) is designed to be runnable as automated jobs (e.g. cron/CI/webhooks), while still
-remaining deterministic and inspectable.
+Most actions are exposed as explicit endpoints/buttons so you can drive the system manually (dashboard)
+or periodically (cron/CI/webhooks), while keeping the behavior deterministic and inspectable.
 
 ## Design: artefact-driven orchestration
 
@@ -150,7 +167,11 @@ The orchestration loop is driven by a small set of canonical artefacts:
     /issue_queue
         pending/
         processed/
+        complete/
 ```
+
+Note: **issue templates are orchestrator-owned**. They are shipped with this project and are not
+expected to exist in the target repo.
 
 The `/planning/issue_queue` folder is the explicit handoff boundary between reasoning and orchestration.
 
@@ -232,13 +253,16 @@ Create a `.env` file or set environment variables:
 # may also use GITHUB_TOKEN.
 ORCHESTRATOR_GITHUB_TOKEN=ghp_...
 
+# Who to assign issues to (default is often the Copilot SWE agent bot).
+COPILOT_ASSIGNEE=copilot-swe-agent[bot]
+
 # Optional (defaults shown)
 GITHUB_BASE_URL=https://api.github.com
 LOG_LEVEL=INFO
 AGENT_STATE_PATH=agent_state
 
 # REST server (optional)
-# Needed for PR refresh/monitoring because Phase 1 state does not yet persist repo.
+# The dashboard reads loop state from this repo unless overridden via `?repo=owner/name`.
 ORCHESTRATOR_DEFAULT_REPO=owner/repo
 ORCHESTRATOR_HOST=127.0.0.1
 ORCHESTRATOR_PORT=8000
@@ -294,6 +318,12 @@ Run the REST API (serves OpenAPI docs automatically):
 orchestrator-server
 ```
 
+If you're running from source without the console script on your PATH:
+
+```bash
+python -m github_agent_orchestrator.server
+```
+
 Useful endpoints:
 
 - OpenAPI JSON: `http://127.0.0.1:8000/api/openapi.json`
@@ -320,31 +350,35 @@ cd ui
 npm install
 npm run dev
 ```
-```
+
 
 ## Architecture
 
-The Phase 1/1A implementation lives under `src/github_agent_orchestrator/orchestrator/`:
+The Phase 1/1A implementation spans two layers:
+
+- `src/github_agent_orchestrator/server/`: dashboard API + loop classification/actions (repo-derived)
+- `src/github_agent_orchestrator/orchestrator/`: lower-level primitives (CLI, GitHub client/service)
 
 ```
 src/github_agent_orchestrator/
+├── server/
+│   ├── dashboard_router.py   # Loop status + action endpoints (/api/loop/*)
+│   └── templates/            # Orchestrator-owned templates shipped with the package
 └── orchestrator/
     ├── config.py             # .env + env var settings
     ├── logging.py            # JSON logging
     ├── main.py               # CLI entrypoint
     └── github/
         ├── client.py         # PyGithub wrapper
-        └── issue_service.py  # Issue creation + local persistence
-
-agent_state/
-└── issues.json               # persisted issue metadata
+        └── issue_service.py  # Issue creation + (optional) local persistence
 ```
 
 Key components:
 
+* `dashboard_router.py`: repo-derived loop status and deterministic, one-step actions
 * `OrchestratorSettings`: loads config from `.env`
 * `GitHubClient`: authenticates and creates issues
-* `IssueService`: idempotent-safe issue creation and persistence
+* `IssueService`: idempotent-safe issue creation and (optional) local persistence
 
 ## Development
 
@@ -414,17 +448,19 @@ open _build/html/index.html
 See [ROADMAP.md](ROADMAP.md) for planned features and development timeline.
 
 ### Current Status (v0.1.0)
-- ✅ Core architecture and project structure
-- ✅ LLM abstraction with OpenAI and LLaMA support
-- ✅ GitHub integration for PRs and Issues
-- ✅ Persistent state management
+- ✅ Artefact-driven loop classification (9 stages: 1a–3c)
+- ✅ Dashboard UI + REST API for status + actions
+- ✅ Issue queue promotion (one-per-cycle)
+- ✅ Guardrailed merge automation (WIP/review-request/conflict gates)
+- ✅ Post-merge capability update issue flow
+- ✅ Safety rails for gap-analysis prompt content
 - ✅ Comprehensive testing and documentation
 
 ### Coming Soon (v0.2.0)
-- 🚧 Complete orchestration workflow
-- 🚧 Artefact-driven issue queue processing (one issue per cycle)
-- 🚧 Automated code review integration
-- 🚧 Enhanced error handling
+- 🚧 Webhook/event-driven mode (reduce polling)
+- 🚧 Better multi-repo ergonomics + onboarding helpers
+- 🚧 Richer dashboard diagnostics (why a stage was selected)
+- 🚧 Enhanced error handling and recovery
 
 ## Contributing
 
