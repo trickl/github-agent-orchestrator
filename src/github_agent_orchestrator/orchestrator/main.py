@@ -498,6 +498,40 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    auto_link_issue_pr = subparsers.add_parser(
+        "auto-link-issue-pr",
+        help=(
+            "Best-effort: link an issue to a likely open PR by appending 'Fixes #<issue>' to the PR body. "
+            "This reuses the same logic as the server loop status automation and prints debug reasons."
+        ),
+    )
+    auto_link_issue_pr.add_argument(
+        "--repo",
+        "--repository",
+        dest="repository",
+        required=True,
+        help="Target repository in the form 'owner/repo'",
+    )
+    auto_link_issue_pr.add_argument(
+        "--issue-number",
+        type=int,
+        required=True,
+        help="Issue number to link",
+    )
+    auto_link_issue_pr.add_argument(
+        "--force-enabled",
+        action="store_true",
+        help=(
+            "Force auto-link enabled for this run, even if ORCHESTRATOR_AUTO_LINK_FOCUSED_ISSUE_PR is not set."
+        ),
+    )
+    auto_link_issue_pr.add_argument(
+        "--limit-open-prs",
+        type=int,
+        default=100,
+        help="Maximum number of open PRs to consider (default 100)",
+    )
+
     return parser
 
 
@@ -1023,6 +1057,64 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 4
+
+        if args.command == "auto-link-issue-pr":
+            # This command intentionally reuses the server dashboard logic directly so that
+            # behavior matches production automation.
+            import github_agent_orchestrator.server.dashboard_router as dashboard_router
+            from github_agent_orchestrator.server.config import ServerSettings
+
+            server_settings = ServerSettings()
+            if args.force_enabled:
+                server_settings = server_settings.model_copy(
+                    update={"auto_link_focused_issue_pr": True}
+                )
+
+            debug: list[str] = []
+
+            # Fetch the issue title so we can apply the exact same title matching logic.
+            issue_url = dashboard_router._repo_api_url(
+                server_settings,
+                repository=args.repository,
+                path=f"issues/{args.issue_number}",
+            )
+            issue_data = dashboard_router._github_get_json(server_settings, url=issue_url)
+            issue_title = issue_data.get("title")
+            if not isinstance(issue_title, str) or not issue_title.strip():
+                print(
+                    f"Failed to read issue title for {args.repository} #{args.issue_number}.",
+                    file=sys.stderr,
+                )
+                return 1
+
+            raw_open_prs = dashboard_router._list_open_pull_requests_raw(
+                server_settings,
+                repository=args.repository,
+                limit=int(args.limit_open_prs),
+            )
+
+            focus = {
+                "kind": "development",
+                "title": issue_title,
+                "issueNumber": int(args.issue_number),
+                "pullNumber": None,
+            }
+
+            msg = dashboard_router._maybe_auto_link_focused_issue_to_pr(
+                settings=server_settings,
+                repository=args.repository,
+                focus=focus,
+                raw_open_prs=raw_open_prs,
+                debug=debug,
+            )
+
+            print(msg or "No auto-link action taken.")
+            if debug:
+                print("--- auto-link debug ---")
+                for line in debug:
+                    print(f"- {line}")
+
+            return 0
 
         logger.error("Unknown command", extra={"command": args.command})
         return 2

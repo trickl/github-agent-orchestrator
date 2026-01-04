@@ -72,6 +72,16 @@ class ServerSettings(BaseSettings):
         le=240,
     )
 
+    auto_link_focused_issue_pr: bool = Field(
+        default=False,
+        validation_alias="ORCHESTRATOR_AUTO_LINK_FOCUSED_ISSUE_PR",
+        description=(
+            "If true, the server may attempt to auto-link the focused issue to a likely open PR "
+            "(for the current loop stage) when GitHub linkage signals are missing. This is best-effort "
+            "and only runs when the loop has a focused issue but no linked PR."
+        ),
+    )
+
     auto_resume_copilot_max_nudges: int = Field(
         default=3,
         validation_alias="ORCHESTRATOR_AUTO_RESUME_COPILOT_MAX_NUDGES",
