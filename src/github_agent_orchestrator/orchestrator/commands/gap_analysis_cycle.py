@@ -13,16 +13,15 @@ from github_agent_orchestrator.orchestrator.github.issue_service import (
     IssueService,
     IssueStore,
 )
+from github_agent_orchestrator.orchestrator.utils import parse_labels
 
 logger = logging.getLogger(__name__)
 
 
 def handle_gap_analysis_cycle(args: argparse.Namespace, settings: OrchestratorSettings) -> int:
     """Handle the gap-analysis-cycle command."""
-    from github_agent_orchestrator.orchestrator.main import _parse_labels
-
     title = "Identify the next most important development gap"
-    labels = _parse_labels(args.labels)
+    labels = parse_labels(args.labels)
     template_path = Path(args.template)
     body = template_path.read_text(encoding="utf-8")
 

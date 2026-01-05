@@ -5,12 +5,17 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
-def handle_auto_link_issue_pr(args: argparse.Namespace, settings: object) -> int:  # noqa: ARG001
-    """Handle the auto-link-issue-pr command."""
+def handle_auto_link_issue_pr(args: argparse.Namespace, settings: Any) -> int:  # noqa: ARG001
+    """Handle the auto-link-issue-pr command.
+
+    Note: This command uses ServerSettings internally, not OrchestratorSettings.
+    The settings parameter is unused but kept for consistent handler signature.
+    """
     import github_agent_orchestrator.server.dashboard_router as dashboard_router
     from github_agent_orchestrator.server.config import ServerSettings
 

@@ -13,7 +13,10 @@ from github_agent_orchestrator.orchestrator.github.issue_service import (
     IssueService,
     IssueStore,
 )
-from github_agent_orchestrator.orchestrator.system_capabilities_after_merge import render_issue_body
+from github_agent_orchestrator.orchestrator.system_capabilities_after_merge import (
+    render_issue_body,
+)
+from github_agent_orchestrator.orchestrator.utils import parse_labels
 
 logger = logging.getLogger(__name__)
 
@@ -22,9 +25,7 @@ def handle_system_capabilities_after_merge(
     args: argparse.Namespace, settings: OrchestratorSettings
 ) -> int:
     """Handle the system-capabilities-after-merge command."""
-    from github_agent_orchestrator.orchestrator.main import _parse_labels
-
-    labels = _parse_labels(args.labels)
+    labels = parse_labels(args.labels)
     template_path = Path(args.template)
     template = template_path.read_text(encoding="utf-8")
 

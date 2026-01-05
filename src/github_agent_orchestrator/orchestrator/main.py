@@ -17,16 +17,18 @@ from github_agent_orchestrator.orchestrator.commands import COMMAND_REGISTRY
 from github_agent_orchestrator.orchestrator.config import OrchestratorSettings
 from github_agent_orchestrator.orchestrator.github.issue_service import IssueAlreadyExists
 from github_agent_orchestrator.orchestrator.logging import configure_logging
+from github_agent_orchestrator.orchestrator.utils import parse_labels
 
 logger = logging.getLogger(__name__)
 
 
 def _parse_labels(value: str | None) -> list[str] | None:
-    if value is None:
-        return None
-    parts = [p.strip() for p in value.split(",")]
-    labels = [p for p in parts if p]
-    return labels or None
+    """Parse comma-separated labels string.
+
+    Deprecated: Use orchestrator.utils.parse_labels instead.
+    This function is kept for backward compatibility.
+    """
+    return parse_labels(value)
 
 
 def build_parser() -> argparse.ArgumentParser:

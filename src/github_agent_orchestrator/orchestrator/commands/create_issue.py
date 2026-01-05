@@ -8,15 +8,14 @@ import logging
 from github_agent_orchestrator.orchestrator.config import OrchestratorSettings
 from github_agent_orchestrator.orchestrator.github.client import GitHubClient
 from github_agent_orchestrator.orchestrator.github.issue_service import IssueService, IssueStore
+from github_agent_orchestrator.orchestrator.utils import parse_labels
 
 logger = logging.getLogger(__name__)
 
 
 def handle_create_issue(args: argparse.Namespace, settings: OrchestratorSettings) -> int:
     """Handle the create-issue command."""
-    from github_agent_orchestrator.orchestrator.main import _parse_labels
-
-    labels = _parse_labels(args.labels)
+    labels = parse_labels(args.labels)
 
     github = GitHubClient(
         token=settings.github_token,
