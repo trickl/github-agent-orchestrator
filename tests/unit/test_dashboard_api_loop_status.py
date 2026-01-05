@@ -169,7 +169,9 @@ def test_loop_status_review_mode_stage_1b_focus_includes_pr(monkeypatch, tmp_pat
     assert loop.get("focus", {}).get("pullNumber") == 5
 
 
-def test_loop_status_review_mode_stage_2a_focus_review_queue_item(monkeypatch, tmp_path: Path) -> None:
+def test_loop_status_review_mode_stage_2a_focus_review_queue_item(
+    monkeypatch, tmp_path: Path
+) -> None:
     planning = tmp_path / "planning"
     agent_state = tmp_path / "agent_state"
 
@@ -194,11 +196,13 @@ def test_loop_status_review_mode_stage_2a_focus_review_queue_item(monkeypatch, t
         dashboard_router,
         "_get_repo_text_file",
         lambda *_a, **kwargs: (
-            "Review: One\n\nBody\n",
-            "sha-review-1",
-        )
-        if kwargs.get("path") == "planning/issue_queue/pending/review-2026-01-05.md"
-        else (_ for _ in ()).throw(FileNotFoundError(str(kwargs.get("path")))),
+            (
+                "Review: One\n\nBody\n",
+                "sha-review-1",
+            )
+            if kwargs.get("path") == "planning/issue_queue/pending/review-2026-01-05.md"
+            else (_ for _ in ()).throw(FileNotFoundError(str(kwargs.get("path"))))
+        ),
     )
 
     monkeypatch.setattr(dashboard_router, "_list_open_issues_raw", lambda *_a, **_k: [])
