@@ -9,6 +9,21 @@ Translate a review document into **one** concrete task that can be delivered in 
 - Source review: `{{REVIEW_PATH}}`
 - Review actions/completions (may be missing/empty): `{{REVIEW_ACTIONS_PATH}}`
 
+---
+
+### Completion Check (Mandatory)
+Before producing any queue artefact, answer this question:
+
+> **Is there at least one concrete, unaddressed critique item in the source review that is not already recorded as completed (or explicitly in-progress) in the actions/completions file?**
+
+- If **NO**:
+	- **Do not create any file**
+	- **Do not output anything**
+	- Terminate the task immediately
+
+- If **YES**:
+	- Proceed to select the next PR-sized batch of related items
+
 ### Task
 1. Read the review carefully and extract distinct critique items.
 2. Compare against the actions/completions document to avoid duplicating already-addressed items.
