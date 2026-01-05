@@ -170,15 +170,15 @@ Expected result:
 
 2. **Verify CLI behavior** by running help for each subcommand:
    ```bash
-   orchestrator --help
-   orchestrator create-issue --help
-   orchestrator assign-copilot --help
+   python -m github_agent_orchestrator.orchestrator.main --help
+   python -m github_agent_orchestrator.orchestrator.main create-issue --help
+   python -m github_agent_orchestrator.orchestrator.main assign-copilot --help
    # ... etc for all subcommands
    ```
    
-   Or if not installed, use:
+   If the package is installed, you can also use the shorter command:
    ```bash
-   python -m github_agent_orchestrator.orchestrator.main --help
+   orchestrator --help
    ```
 
 3. **Check imports** throughout the codebase:
