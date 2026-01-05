@@ -78,7 +78,7 @@ All acceptance criteria met:
 ## Review Item A: Continue splitting `dashboard_router.py` (IN PROGRESS)
 
 **Status**: In Progress  
-**Addressed by**: PR #12 (merged 2026-01-05), PR #30 (merged 2026-01-05)
+**Addressed by**: PR #12 (merged 2026-01-05), PR #30 (merged 2026-01-05), PR #36 (merged 2026-01-05)
 
 ### Phase 1: Pure Utility Extraction (COMPLETED)
 
@@ -119,57 +119,103 @@ PR #30 succeeded where PR #12 was deferred because it extracted only **pure leaf
 - Pure functions with no side effects (minimal breakage risk)
 - Established pattern and foundation for future extractions
 
-### Phase 2: Complex Helper Module Extraction (DEFERRED)
+### Phase 2: Complex Helper Module Extraction (IN PROGRESS)
 
-**Status**: Deferred  
-**Addressed by**: PR #12 (merged 2026-01-05)
+**Status**: In Progress  
+**Addressed by**: PR #12 (merged 2026-01-05), PR #36 (merged 2026-01-05)
 
-#### What Was Attempted
+#### Background: Architectural Blockers Identified
 
-PR #12 attempted to extract auto-link and auto-resume functions from `dashboard_router.py` into separate modules as specified in the review.
-
-#### Why Deferred
-
-The extraction was blocked by three interconnected issues:
+PR #12 attempted to extract auto-link and auto-resume functions from `dashboard_router.py` into separate modules as specified in the review, but was blocked by three interconnected issues:
 
 1. **Circular imports**: Extracted modules need dashboard_router helpers, and dashboard_router would import from the extracted modules
 2. **Test mocking breaks**: Tests patch `dashboard_router._get_pull_request`, but if functions move to a separate module, tests can't patch the local copy used by that module
 3. **Helper function duplication**: Would require duplicating helper functions to avoid circular dependencies
 
-#### Decision
+This led to Issue #35 being created to address these architectural blockers through refactoring.
 
-These heavily-mocked, tightly-coupled functions should remain in `dashboard_router.py` for now. The production code extraction of complex helper modules specified in review item A is not feasible with the current architecture.
+#### PR #36: Foundation for Safe Module Extraction (COMPLETED)
 
-Specifically, the five suggested module extractions cannot be safely extracted:
-- `github_issue_pr_helpers.py` - Timeline/listing helpers and PR evaluation
-- `automation_auto_link.py` - Auto-link helpers
-- `automation_auto_resume.py` - Auto-resume helpers
-- `loop_actions.py` - Promote/merge helpers
-- `loop_status.py` - Loop-stage computation helpers
+**Status**: Completed  
+**Addressed by**: PR #36 (merged 2026-01-05)
 
-Extraction would require:
-- Significant refactoring of the mocking strategy
-- Restructuring the dependency relationships
-- Potentially introducing dependency injection patterns
+PR #36 successfully addressed the architectural blockers by establishing a dependency inversion pattern that eliminates circular import risk and preserves test compatibility.
+
+**Created `src/github_agent_orchestrator/server/dashboard/github_operations.py` (410 lines)**
+- Centralized GitHub API operations as a leaf module that eliminates circular dependency risk
+- Repository operations: `get_repo_text_file()`, `get_repo_tree_recursive()`, `list_repo_markdown_files_under()`
+- Branch/commit operations: `get_default_branch()`, `get_branch_head_commit_sha()`, `get_commit_tree_sha()`
+- Issue/PR API calls: `list_open_issues_raw()`, `list_open_pull_requests_raw()`, `get_pull_request()`, `list_issue_comments_raw()`, `list_issue_events_raw()`, `list_issue_timeline_raw()`
+- Queue file management: `delete_repo_file_if_present()`, `ensure_repo_file_present_in_processed()`, `ensure_repo_file_present_in_complete()`
+- Label management: `ensure_repo_label_exists()`, `search_issue_number_by_body_marker()`
+- All extracted modules can import from this shared base without circular dependencies
+
+**Created `src/github_agent_orchestrator/server/dashboard/github_issue_pr_helpers.py` (320 lines)**
+- PR evaluation logic: `pull_request_is_ready_for_review()`, `pull_request_is_merge_candidate()`, `pull_request_is_approved_from_reviews()`, `pull_request_title_is_wip()`
+- PR review request checking: `pull_request_has_review_request()`, `pull_request_has_review_request_history()`
+- Issue timeline analysis: `linked_pr_numbers_from_issue_timeline()`
+- Issue matching: `best_match_issue_number()` with fuzzy matching logic
+- Label utilities: `issue_has_label()`
+- PR discussion formatting: `get_pull_request_discussion_markdown()`
+- Imports from `github_operations.py` for GitHub API calls (no circular dependencies)
+
+**Modified `src/github_agent_orchestrator/server/dashboard_router.py`**
+- **Before**: 4661 lines
+- **After**: 4038 lines (623 line reduction, 13.4%)
+- Imports functions from `github_operations.py` and `github_issue_pr_helpers.py` using import aliases (e.g., `get_pull_request as _get_pull_request`)
+- Pattern established: import leaf module functions as underscored aliases
+- Tests can now patch `github_operations` or `github_issue_pr_helpers` instead of `dashboard_router`, resolving the test mocking blocker
+- No behavior changes (functions moved verbatim)
+- Backward compatible via import aliases
+
+#### Pattern Established: Import Aliasing
+
+The key innovation that solved the architectural blockers:
+
+```python
+# Before: Direct function definitions in dashboard_router.py
+def _get_pull_request(settings, *, repository, pr_number):
+    return _github_get_json(...)
+
+# After: Import from leaf module as alias
+from github_agent_orchestrator.server.dashboard.github_operations import (
+    get_pull_request as _get_pull_request,
+)
+```
+
+This pattern:
+- Eliminates circular dependencies (helper modules import from `github_operations.py`, not from each other)
+- Preserves test compatibility (tests can still patch `dashboard_router._get_pull_request` or patch the leaf module directly)
+- Enables safe extraction of remaining modules using the same pattern
+
+#### Implementation Summary
+
+- **Functions extracted**: 
+  - 18 GitHub API operations → `github_operations.py`
+  - 10 issue/PR helper functions → `github_issue_pr_helpers.py`
+- **Line count reduction**: 623 lines (4661 → 4038)
+- **Pattern followed**: Move-first verbatim extraction with import aliasing
+- **Verification**: All tests pass, no circular imports, no behavior changes
+- **Architectural blocker**: RESOLVED
 
 ### Current Status
 
 - ✅ **Phase 1 completed**: Pure utilities extracted (PR #30)
-- ⏸️ **Phase 2 deferred**: Complex helpers remain in `dashboard_router.py` (PR #12 analysis)
-- `dashboard_router.py` reduced from 4746 → 4661 lines (1.8% reduction)
-- New `text_utilities.py` module provides reusable leaf utilities for future dashboard modules
+- ✅ **Phase 2 foundation**: Architectural blockers resolved, first extraction complete (PR #36)
+- `dashboard_router.py` reduced from 4746 → 4661 → 4038 lines (14.9% total reduction)
+- New foundation modules enable remaining extractions without circular dependencies
 
 ### Remaining Work
 
-The following extractions from the original review recommendation remain unaddressed:
+Three more extractions can now follow the established pattern (~2270 lines remain):
 
-1. `server/dashboard/github_issue_pr_helpers.py` - Timeline/listing helpers and PR evaluation (deferred, circular dependencies)
-2. `server/dashboard/automation_auto_link.py` - Auto-link helpers (deferred, circular dependencies)
-3. `server/dashboard/automation_auto_resume.py` - Auto-resume helpers (deferred, circular dependencies)
-4. `server/dashboard/loop_actions.py` - Promote/merge helpers (deferred, circular dependencies)
-5. `server/dashboard/loop_status.py` - Loop-stage computation helpers (deferred, circular dependencies)
+1. ✅ ~~`server/dashboard/github_issue_pr_helpers.py`~~ - Timeline/listing helpers and PR evaluation (COMPLETED in PR #36)
+2. `server/dashboard/automation_auto_link.py` - Auto-link helpers (~200 lines)
+3. `server/dashboard/automation_auto_resume.py` - Auto-resume helpers (~150 lines)
+4. `server/dashboard/loop_actions.py` - Promote/merge helpers (~1300 lines)
+5. `server/dashboard/loop_status.py` - Loop-stage computation helpers (~920 lines)
 
-These remain blocked by the architectural issues identified in PR #12 and require more extensive refactoring to enable safe extraction.
+Target: `dashboard_router.py` at ~600 lines (87% total reduction from original 4746 lines).
 
 ## Review Item C: Tackle `orchestrator/main.py` and `orchestrator/github/client.py` (COMPLETED)
 
@@ -299,17 +345,25 @@ All acceptance criteria met:
   - All 57 tests pass, no behavior changes
 
 **In Progress**: 
-- Review item A: Continue splitting `dashboard_router.py` (partially addressed by PR #30)
-  - **Phase 1 completed**: Pure utility functions extracted into `text_utilities.py`
+- Review item A: Continue splitting `dashboard_router.py` (significant progress via PR #30 and PR #36)
+  - **Phase 1 completed**: Pure utility functions extracted into `text_utilities.py` (PR #30)
     - `dashboard_router.py` (4746 lines) reduced to 4661 lines (85 line reduction, 1.8%)
     - New `text_utilities.py` module created (111 lines) with 9 pure functions and 2 constants
     - No circular imports, all tests pass
-  - **Phase 2 deferred**: Complex helper module extractions remain blocked
-    - 5 suggested module extractions (github_issue_pr_helpers, automation_auto_link, automation_auto_resume, loop_actions, loop_status) blocked by circular imports and tightly-coupled test mocking
-    - Requires architectural refactoring to enable extraction
+  - **Phase 2 in progress**: Complex helper module extractions enabled via architectural refactoring (PR #36)
+    - Architectural blockers from PR #12 successfully resolved
+    - Created `github_operations.py` (410 lines) as shared leaf module eliminating circular dependencies
+    - Extracted `github_issue_pr_helpers.py` (320 lines) for PR evaluation and issue matching logic
+    - `dashboard_router.py` (4661 lines) reduced to 4038 lines (623 line reduction, 13.4%)
+    - Import aliasing pattern established enabling safe extraction of remaining modules
+    - 1 of 5 suggested module extractions completed, 4 remaining (~2270 lines)
 
 **Next Actions**:
 - None for review items B and C (both fully completed)
-- Review item A: Phase 1 complete, Phase 2 remains deferred pending architectural changes
+- Review item A: Continue Phase 2 extractions following the established pattern:
+  - Extract `automation_auto_link.py` (~200 lines)
+  - Extract `automation_auto_resume.py` (~150 lines)
+  - Extract `loop_actions.py` (~1300 lines)
+  - Extract `loop_status.py` (~920 lines)
+  - Target: `dashboard_router.py` at ~600 lines (87% total reduction)
 - Optional: Further extract GitHub client helpers (URLs, pagination, parsing) if `client.py` grows beyond current size
-- Optional: Continue incremental extractions from `dashboard_router.py` following the pure utility pattern established in PR #30
