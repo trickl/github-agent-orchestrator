@@ -138,7 +138,16 @@ The extraction was blocked by three interconnected issues:
 
 #### Decision
 
-These heavily-mocked, tightly-coupled functions should remain in `dashboard_router.py` for now. The production code extraction of complex helper modules specified in review item A is not feasible with the current architecture. Specifically, the five suggested module extractions (github_issue_pr_helpers, automation_auto_link, automation_auto_resume, loop_actions, loop_status) cannot be safely extracted without:
+These heavily-mocked, tightly-coupled functions should remain in `dashboard_router.py` for now. The production code extraction of complex helper modules specified in review item A is not feasible with the current architecture.
+
+Specifically, the five suggested module extractions cannot be safely extracted:
+- `github_issue_pr_helpers.py` - Timeline/listing helpers and PR evaluation
+- `automation_auto_link.py` - Auto-link helpers
+- `automation_auto_resume.py` - Auto-resume helpers
+- `loop_actions.py` - Promote/merge helpers
+- `loop_status.py` - Loop-stage computation helpers
+
+Extraction would require:
 - Significant refactoring of the mocking strategy
 - Restructuring the dependency relationships
 - Potentially introducing dependency injection patterns
