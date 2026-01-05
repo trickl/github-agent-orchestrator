@@ -9,7 +9,7 @@ import sys
 logger = logging.getLogger(__name__)
 
 
-def handle_auto_resume_copilot(args: argparse.Namespace, settings: object) -> int:
+def handle_auto_resume_copilot(args: argparse.Namespace, settings: object) -> int:  # noqa: ARG001
     """Handle the auto-resume-copilot command."""
     import github_agent_orchestrator.server.dashboard_router as dashboard_router
     from github_agent_orchestrator.server.config import ServerSettings
@@ -53,14 +53,16 @@ def handle_auto_resume_copilot(args: argparse.Namespace, settings: object) -> in
         if not isinstance(it, dict):
             continue
         comment_body = it.get("body")
-        if isinstance(
-            comment_body, str
-        ) and dashboard_router._comment_body_is_copilot_resume_nudge(comment_body):
+        if isinstance(comment_body, str) and dashboard_router._comment_body_is_copilot_resume_nudge(
+            comment_body
+        ):
             found = True
             break
 
     if found:
-        print(f"Confirmed: resume nudge comment is present on {args.repository} PR #{args.pr_number}.")
+        print(
+            f"Confirmed: resume nudge comment is present on {args.repository} PR #{args.pr_number}."
+        )
         return 0
 
     print(

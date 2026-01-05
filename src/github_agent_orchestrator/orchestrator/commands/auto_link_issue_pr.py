@@ -9,7 +9,7 @@ import sys
 logger = logging.getLogger(__name__)
 
 
-def handle_auto_link_issue_pr(args: argparse.Namespace, settings: object) -> int:
+def handle_auto_link_issue_pr(args: argparse.Namespace, settings: object) -> int:  # noqa: ARG001
     """Handle the auto-link-issue-pr command."""
     import github_agent_orchestrator.server.dashboard_router as dashboard_router
     from github_agent_orchestrator.server.config import ServerSettings

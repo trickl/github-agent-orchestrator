@@ -7,7 +7,7 @@ Each handler accepts parsed arguments and settings, and returns an exit code.
 from __future__ import annotations
 
 import argparse
-from typing import Callable
+from collections.abc import Callable
 
 from github_agent_orchestrator.orchestrator.commands.assign_copilot import (
     handle_assign_copilot,

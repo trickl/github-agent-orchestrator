@@ -45,7 +45,11 @@ def handle_assign_copilot(args: argparse.Namespace, settings: OrchestratorSettin
         )
 
     if updated is None:
-        print(f"Assigned issue #{args.issue_number} to {settings.copilot_assignee} (not in local store)")
+        print(
+            f"Assigned issue #{args.issue_number} to {settings.copilot_assignee} (not in local store)"
+        )
     else:
-        print(f"Assigned issue #{args.issue_number} to {settings.copilot_assignee} and updated local state")
+        print(
+            f"Assigned issue #{args.issue_number} to {settings.copilot_assignee} and updated local state"
+        )
     return 0
