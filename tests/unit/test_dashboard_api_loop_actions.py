@@ -9,11 +9,6 @@ from fastapi.testclient import TestClient
 from github_agent_orchestrator.server.app import create_app
 
 
-def _write(path: Path, content: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content, encoding="utf-8")
-
-
 def test_loop_promote_endpoint_promotes_one_file(monkeypatch, tmp_path: Path) -> None:
     planning = tmp_path / "planning"
     agent_state = tmp_path / "agent_state"

@@ -192,18 +192,14 @@ def test_loop_status_review_mode_stage_2a_focus_review_queue_item(
         return []
 
     monkeypatch.setattr(dashboard_router, "_list_repo_markdown_files_under", fake_list_repo_md)
-    monkeypatch.setattr(
-        dashboard_router,
-        "_get_repo_text_file",
-        lambda *_a, **kwargs: (
-            (
-                "Review: One\n\nBody\n",
-                "sha-review-1",
-            )
-            if kwargs.get("path") == "planning/issue_queue/pending/review-2026-01-05.md"
-            else (_ for _ in ()).throw(FileNotFoundError(str(kwargs.get("path"))))
-        ),
-    )
+
+    def fake_get_repo_text_file(*_a, **kwargs):
+        path = kwargs.get("path")
+        if path == "planning/issue_queue/pending/review-2026-01-05.md":
+            return "Review: One\n\nBody\n", "sha-review-1"
+        raise FileNotFoundError(str(path))
+
+    monkeypatch.setattr(dashboard_router, "_get_repo_text_file", fake_get_repo_text_file)
 
     monkeypatch.setattr(dashboard_router, "_list_open_issues_raw", lambda *_a, **_k: [])
     monkeypatch.setattr(dashboard_router, "_list_open_pull_requests_raw", lambda *_a, **_k: [])
