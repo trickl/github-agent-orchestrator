@@ -25,8 +25,30 @@ from github_agent_orchestrator.github_labels import (
     LABEL_UPDATE_CAPABILITY,
     fixed_label_spec_by_name,
 )
-from github_agent_orchestrator.orchestrator.planning.issue_queue import QUEUE_MARKER_PREFIX
 from github_agent_orchestrator.server.config import ServerSettings
+from github_agent_orchestrator.server.dashboard.github_api import (
+    _github_delete_json,
+    _github_get_json,
+    _github_get_list,
+    _github_get_list_with_headers,
+    _github_graphql_post,
+    _github_headers,
+    _github_patch_json,
+    _github_post_json,
+    _github_put_json,
+    _graphql_api_url,
+    _graphql_errors_as_message,
+    _repo_api_url,
+)
+from github_agent_orchestrator.server.dashboard.queue_helpers import (
+    _GAP_ANALYSIS_TITLES,
+    _QUEUE_EXCLUDED_PREFIXES,
+    _is_gap_analysis_issue_title,
+    _parse_queue_file_for_issue,
+    _queue_category_for_filename,
+    _queue_filename,
+    _search_issue_number_by_queue_marker,
+)
 
 router = APIRouter()
 
@@ -44,28 +66,6 @@ _CAPABILITY_ISSUE_BODY_SOURCE_PR_RE = re.compile(
 
 # Copilot often prefixes PR titles with "WIP" while it is still working.
 _WIP_TITLE_RE = re.compile(r"^\s*(?:\[\s*)?wip\b", re.IGNORECASE)
-
-
-# Conventions for orchestrator-created artefacts.
-#
-# These prefixes are used to (a) detect system-managed workstreams and (b) exclude them
-# from unrelated stage heuristics.
-_QUEUE_EXCLUDED_PREFIXES: tuple[str, ...] = (
-    "review-",  # derived from review docs; handled separately
-    "system-",  # system capability updates
-    "capability-",
-    "capabilities-",
-    "maintenance-",
-)
-
-_QUEUE_CAPABILITY_PREFIXES: tuple[str, ...] = (
-    "system-",
-    "capability-",
-    "capabilities-",
-)
-
-# We control the title of the gap analysis issue, so we can safely detect it by title.
-_GAP_ANALYSIS_TITLES: tuple[str, ...] = ("identify the next most important development gap",)
 
 
 _COPILOT_RATE_LIMIT_RESUME_COMMENT = "@copilot please can you attempt to resume this work now?"
@@ -553,320 +553,6 @@ def _active_ref(request: Request) -> str:
     return request.query_params.get("ref", "").strip()
 
 
-def _github_headers(settings: ServerSettings) -> dict[str, str]:
-    headers = {
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "github-agent-orchestrator",
-    }
-    if settings.github_token.strip():
-        headers["Authorization"] = f"Bearer {settings.github_token.strip()}"
-    return headers
-
-
-def _repo_api_url(settings: ServerSettings, *, repository: str, path: str) -> str:
-    base = settings.github_base_url.rstrip("/")
-    repo = repository.strip().strip("/")
-    clean_path = path.lstrip("/")
-    if clean_path:
-        return f"{base}/repos/{repo}/{clean_path}"
-    return f"{base}/repos/{repo}"
-
-
-def _graphql_api_url(settings: ServerSettings) -> str:
-    """Return the GitHub GraphQL endpoint for the configured base URL.
-
-    GitHub.com uses https://api.github.com/graphql.
-    GitHub Enterprise Server typically uses https://<host>/api/graphql, while REST is /api/v3.
-    """
-
-    base = settings.github_base_url.rstrip("/")
-    if base.endswith("/api/v3"):
-        return base[: -len("/api/v3")] + "/api/graphql"
-    return f"{base}/graphql"
-
-
-def _github_graphql_post(
-    settings: ServerSettings,
-    *,
-    query: str,
-    variables: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """POST a GraphQL query/mutation to GitHub.
-
-    GitHub GraphQL errors are returned in the JSON body under "errors" with HTTP 200.
-    Callers should inspect the returned payload.
-    """
-
-    url = _graphql_api_url(settings)
-    payload: dict[str, Any] = {"query": query}
-    if variables is not None:
-        payload["variables"] = variables
-
-    resp = requests.post(
-        url,
-        headers=_github_headers(settings),
-        json=payload,
-        timeout=30,
-    )
-
-    try:
-        resp.raise_for_status()
-    except requests.HTTPError as e:
-        status = resp.status_code
-        hint = ""
-        if status in {401, 403}:
-            hint = (
-                "Check ORCHESTRATOR_GITHUB_TOKEN (missing/expired/insufficient scopes) and that it "
-                "has access to the repository."
-            )
-        raise HTTPException(
-            status_code=502,
-            detail=f"GitHub GraphQL request failed with HTTP {status} for {url}. {hint}".strip(),
-        ) from e
-
-    data: Any
-    try:
-        data = resp.json()
-    except Exception as e:
-        raise HTTPException(status_code=502, detail="Unexpected GitHub GraphQL response") from e
-
-    if not isinstance(data, dict):
-        raise HTTPException(status_code=502, detail="Unexpected GitHub GraphQL response")
-    return data
-
-
-def _graphql_errors_as_message(payload: dict[str, Any]) -> str | None:
-    errors = payload.get("errors")
-    if not isinstance(errors, list) or not errors:
-        return None
-
-    messages: list[str] = []
-    for err in errors:
-        if isinstance(err, dict):
-            msg = err.get("message")
-            if isinstance(msg, str) and msg.strip():
-                messages.append(msg.strip())
-
-    if messages:
-        # Keep the message concise for UI surfacing.
-        return "; ".join(messages[:3])
-    return str(errors)[:500]
-
-
-def _github_get_json(
-    settings: ServerSettings, *, url: str, params: dict[str, str] | None = None
-) -> dict[str, Any]:
-    resp = requests.get(
-        url,
-        headers=_github_headers(settings),
-        params=params or None,
-        timeout=30,
-    )
-
-    try:
-        resp.raise_for_status()
-    except requests.HTTPError as e:
-        status = resp.status_code
-        hint = ""
-        if status in {401, 403}:
-            hint = (
-                "Check ORCHESTRATOR_GITHUB_TOKEN (missing/expired/insufficient scopes) and that it "
-                "has access to the repository."
-            )
-        elif status == 404:
-            hint = (
-                "Repository or path not found. If the repo is private, GitHub may return 404 when the "
-                "token lacks access."
-            )
-
-        raise HTTPException(
-            status_code=502,
-            detail=f"GitHub API request failed with HTTP {status} for {url}. {hint}".strip(),
-        ) from e
-
-    data: Any = resp.json()
-    if not isinstance(data, dict):
-        raise HTTPException(status_code=502, detail="Unexpected GitHub API response")
-    return data
-
-
-def _github_post_json(
-    settings: ServerSettings,
-    *,
-    url: str,
-    payload: dict[str, Any],
-    params: dict[str, str] | None = None,
-) -> dict[str, Any]:
-    resp = requests.post(
-        url,
-        headers=_github_headers(settings),
-        params=params or None,
-        json=payload,
-        timeout=30,
-    )
-    try:
-        resp.raise_for_status()
-    except requests.HTTPError as e:
-        status = resp.status_code
-        hint = ""
-        if status in {401, 403}:
-            hint = (
-                "Check ORCHESTRATOR_GITHUB_TOKEN (missing/expired/insufficient scopes) and that it "
-                "has access to the repository."
-            )
-        elif status == 404:
-            hint = (
-                "Repository or endpoint not found. If the repo is private, GitHub may return 404 when the "
-                "token lacks access."
-            )
-
-        raise HTTPException(
-            status_code=502,
-            detail=f"GitHub API request failed with HTTP {status} for {url}. {hint}".strip(),
-        ) from e
-
-    data: Any = resp.json()
-    if not isinstance(data, dict):
-        raise HTTPException(status_code=502, detail="Unexpected GitHub API response")
-    return data
-
-
-def _github_post_json_with_status(
-    settings: ServerSettings,
-    *,
-    url: str,
-    payload: dict[str, Any],
-    params: dict[str, str] | None = None,
-) -> tuple[int, dict[str, Any] | list[Any] | str | None]:
-    """POST JSON and return (status, body) without raising.
-
-    This mirrors _github_put_json and is used when callers want to interpret
-    specific GitHub error statuses for state transitions.
-    """
-
-    resp = requests.post(
-        url,
-        headers=_github_headers(settings),
-        params=params or None,
-        json=payload,
-        timeout=30,
-    )
-    status = resp.status_code
-    if status >= 400:
-        try:
-            body = resp.json()
-        except Exception:
-            body = resp.text
-        return status, body
-
-    try:
-        data = resp.json()
-    except Exception:
-        data = None
-    return status, data
-
-
-def _github_put_json(
-    settings: ServerSettings,
-    *,
-    url: str,
-    payload: dict[str, Any],
-    params: dict[str, str] | None = None,
-) -> tuple[int, dict[str, Any] | list[Any] | str | None]:
-    resp = requests.put(
-        url,
-        headers=_github_headers(settings),
-        params=params or None,
-        json=payload,
-        timeout=30,
-    )
-    status = resp.status_code
-    if status >= 400:
-        # Caller may handle specific statuses (e.g. 422 for missing sha).
-        try:
-            body = resp.json()
-        except Exception:
-            body = resp.text
-        return status, body
-
-    try:
-        data = resp.json()
-    except Exception:
-        data = None
-    return status, data
-
-
-def _github_patch_json(
-    settings: ServerSettings,
-    *,
-    url: str,
-    payload: dict[str, Any],
-    params: dict[str, str] | None = None,
-) -> dict[str, Any]:
-    resp = requests.patch(
-        url,
-        headers=_github_headers(settings),
-        params=params or None,
-        json=payload,
-        timeout=30,
-    )
-
-    try:
-        resp.raise_for_status()
-    except requests.HTTPError as e:
-        status = resp.status_code
-        hint = ""
-        if status in {401, 403}:
-            hint = (
-                "Check ORCHESTRATOR_GITHUB_TOKEN (missing/expired/insufficient scopes) and that it "
-                "has access to the repository."
-            )
-        elif status == 404:
-            hint = (
-                "Repository or endpoint not found. If the repo is private, GitHub may return 404 when the "
-                "token lacks access."
-            )
-
-        raise HTTPException(
-            status_code=502,
-            detail=f"GitHub API request failed with HTTP {status} for {url}. {hint}".strip(),
-        ) from e
-
-    data: Any = resp.json()
-    if not isinstance(data, dict):
-        raise HTTPException(status_code=502, detail="Unexpected GitHub API response")
-    return data
-
-
-def _github_delete_json(
-    settings: ServerSettings,
-    *,
-    url: str,
-    payload: dict[str, Any] | None = None,
-) -> tuple[int, dict[str, Any] | list[Any] | str | None]:
-    resp = requests.delete(
-        url,
-        headers=_github_headers(settings),
-        json=payload or None,
-        timeout=30,
-    )
-    status = resp.status_code
-    if status >= 400:
-        try:
-            body = resp.json()
-        except Exception:
-            body = resp.text
-        return status, body
-    if status == 204:
-        return status, None
-    try:
-        data = resp.json()
-    except Exception:
-        data = None
-    return status, data
-
-
 def _ensure_repo_label_exists(
     settings: ServerSettings, *, repository: str, label_name: str
 ) -> None:
@@ -910,115 +596,6 @@ def _ensure_repo_label_exists(
                 f"GitHub API request failed with HTTP {status} for {url} while ensuring label."
             ),
         ) from e
-
-
-def _github_get_list(
-    settings: ServerSettings, *, url: str, params: dict[str, str] | None = None
-) -> list[dict[str, Any]]:
-    resp = requests.get(
-        url,
-        headers=_github_headers(settings),
-        params=params or None,
-        timeout=30,
-    )
-
-    try:
-        resp.raise_for_status()
-    except requests.HTTPError as e:
-        status = resp.status_code
-        hint = ""
-        if status in {401, 403}:
-            hint = (
-                "Check ORCHESTRATOR_GITHUB_TOKEN (missing/expired/insufficient scopes) and that it "
-                "has access to the repository."
-            )
-        elif status == 404:
-            hint = (
-                "Repository or path not found. If the repo is private, GitHub may return 404 when the "
-                "token lacks access."
-            )
-
-        raise HTTPException(
-            status_code=502,
-            detail=f"GitHub API request failed with HTTP {status} for {url}. {hint}".strip(),
-        ) from e
-
-    data: Any = resp.json()
-    if not isinstance(data, list):
-        raise HTTPException(status_code=502, detail="Unexpected GitHub API response")
-    out: list[dict[str, Any]] = []
-    for item in data:
-        if isinstance(item, dict):
-            out.append(item)
-    return out
-
-
-def _github_get_list_with_headers(
-    *,
-    url: str,
-    headers: dict[str, str],
-    params: dict[str, str] | None = None,
-) -> list[dict[str, Any]]:
-    resp = requests.get(
-        url,
-        headers=headers,
-        params=params or None,
-        timeout=30,
-    )
-
-    try:
-        resp.raise_for_status()
-    except requests.HTTPError as e:
-        status = resp.status_code
-        hint = ""
-        if status in {401, 403}:
-            hint = (
-                "Check ORCHESTRATOR_GITHUB_TOKEN (missing/expired/insufficient scopes) and that it "
-                "has access to the repository."
-            )
-        elif status == 404:
-            hint = (
-                "Repository or endpoint not found. If the repo is private, GitHub may return 404 when "
-                "the token lacks access."
-            )
-
-        raise HTTPException(
-            status_code=502,
-            detail=f"GitHub API request failed with HTTP {status} for {url}. {hint}".strip(),
-        ) from e
-
-    data: Any = resp.json()
-    if not isinstance(data, list):
-        raise HTTPException(status_code=502, detail="Unexpected GitHub API response")
-    out: list[dict[str, Any]] = []
-    for item in data:
-        if isinstance(item, dict):
-            out.append(item)
-    return out
-
-
-def _queue_filename(path: str) -> str:
-    return Path(path).name
-
-
-def _queue_category_for_filename(filename: str) -> str:
-    lowered = filename.lower()
-    if lowered.startswith("review-"):
-        return "review"
-    if lowered.startswith(_QUEUE_CAPABILITY_PREFIXES):
-        return "capability"
-    if lowered.startswith("gap-"):
-        return "gap"
-    if lowered.startswith("maintenance-"):
-        return "maintenance"
-    return "development"
-
-
-def _is_gap_analysis_issue_title(title: str) -> bool:
-    lowered = title.strip().lower()
-    if not lowered:
-        return False
-    return any(lowered == t for t in _GAP_ANALYSIS_TITLES)
 
 
 _GAP_ANALYSIS_TEMPLATE_PATHS: tuple[str, ...] = (
@@ -1293,56 +870,6 @@ def _first_markdown_line_as_title(content: str) -> str:
             continue
         return _normalize_issue_title(line)
     return ""
-
-
-def _parse_queue_file_for_issue(*, queue_id: str, raw: str) -> tuple[str, str]:
-    """Parse a queue file's raw content into (issue_title, issue_body).
-
-    This mirrors `parse_issue_queue_item` but operates on raw strings.
-    """
-
-    lines = raw.splitlines()
-    if not lines:
-        raise HTTPException(status_code=422, detail=f"Queue file is empty: {queue_id}")
-
-    first = lines[0].rstrip("\n")
-    if not first.strip():
-        raise HTTPException(
-            status_code=422, detail=f"Queue file has an empty first line: {queue_id}"
-        )
-
-    title = first
-    if title.lstrip().startswith("#"):
-        title = title.lstrip().lstrip("#").strip()
-    if not title:
-        raise HTTPException(
-            status_code=422, detail=f"Queue file title resolves to empty: {queue_id}"
-        )
-
-    marker = f"<!-- {QUEUE_MARKER_PREFIX} {queue_id} -->"
-    body = raw if marker in raw else raw.rstrip() + "\n\n---\n\n" + marker + "\n"
-
-    return title, body
-
-
-def _search_issue_number_by_queue_marker(
-    settings: ServerSettings, *, repository: str, queue_id: str
-) -> int | None:
-    # Use the search API to find any issue (open or closed) that contains our marker.
-    q = f'repo:{repository} "{QUEUE_MARKER_PREFIX} {queue_id}" in:body is:issue'
-    data = _github_get_json(
-        settings,
-        url=f"{settings.github_base_url.rstrip('/')}/search/issues",
-        params={"q": q, "per_page": "5"},
-    )
-    items = data.get("items")
-    if not isinstance(items, list) or not items:
-        return None
-    first = items[0]
-    if not isinstance(first, dict):
-        return None
-    num = first.get("number")
-    return num if isinstance(num, int) else None
 
 
 def _search_issue_number_by_body_marker(
