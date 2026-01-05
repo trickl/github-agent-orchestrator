@@ -22,8 +22,8 @@ from github_agent_orchestrator import __version__
 from github_agent_orchestrator.github_labels import (
     LABEL_DEVELOPMENT,
     LABEL_REVIEW_CONSUMPTION,
-    LABEL_UPDATE_REVIEW,
     LABEL_UPDATE_CAPABILITY,
+    LABEL_UPDATE_REVIEW,
     fixed_label_spec_by_name,
 )
 from github_agent_orchestrator.server.config import ServerSettings
@@ -50,6 +50,19 @@ from github_agent_orchestrator.server.dashboard.queue_helpers import (
     _queue_filename,
     _search_issue_number_by_queue_marker,
 )
+from github_agent_orchestrator.server.dashboard.text_utilities import (
+    _AUTO_LINK_NOTICE_MARKER,
+    _COPILOT_RATE_LIMIT_RESUME_COMMENT,
+    _comment_body_is_auto_link_notice,
+    _comment_body_is_copilot_resume_nudge,
+    _dt_from_iso,
+    _first_markdown_line_as_title,
+    _normalize_issue_title,
+    _normalize_repo_path_candidate,
+    _strip_fenced_code_blocks,
+    _utc_now,
+    _utc_now_iso,
+)
 
 router = APIRouter()
 
@@ -75,20 +88,10 @@ _CAPABILITY_ISSUE_BODY_SOURCE_PR_RE = re.compile(
 _WIP_TITLE_RE = re.compile(r"^\s*(?:\[\s*)?wip\b", re.IGNORECASE)
 
 
-_COPILOT_RATE_LIMIT_RESUME_COMMENT = "@copilot please can you attempt to resume this work now?"
-
-
-_AUTO_LINK_NOTICE_MARKER = "orchestrator:auto-link-focused-issue"
-
-
 _ISSUE_CLOSING_KEYWORD_RE = re.compile(
     r"\b(?:fixe[sd]?|close[sd]?|resolve[sd]?)\s+#(\d+)\b",
     re.IGNORECASE,
 )
-
-
-def _utc_now() -> datetime:
-    return datetime.now(tz=UTC)
 
 
 def _settings(request: Request) -> ServerSettings:
@@ -97,61 +100,6 @@ def _settings(request: Request) -> ServerSettings:
         # This should never happen for the real app, but keeps the API fail-fast.
         raise HTTPException(status_code=500, detail="Server settings not configured")
     return settings
-
-
-def _utc_now_iso() -> str:
-    return _utc_now().isoformat()
-
-
-def _dt_from_iso(value: str) -> datetime:
-    try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return _utc_now()
-
-
-def _comment_body_is_copilot_resume_nudge(body: str) -> bool:
-    return _COPILOT_RATE_LIMIT_RESUME_COMMENT.lower() in (body or "").lower()
-
-
-def _comment_body_is_auto_link_notice(body: str) -> bool:
-    return _AUTO_LINK_NOTICE_MARKER.lower() in (body or "").lower()
-
-
-def _strip_fenced_code_blocks(markdown: str) -> str:
-    """Remove fenced code blocks from Markdown.
-
-    This is a best-effort Markdown-aware filter used for detecting issue closing keywords.
-    We deliberately keep this simple and deterministic.
-    """
-
-    if not isinstance(markdown, str) or not markdown:
-        return ""
-
-    out_lines: list[str] = []
-    in_fence = False
-    fence_delim: str | None = None
-
-    for raw in markdown.splitlines():
-        line = raw.rstrip("\n")
-        stripped = line.lstrip()
-
-        # Toggle on lines that begin with a fence. Accept ``` and ~~~ fences.
-        if stripped.startswith("```") or stripped.startswith("~~~"):
-            delim = stripped[:3]
-            if not in_fence:
-                in_fence = True
-                fence_delim = delim
-                continue
-            if fence_delim == delim:
-                in_fence = False
-                fence_delim = None
-                continue
-
-        if not in_fence:
-            out_lines.append(line)
-
-    return "\n".join(out_lines)
 
 
 def _list_issue_comments_raw(
@@ -897,7 +845,9 @@ def _pick_next_review_file(*, settings: ServerSettings, repo: str, branch: str) 
     return sorted(candidates)[0] if candidates else None
 
 
-def _ensure_review_consumption_issue_exists(*, settings: ServerSettings, repo: str) -> dict[str, object]:
+def _ensure_review_consumption_issue_exists(
+    *, settings: ServerSettings, repo: str
+) -> dict[str, object]:
     """Ensure there is exactly one open review-consumption issue (best-effort).
 
     In review mode, Step 1a is "review consumption": read a review artefact and produce the
@@ -1027,27 +977,6 @@ def _get_pull_request(
         settings,
         url=_repo_api_url(settings, repository=repository, path=f"pulls/{pr_number}"),
     )
-
-
-def _normalize_issue_title(title: str) -> str:
-    """Normalize a title for matching.
-
-    We intentionally keep this simple and deterministic.
-    """
-
-    t = title.strip()
-    if t.lstrip().startswith("#"):
-        t = t.lstrip().lstrip("#").strip()
-    return " ".join(t.lower().split())
-
-
-def _first_markdown_line_as_title(content: str) -> str:
-    for raw in content.splitlines():
-        line = raw.strip("\n")
-        if not line.strip():
-            continue
-        return _normalize_issue_title(line)
-    return ""
 
 
 def _queue_file_is_excluded_for_loop_mode(*, filename: str, loop_mode: str) -> bool:
@@ -2629,27 +2558,13 @@ def _render_capability_update_issue_body(
 
 
 _REVIEW_QUEUE_SOURCE_RE = re.compile(r"^\s*source\s+review\s*:\s*(.+?)\s*$", re.IGNORECASE)
-_REVIEW_QUEUE_ACTIONS_RE = re.compile(
-    r"^\s*review\s+actions\s*:\s*(.+?)\s*$", re.IGNORECASE
-)
+_REVIEW_QUEUE_ACTIONS_RE = re.compile(r"^\s*review\s+actions\s*:\s*(.+?)\s*$", re.IGNORECASE)
 _REVIEW_QUEUE_ID_DATE_RE = re.compile(r"\breview-(\d{4}-\d{2}-\d{2})\b", re.IGNORECASE)
 
 
-def _normalize_repo_path_candidate(value: str) -> str:
-    s = (value or "").strip()
-    # Strip common Markdown wrappers.
-    if s.startswith("`") and s.endswith("`") and len(s) >= 2:
-        s = s[1:-1].strip()
-    # Strip markdown link [text](path)
-    m = re.match(r"^\[[^\]]+\]\(([^)]+)\)\s*$", s)
-    if m:
-        s = (m.group(1) or "").strip()
-    # Trim trailing punctuation.
-    s = s.strip(" \t\r\n;,.")
-    return s.replace("\\", "/")
-
-
-def _extract_review_paths_from_queue_content(*, queue_id: str, queue_content: str) -> tuple[str | None, str | None]:
+def _extract_review_paths_from_queue_content(
+    *, queue_id: str, queue_content: str
+) -> tuple[str | None, str | None]:
     """Best-effort extraction of the source review + actions paths from a queue artefact."""
 
     review_path: str | None = None
@@ -3109,9 +3024,7 @@ def _merge_next_ready_development_pull_request(
         marker = f"{_CAPABILITY_UPDATE_FROM_PR_MARKER_PREFIX} {repo}#{pr_number}"
         existing = _search_issue_number_by_body_marker(settings, repository=repo, marker=marker)
         if existing is None:
-            _ensure_repo_label_exists(
-                settings, repository=repo, label_name=LABEL_UPDATE_CAPABILITY
-            )
+            _ensure_repo_label_exists(settings, repository=repo, label_name=LABEL_UPDATE_CAPABILITY)
             discussion_md = _get_pull_request_discussion_markdown(
                 settings,
                 repository=repo,
@@ -4329,7 +4242,9 @@ def _loop_status_for_repo(
                 if work_with_pr:
                     stage_reason = "pending work queue file(s) have an associated open PR"
                 else:
-                    stage_reason = "pending work queue file(s) have an associated open issue but no PR yet"
+                    stage_reason = (
+                        "pending work queue file(s) have an associated open issue but no PR yet"
+                    )
         elif processed_count > 0:
             stage = "2b"
             stage_label = "2b — Development execution"
