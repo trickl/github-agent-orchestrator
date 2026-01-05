@@ -12,8 +12,9 @@ This file tracks actions taken and completion status for items identified in `re
 PR #12 created the first two of six planned test file splits:
 
 1. ✅ **Created `tests/unit/test_dashboard_api_health_docs.py`** (86 lines)
-   - Extracted 2 tests covering health and documentation endpoints
+   - Extracted 2 tests covering health and documentation endpoints, plus one cognitive tasks test
    - Tests: `test_dashboard_health_and_docs`, `test_cognitive_tasks_create_endpoint_is_not_exposed`
+   - Note: The cognitive tasks test was co-located with health/docs tests for convenience; ideally should move to a dedicated cognitive tasks file
    
 2. ✅ **Created `tests/unit/test_dashboard_api_loop_actions.py`** (156 lines)
    - Extracted 3 tests covering promote and gap-analysis ensure operations
@@ -33,7 +34,7 @@ Four additional test file splits remain for review item B:
 - [ ] Create `test_dashboard_api_loop_status.py` (16 tests)
 - [ ] Create `test_dashboard_api_auto_resume.py` (2 tests)
 - [ ] Create `test_dashboard_api_auto_link.py` (3 tests)
-- [ ] Create `test_dashboard_api_cognitive_tasks.py` (if applicable)
+- [ ] Create `test_dashboard_api_cognitive_tasks.py` (needs at least 1 test currently in health_docs file)
 - [ ] Remove extracted tests from original `test_dashboard_api.py`
 - [ ] Delete original file once all tests extracted
 
