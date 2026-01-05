@@ -7,7 +7,6 @@ All routes are mounted under `/api`.
 
 from __future__ import annotations
 
-import difflib
 import re
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
@@ -58,6 +57,18 @@ from github_agent_orchestrator.server.dashboard.github_operations import (
     list_repo_markdown_files_under as _list_repo_markdown_files_under,
     search_issue_number_by_body_marker as _search_issue_number_by_body_marker,
 )
+from github_agent_orchestrator.server.dashboard.github_issue_pr_helpers import (
+    best_match_issue_number as _best_match_issue_number,
+    get_pull_request_discussion_markdown as _get_pull_request_discussion_markdown,
+    issue_has_label as _issue_has_label,
+    linked_pr_numbers_from_issue_timeline as _linked_pr_numbers_from_issue_timeline,
+    pull_request_has_review_request as _pull_request_has_review_request,
+    pull_request_has_review_request_history as _pull_request_has_review_request_history,
+    pull_request_is_approved_from_reviews as _pull_request_is_approved_from_reviews,
+    pull_request_is_merge_candidate as _pull_request_is_merge_candidate,
+    pull_request_is_ready_for_review as _pull_request_is_ready_for_review,
+    pull_request_title_is_wip as _pull_request_title_is_wip,
+)
 from github_agent_orchestrator.server.dashboard.queue_helpers import (
     _GAP_ANALYSIS_TITLES,
     _QUEUE_EXCLUDED_PREFIXES,
@@ -100,9 +111,6 @@ _CAPABILITY_ISSUE_BODY_SOURCE_PR_RE = re.compile(
     re.IGNORECASE,
 )
 
-
-# Copilot often prefixes PR titles with "WIP" while it is still working.
-_WIP_TITLE_RE = re.compile(r"^\s*(?:\[\s*)?wip\b", re.IGNORECASE)
 
 
 _ISSUE_CLOSING_KEYWORD_RE = re.compile(
@@ -2274,16 +2282,6 @@ def _promote_next_unpromoted_capability_queue_item(
     }
 
 
-def _issue_has_label(issue: dict[str, Any], *, label_name: str) -> bool:
-    labels = issue.get("labels")
-    if not isinstance(labels, list):
-        return False
-    for lbl in labels:
-        if isinstance(lbl, dict) and lbl.get("name") == label_name:
-            return True
-        if isinstance(lbl, str) and lbl == label_name:
-            return True
-    return False
 
 
 def _extract_source_pr_number_from_capability_issue(
@@ -2452,76 +2450,6 @@ def _render_review_actions_update_issue_body(
     return title, body
 
 
-def _get_pull_request_discussion_markdown(
-    settings: ServerSettings, *, repository: str, pr_number: int
-) -> str:
-    """Best-effort compact discussion rendering for a PR (issue comments + reviews + review comments)."""
-
-    def _as_items(kind: str, raw: list[dict[str, Any]]) -> list[dict[str, str]]:
-        out: list[dict[str, str]] = []
-        for it in raw:
-            if not isinstance(it, dict):
-                continue
-            created_at = it.get("created_at")
-            user = it.get("user")
-            author = user.get("login") if isinstance(user, dict) else None
-            body = it.get("body")
-            url = it.get("html_url") or it.get("url")
-            if not isinstance(created_at, str):
-                continue
-            out.append(
-                {
-                    "created_at": created_at,
-                    "kind": kind,
-                    "author": author if isinstance(author, str) else "unknown",
-                    "body": body if isinstance(body, str) else "",
-                    "url": url if isinstance(url, str) else "",
-                }
-            )
-        return out
-
-    issue_comments = _github_get_list(
-        settings,
-        url=_repo_api_url(settings, repository=repository, path=f"issues/{pr_number}/comments"),
-        params={"per_page": "100"},
-    )
-    reviews = _github_get_list(
-        settings,
-        url=_repo_api_url(settings, repository=repository, path=f"pulls/{pr_number}/reviews"),
-        params={"per_page": "100"},
-    )
-    review_comments = _github_get_list(
-        settings,
-        url=_repo_api_url(settings, repository=repository, path=f"pulls/{pr_number}/comments"),
-        params={"per_page": "100"},
-    )
-
-    items = (
-        _as_items("issue_comment", issue_comments)
-        + _as_items("review", reviews)
-        + _as_items("review_comment", review_comments)
-    )
-
-    if not items:
-        return "(no PR comments)\n"
-
-    items.sort(key=lambda i: str(i.get("created_at") or ""))
-
-    parts: list[str] = []
-    for it in items:
-        ts = it.get("created_at") or ""
-        kind = it.get("kind") or ""
-        author = it.get("author") or "unknown"
-        body = (it.get("body") or "").strip() or "(empty)"
-        url = (it.get("url") or "").strip()
-
-        header = f"- **{ts}** *( {kind} by {author} )*"
-        indented = "\n".join(f"  {line}" for line in body.splitlines())
-        parts.append("\n".join([header, indented]))
-        if url:
-            parts.append(f"  URL: {url}")
-
-    return "\n".join(parts).rstrip() + "\n"
 
 
 def _merge_next_ready_development_pull_request(
@@ -2889,220 +2817,6 @@ def _merge_next_ready_development_pull_request(
         ),
     }
 
-
-def _best_match_issue_number(
-    pending_title_norm: str,
-    open_issues: list[dict[str, Any]],
-    *,
-    min_ratio: float = 0.92,
-) -> int | None:
-    """Match a pending queue title to an open GitHub issue.
-
-    We primarily use normalized title equality, and fall back to a conservative fuzzy match.
-    """
-
-    if not pending_title_norm:
-        return None
-
-    best_num: int | None = None
-    best_ratio = 0.0
-    for it in open_issues:
-        if "pull_request" in it:
-            continue
-        num = it.get("number")
-        title = it.get("title")
-        if not isinstance(num, int) or not isinstance(title, str):
-            continue
-        issue_title_norm = _normalize_issue_title(title)
-        if issue_title_norm == pending_title_norm:
-            return num
-        ratio = difflib.SequenceMatcher(a=pending_title_norm, b=issue_title_norm).ratio()
-        if ratio > best_ratio:
-            best_ratio = ratio
-            best_num = num
-
-    if best_num is not None and best_ratio >= min_ratio:
-        return best_num
-    return None
-
-
-
-def _linked_pr_numbers_from_issue_timeline(timeline: list[dict[str, Any]]) -> set[int]:
-    """Extract linked PR numbers from an issue timeline.
-
-    GitHub can represent "issue <-> PR" association in a few ways (cross-reference,
-    connected events, etc.). We keep this conservative but support the common shapes
-    we see in the REST timeline API.
-    """
-
-    def _extract_pr_number(ev: dict[str, Any]) -> int | None:
-        # Common: cross-referenced event with nested source.issue.pull_request
-        source = ev.get("source")
-        if isinstance(source, dict):
-            issue = source.get("issue")
-            if isinstance(issue, dict) and "pull_request" in issue:
-                num = issue.get("number")
-                if isinstance(num, int):
-                    return num
-
-        # Some events include a "subject" object for the connected PR.
-        subject = ev.get("subject")
-        if isinstance(subject, dict) and "pull_request" in subject:
-            num = subject.get("number")
-            if isinstance(num, int):
-                return num
-
-        return None
-
-    out: set[int] = set()
-    for raw in timeline:
-        if not isinstance(raw, dict):
-            continue
-        event = raw.get("event")
-        if event not in {"cross-referenced", "connected"}:
-            continue
-        pr_num = _extract_pr_number(raw)
-        if pr_num is not None:
-            out.add(pr_num)
-    return out
-
-
-def _pull_request_title_is_wip(title: str) -> bool:
-    if not isinstance(title, str):
-        return False
-    return bool(_WIP_TITLE_RE.search(title.strip()))
-
-
-def _pull_request_has_review_request(pr_data: dict[str, Any]) -> bool:
-    requested_reviewers = pr_data.get("requested_reviewers")
-    requested_teams = pr_data.get("requested_teams")
-    return bool(requested_reviewers) or bool(requested_teams)
-
-
-def _pull_request_has_review_request_history(
-    settings: ServerSettings, *, repository: str, pr_number: int
-) -> bool:
-    """Return True if the PR has ever had a review request (best-effort).
-
-    GitHub may clear `requested_reviewers` after reviews are submitted, so we also
-    consult the PR issue timeline for `review_requested` / `review_request_removed`
-    events.
-    """
-
-    timeline = _list_issue_timeline_raw(settings, repository=repository, issue_number=pr_number)
-    for ev in timeline:
-        if not isinstance(ev, dict):
-            continue
-        event = ev.get("event")
-        if event in {"review_requested", "review_request_removed"}:
-            return True
-    return False
-
-
-def _pull_request_is_approved_from_reviews(reviews: list[dict[str, Any]]) -> bool:
-    """Return True if the PR should be treated as "approved".
-
-    GitHub does not expose approval status directly on the PR object. To keep this
-    deterministic and REST-only, we interpret the PR reviews list:
-
-    - Use each reviewer's latest review state.
-    - Approved means: at least one APPROVED and no CHANGES_REQUESTED outstanding.
-    """
-
-    latest_by_user: dict[str, tuple[str, str]] = {}
-    for raw in reviews:
-        if not isinstance(raw, dict):
-            continue
-
-        state = raw.get("state")
-        submitted_at = raw.get("submitted_at")
-        user = raw.get("user")
-        login = user.get("login") if isinstance(user, dict) else None
-
-        if not isinstance(login, str) or not login.strip():
-            continue
-        if not isinstance(state, str) or not state.strip():
-            continue
-        if not isinstance(submitted_at, str) or not submitted_at.strip():
-            continue
-
-        key = login.strip().lower()
-        prev = latest_by_user.get(key)
-        if prev is None or submitted_at > prev[0]:
-            latest_by_user[key] = (submitted_at, state.strip().upper())
-
-    if not latest_by_user:
-        return False
-
-    states = [st for _ts, st in latest_by_user.values()]
-    has_changes_requested = any(st == "CHANGES_REQUESTED" for st in states)
-    if has_changes_requested:
-        return False
-    return any(st == "APPROVED" for st in states)
-
-
-def _pull_request_is_ready_for_review(pr_data: dict[str, Any], *, review_requested: bool) -> bool:
-    # Must be open.
-    if pr_data.get("state") != "open":
-        return False
-
-    # Must not be draft.
-    if pr_data.get("draft") is True:
-        return False
-
-    # Must not be WIP (Copilot uses WIP as an in-progress signal).
-    title = pr_data.get("title")
-    if isinstance(title, str) and _pull_request_title_is_wip(title):
-        return False
-
-    # Must have an explicit review-request signal.
-    # We treat "review requested" as the completion marker for Copilot-authored PRs.
-    if not review_requested:
-        return False
-
-    # Should not have merge conflicts ("dirty" == conflicts in GitHub terminology).
-    mergeable = pr_data.get("mergeable")
-    mergeable_state = pr_data.get("mergeable_state")
-    if mergeable is False:
-        return False
-    if isinstance(mergeable_state, str):
-        return mergeable_state.lower() != "dirty"
-
-    return True
-
-
-def _pull_request_is_merge_candidate(pr_data: dict[str, Any], *, review_requested: bool) -> bool:
-    """Return True if the PR is a candidate for the merge endpoint to act on.
-
-    Unlike `_pull_request_is_ready_for_review`, this intentionally allows draft PRs,
-    because the merge endpoint may attempt to mark a draft PR as "ready for review"
-    (GraphQL mutation) *before* merging.
-
-    Safety gates still apply:
-    - PR must be open
-    - PR must not be WIP
-    - a review must have been requested (signal of Copilot completion)
-    - PR must not be conflicted
-    """
-
-    if pr_data.get("state") != "open":
-        return False
-
-    title = pr_data.get("title")
-    if isinstance(title, str) and _pull_request_title_is_wip(title):
-        return False
-
-    if not review_requested:
-        return False
-
-    mergeable = pr_data.get("mergeable")
-    mergeable_state = pr_data.get("mergeable_state")
-    if mergeable is False:
-        return False
-    if isinstance(mergeable_state, str):
-        return mergeable_state.lower() != "dirty"
-
-    return True
 
 
 
