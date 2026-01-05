@@ -91,10 +91,11 @@ PR #30 successfully extracted pure utility functions from `dashboard_router.py` 
 
 **Created `src/github_agent_orchestrator/server/dashboard/text_utilities.py` (112 lines)**
 - Module docstring explaining purpose: pure text/datetime utilities for dashboard modules
-- Datetime utilities: `_utc_now()`, `_utc_now_iso()`, `_dt_from_iso()`
-- Text processing: `_strip_fenced_code_blocks()`, `_normalize_issue_title()`, `_first_markdown_line_as_title()`, `_normalize_repo_path_candidate()`
-- Comment markers: `_comment_body_is_copilot_resume_nudge()`, `_comment_body_is_auto_link_notice()`
-- Constants: `_COPILOT_RATE_LIMIT_RESUME_COMMENT`, `_AUTO_LINK_NOTICE_MARKER`
+- 9 pure utility functions:
+  - Datetime utilities (3): `_utc_now()`, `_utc_now_iso()`, `_dt_from_iso()`
+  - Text processing (4): `_strip_fenced_code_blocks()`, `_normalize_issue_title()`, `_first_markdown_line_as_title()`, `_normalize_repo_path_candidate()`
+  - Comment markers (2): `_comment_body_is_copilot_resume_nudge()`, `_comment_body_is_auto_link_notice()`
+- 2 constants: `_COPILOT_RATE_LIMIT_RESUME_COMMENT`, `_AUTO_LINK_NOTICE_MARKER`
 
 **Modified `src/github_agent_orchestrator/server/dashboard_router.py`**
 - **Before**: 4746 lines
@@ -137,7 +138,7 @@ The extraction was blocked by three interconnected issues:
 
 #### Decision
 
-These heavily-mocked, tightly-coupled functions should remain in `dashboard_router.py` for now. The production code extraction of complex helper modules specified in review item A (suggestions 1-5: github_issue_pr_helpers, automation_auto_link, automation_auto_resume, loop_actions, loop_status) is not feasible with the current architecture without:
+These heavily-mocked, tightly-coupled functions should remain in `dashboard_router.py` for now. The production code extraction of complex helper modules specified in review item A is not feasible with the current architecture. Specifically, the five suggested module extractions (github_issue_pr_helpers, automation_auto_link, automation_auto_resume, loop_actions, loop_status) cannot be safely extracted without:
 - Significant refactoring of the mocking strategy
 - Restructuring the dependency relationships
 - Potentially introducing dependency injection patterns
