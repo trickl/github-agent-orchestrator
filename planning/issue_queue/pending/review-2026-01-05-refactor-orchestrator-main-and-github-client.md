@@ -57,7 +57,7 @@ The file contains:
 
 Create a new directory `src/github_agent_orchestrator/orchestrator/commands/` with one module per subcommand handler.
 
-For each of the 10 subcommands, extract its handler logic into a dedicated module:
+For each of the 10 subcommands, extract its handler logic into a dedicated module (paths below are relative to `src/github_agent_orchestrator/` for brevity):
 
 1. **Create `orchestrator/commands/create_issue.py`**
    - Move the `create-issue` command handler logic verbatim
@@ -170,10 +170,15 @@ Expected result:
 
 2. **Verify CLI behavior** by running help for each subcommand:
    ```bash
-   python -m github_agent_orchestrator.orchestrator.main --help
-   python -m github_agent_orchestrator.orchestrator.main create-issue --help
-   python -m github_agent_orchestrator.orchestrator.main assign-copilot --help
+   orchestrator --help
+   orchestrator create-issue --help
+   orchestrator assign-copilot --help
    # ... etc for all subcommands
+   ```
+   
+   Or if not installed, use:
+   ```bash
+   python -m github_agent_orchestrator.orchestrator.main --help
    ```
 
 3. **Check imports** throughout the codebase:
