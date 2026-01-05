@@ -75,16 +75,59 @@ All acceptance criteria met:
 - ✅ Tests copied verbatim with all fixtures, mocks, and assertions preserved
 - ✅ Original monolithic file deleted
 
-## Review Item A: Continue splitting `dashboard_router.py` (DEFERRED)
+## Review Item A: Continue splitting `dashboard_router.py` (IN PROGRESS)
+
+**Status**: In Progress  
+**Addressed by**: PR #12 (merged 2026-01-05), PR #30 (merged 2026-01-05)
+
+### Phase 1: Pure Utility Extraction (COMPLETED)
+
+**Status**: Completed  
+**Addressed by**: PR #30 (merged 2026-01-05)
+
+#### What Changed
+
+PR #30 successfully extracted pure utility functions from `dashboard_router.py` into a new leaf-level module, achieving the first incremental reduction without introducing circular dependencies.
+
+**Created `src/github_agent_orchestrator/server/dashboard/text_utilities.py` (112 lines)**
+- Module docstring explaining purpose: pure text/datetime utilities for dashboard modules
+- Datetime utilities: `_utc_now()`, `_utc_now_iso()`, `_dt_from_iso()`
+- Text processing: `_strip_fenced_code_blocks()`, `_normalize_issue_title()`, `_first_markdown_line_as_title()`, `_normalize_repo_path_candidate()`
+- Comment markers: `_comment_body_is_copilot_resume_nudge()`, `_comment_body_is_auto_link_notice()`
+- Constants: `_COPILOT_RATE_LIMIT_RESUME_COMMENT`, `_AUTO_LINK_NOTICE_MARKER`
+
+**Modified `src/github_agent_orchestrator/server/dashboard_router.py`**
+- **Before**: 4746 lines
+- **After**: 4661 lines (85 line reduction, 1.8%)
+- Added import statement for all 9 extracted functions and 2 constants
+- Removed original function definitions and constants
+
+#### Implementation Summary
+
+- **Functions extracted**: 9 pure utility functions (no side effects, no dependencies on other dashboard functions)
+- **Constants extracted**: 2 module-level string constants
+- **Line count reduction**: 85 lines (4746 → 4661)
+- **Pattern followed**: Move-first verbatim extraction; true leaf utilities with zero FastAPI, GitHub API, or dashboard dependencies
+- **Verification**: All tests pass, no circular imports, no behavior changes
+
+#### Why This Succeeded (vs PR #12)
+
+PR #30 succeeded where PR #12 was deferred because it extracted only **pure leaf utilities**:
+- No dependencies on other dashboard_router functions (no circular import risk)
+- Not mocked in tests (no test patching issues)
+- Pure functions with no side effects (minimal breakage risk)
+- Established pattern and foundation for future extractions
+
+### Phase 2: Complex Helper Module Extraction (DEFERRED)
 
 **Status**: Deferred  
 **Addressed by**: PR #12 (merged 2026-01-05)
 
-### What Was Attempted
+#### What Was Attempted
 
 PR #12 attempted to extract auto-link and auto-resume functions from `dashboard_router.py` into separate modules as specified in the review.
 
-### Why Deferred
+#### Why Deferred
 
 The extraction was blocked by three interconnected issues:
 
@@ -92,18 +135,31 @@ The extraction was blocked by three interconnected issues:
 2. **Test mocking breaks**: Tests patch `dashboard_router._get_pull_request`, but if functions move to a separate module, tests can't patch the local copy used by that module
 3. **Helper function duplication**: Would require duplicating helper functions to avoid circular dependencies
 
-### Decision
+#### Decision
 
-These heavily-mocked, tightly-coupled functions should remain in `dashboard_router.py` for now. The production code extraction specified in review item A is not feasible with the current architecture without:
+These heavily-mocked, tightly-coupled functions should remain in `dashboard_router.py` for now. The production code extraction of complex helper modules specified in review item A (suggestions 1-5: github_issue_pr_helpers, automation_auto_link, automation_auto_resume, loop_actions, loop_status) is not feasible with the current architecture without:
 - Significant refactoring of the mocking strategy
 - Restructuring the dependency relationships
 - Potentially introducing dependency injection patterns
 
-### Implications
+### Current Status
 
-- Review item A (all 5 production code module extractions) remains unaddressed
-- `dashboard_router.py` remains at ~4746 lines
-- Focus shifted to completing review item B (test file splits) which is feasible and valuable
+- ✅ **Phase 1 completed**: Pure utilities extracted (PR #30)
+- ⏸️ **Phase 2 deferred**: Complex helpers remain in `dashboard_router.py` (PR #12 analysis)
+- `dashboard_router.py` reduced from 4746 → 4661 lines (1.8% reduction)
+- New `text_utilities.py` module provides reusable leaf utilities for future dashboard modules
+
+### Remaining Work
+
+The following extractions from the original review recommendation remain unaddressed:
+
+1. `server/dashboard/github_issue_pr_helpers.py` - Timeline/listing helpers and PR evaluation (deferred, circular dependencies)
+2. `server/dashboard/automation_auto_link.py` - Auto-link helpers (deferred, circular dependencies)
+3. `server/dashboard/automation_auto_resume.py` - Auto-resume helpers (deferred, circular dependencies)
+4. `server/dashboard/loop_actions.py` - Promote/merge helpers (deferred, circular dependencies)
+5. `server/dashboard/loop_status.py` - Loop-stage computation helpers (deferred, circular dependencies)
+
+These remain blocked by the architectural issues identified in PR #12 and require more extensive refactoring to enable safe extraction.
 
 ## Review Item C: Tackle `orchestrator/main.py` and `orchestrator/github/client.py` (COMPLETED)
 
@@ -232,12 +288,18 @@ All acceptance criteria met:
   - 13 new focused modules created (commands and models)
   - All 57 tests pass, no behavior changes
 
-**Deferred**: 
-- All production code extractions from `dashboard_router.py` (review item A)
-  - Blocked by circular imports and tightly-coupled test mocking
-  - Requires architectural refactoring to enable extraction
+**In Progress**: 
+- Review item A: Continue splitting `dashboard_router.py` (partially addressed by PR #30)
+  - **Phase 1 completed**: Pure utility functions extracted into `text_utilities.py`
+    - `dashboard_router.py` (4746 lines) reduced to 4661 lines (85 line reduction, 1.8%)
+    - New `text_utilities.py` module created (112 lines) with 9 pure functions and 2 constants
+    - No circular imports, all tests pass
+  - **Phase 2 deferred**: Complex helper module extractions remain blocked
+    - 5 suggested module extractions (github_issue_pr_helpers, automation_auto_link, automation_auto_resume, loop_actions, loop_status) blocked by circular imports and tightly-coupled test mocking
+    - Requires architectural refactoring to enable extraction
 
 **Next Actions**:
 - None for review items B and C (both fully completed)
-- Consider architectural changes to enable production code extraction in future (review item A)
+- Review item A: Phase 1 complete, Phase 2 remains deferred pending architectural changes
 - Optional: Further extract GitHub client helpers (URLs, pagination, parsing) if `client.py` grows beyond current size
+- Optional: Continue incremental extractions from `dashboard_router.py` following the pure utility pattern established in PR #30
