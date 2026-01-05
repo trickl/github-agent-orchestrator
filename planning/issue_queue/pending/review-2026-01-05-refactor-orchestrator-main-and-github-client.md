@@ -43,8 +43,8 @@ The `main()` function contains inline handlers for these subcommands:
 
 ### orchestrator/github/client.py (1192 lines)
 The file contains:
-- 7 dataclass definitions (CreatedIssue, IssueDetails, LinkedPullRequest, etc.)
-- `GitHubClient` class with ~50+ methods covering:
+- 8 dataclass definitions (CreatedIssue, IssueDetails, LinkedPullRequest, PullRequestDetails, PullRequestContent, PullRequestDiscussionItem, MergeResult, PullRequestCreated)
+- `GitHubClient` class with ~35+ methods covering:
   - Issue operations (create, get, update, assign, comment)
   - PR operations (create, get, merge, convert draft, delete branch)
   - Repository operations (get file, create branch, etc.)
