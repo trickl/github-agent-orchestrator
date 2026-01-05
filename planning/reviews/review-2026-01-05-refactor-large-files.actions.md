@@ -89,7 +89,7 @@ All acceptance criteria met:
 
 PR #30 successfully extracted pure utility functions from `dashboard_router.py` into a new leaf-level module, achieving the first incremental reduction without introducing circular dependencies.
 
-**Created `src/github_agent_orchestrator/server/dashboard/text_utilities.py` (112 lines)**
+**Created `src/github_agent_orchestrator/server/dashboard/text_utilities.py` (111 lines)**
 - Module docstring explaining purpose: pure text/datetime utilities for dashboard modules
 - 9 pure utility functions:
   - Datetime utilities (3): `_utc_now()`, `_utc_now_iso()`, `_dt_from_iso()`
@@ -302,7 +302,7 @@ All acceptance criteria met:
 - Review item A: Continue splitting `dashboard_router.py` (partially addressed by PR #30)
   - **Phase 1 completed**: Pure utility functions extracted into `text_utilities.py`
     - `dashboard_router.py` (4746 lines) reduced to 4661 lines (85 line reduction, 1.8%)
-    - New `text_utilities.py` module created (112 lines) with 9 pure functions and 2 constants
+    - New `text_utilities.py` module created (111 lines) with 9 pure functions and 2 constants
     - No circular imports, all tests pass
   - **Phase 2 deferred**: Complex helper module extractions remain blocked
     - 5 suggested module extractions (github_issue_pr_helpers, automation_auto_link, automation_auto_resume, loop_actions, loop_status) blocked by circular imports and tightly-coupled test mocking
