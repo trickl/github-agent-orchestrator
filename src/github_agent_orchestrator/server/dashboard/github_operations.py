@@ -25,7 +25,6 @@ from github_agent_orchestrator.server.dashboard.github_api import (
     _github_get_list,
     _github_get_list_with_headers,
     _github_headers,
-    _github_post_json,
     _github_put_json,
     _repo_api_url,
 )
