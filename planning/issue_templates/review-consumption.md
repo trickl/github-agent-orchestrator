@@ -58,6 +58,7 @@ If the resulting task involves refactoring or moving code across files:
 3. Always delete any leftover, unused code
 4. Do not leave comments on changes made within the code
 5. Do not rewrite functions from scratch during refactors.
+6. Ensure all tests and linting pass after each change.
 
 ### Tone
 Faithful to the review, pragmatic, and neutral. No new ideas beyond the review.
