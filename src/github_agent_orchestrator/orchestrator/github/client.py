@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import base64
 import logging
-from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
@@ -15,105 +14,30 @@ import requests
 from github import Auth, Github
 from github.Repository import Repository
 
+from github_agent_orchestrator.orchestrator.github.models import (
+    CreatedIssue,
+    IssueDetails,
+    LinkedPullRequest,
+    MergeResult,
+    PullRequestContent,
+    PullRequestCreated,
+    PullRequestDetails,
+    PullRequestDiscussionItem,
+)
+
 logger = logging.getLogger(__name__)
 
-
-@dataclass(frozen=True, slots=True)
-class CreatedIssue:
-    """Minimal issue metadata returned from GitHub."""
-
-    repository: str
-    number: int
-    title: str
-    created_at: datetime
-    status: str
-
-
-@dataclass(frozen=True, slots=True)
-class IssueDetails:
-    """Minimal issue metadata fetched from GitHub."""
-
-    repository: str
-    number: int
-    title: str
-    created_at: datetime
-    status: str
-    assignees: list[str]
-
-
-@dataclass(frozen=True, slots=True)
-class LinkedPullRequest:
-    """Minimal pull request metadata linked to an issue."""
-
-    number: int
-    url: str
-    title: str
-    state: str
-    is_draft: bool
-    merged: bool
-    merged_at: str | None
-    closed_at: str | None
-    updated_at: str | None
-
-
-@dataclass(frozen=True, slots=True)
-class PullRequestDetails:
-    """Minimal pull request metadata needed for review/merge automation."""
-
-    number: int
-    state: str
-    draft: bool
-    merged: bool
-
-    mergeable: bool | None
-    mergeable_state: str | None
-
-    head_ref: str
-    head_sha: str
-    head_repo_full_name: str
-
-    base_ref: str
-    base_repo_full_name: str
-
-    # Optional GitHub node ID.
-    node_id: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class PullRequestContent:
-    """Pull request content used for post-merge reporting."""
-
-    number: int
-    title: str
-    body: str
-    state: str
-    merged: bool
-    merged_at: str | None
-    html_url: str | None
-
-
-@dataclass(frozen=True, slots=True)
-class PullRequestDiscussionItem:
-    """An item in a PR's discussion stream (comments/reviews/review comments)."""
-
-    created_at: datetime
-    kind: str
-    author: str
-    body: str
-    url: str | None
-
-
-@dataclass(frozen=True, slots=True)
-class MergeResult:
-    merged: bool
-    message: str
-    sha: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class PullRequestCreated:
-    number: int
-    url: str | None
+__all__ = [
+    "GitHubClient",
+    "CreatedIssue",
+    "IssueDetails",
+    "LinkedPullRequest",
+    "PullRequestDetails",
+    "PullRequestContent",
+    "PullRequestDiscussionItem",
+    "MergeResult",
+    "PullRequestCreated",
+]
 
 
 class GitHubClient:
