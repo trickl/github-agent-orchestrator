@@ -171,6 +171,19 @@ export const handlers = [
     });
   }),
 
+  http.post('*/loop/review/ensure', async () => {
+    await delay(250);
+    return HttpResponse.json({
+      repo: 'acme/repo',
+      branch: 'main',
+      created: true,
+      issueNumber: 43,
+      issueUrl: 'https://github.com/acme/repo/issues/43',
+      assigned: ['copilot-swe-agent[bot]'],
+      summary: 'Created review consumption issue #43',
+    });
+  }),
+
   http.post('*/loop/merge', async () => {
     await delay(350);
     return HttpResponse.json({

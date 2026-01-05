@@ -225,6 +225,7 @@ pip install -e ".[dev]"
 ORCHESTRATOR_GITHUB_TOKEN=ghp_...
 COPILOT_ASSIGNEE=copilot-swe-agent[bot]
 LOG_LEVEL=INFO
+ORCHESTRATOR_LOOP_MODE=build  # or: review
 ```
 
 ---
@@ -234,6 +235,19 @@ LOG_LEVEL=INFO
 ```bash
 orchestrator-server
 ```
+
+To run the same loop in **review mode** (review-intake → work → review-actions update):
+
+```bash
+orchestrator-server --loop-mode review
+```
+
+In review mode:
+
+- Step 1 consumes the next review file under `planning/reviews/review-*.md` and produces exactly one queue artefact.
+- Step 2 executes queued work (both `review-*.md` and `dev-*.md` artefacts are eligible).
+- Step 3 creates an “Update Review” issue that updates `planning/reviews/review-YYYY-MM-DD.actions.md` with what was resolved.
+- Review mode does **not** create “Update Capability” issues (i.e., it does not update `planning/state/system_capabilities.md`).
 
 - OpenAPI: http://127.0.0.1:8000/api/openapi.json
 - Swagger UI: http://127.0.0.1:8000/api/docs

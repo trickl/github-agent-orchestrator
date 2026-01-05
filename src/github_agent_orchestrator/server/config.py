@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -108,6 +108,16 @@ class ServerSettings(BaseSettings):
     # will be scoped to this repo by default.
     default_repo: str = Field(default="", validation_alias="ORCHESTRATOR_DEFAULT_REPO")
 
+    loop_mode: str = Field(
+        default="build",
+        validation_alias="ORCHESTRATOR_LOOP_MODE",
+        description=(
+            "Controls the orchestrator loop semantics. 'build' runs the goal/capabilities-driven "
+            "gap-analysis → development → capability-update cycle. 'review' runs the "
+            "review-consumption → development → review-actions-update cycle."
+        ),
+    )
+
     # Where the Vite build output lives when serving the UI from the backend.
     ui_dist_path: Path = Field(default=Path("ui/dist"), validation_alias="ORCHESTRATOR_UI_DIST")
 
@@ -119,6 +129,14 @@ class ServerSettings(BaseSettings):
     )
 
     model_config = SettingsConfigDict(env_prefix="", env_file=".env", extra="ignore")
+
+    @field_validator("loop_mode")
+    @classmethod
+    def _validate_loop_mode(cls, v: str) -> str:
+        mode = (v or "").strip().lower()
+        if mode in {"build", "review"}:
+            return mode
+        raise ValueError("ORCHESTRATOR_LOOP_MODE must be one of: build, review")
 
     def parsed_cors_origins(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]

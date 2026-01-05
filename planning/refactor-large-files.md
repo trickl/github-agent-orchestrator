@@ -1,6 +1,6 @@
 # Refactor plan: reduce large-file complexity
 
-Date: 2026-01-04
+Date: 2026-01-05
 
 This document proposes an incremental, low-risk plan to reduce complexity caused by very large
 Python files (especially those exceeding 500 lines).
@@ -27,12 +27,12 @@ Suggested usage:
 
 ## Current large files (≥ 500 lines)
 
-From the scan on 2026-01-04:
+From the scan on 2026-01-05:
 
 | Lines | Path |
 | ---: | --- |
-| 4103 | `src/github_agent_orchestrator/server/dashboard_router.py` |
-| 1960 | `tests/unit/test_dashboard_api.py` |
+| 4746 | `src/github_agent_orchestrator/server/dashboard_router.py` |
+| 2109 | `tests/unit/test_dashboard_api.py` |
 | 1192 | `src/github_agent_orchestrator/orchestrator/github/client.py` |
 | 1135 | `src/github_agent_orchestrator/orchestrator/main.py` |
 | 768 | `src/github_agent_orchestrator/orchestrator/github/issue_service.py` |
@@ -76,7 +76,7 @@ For each group of functions to move:
 
 ## File-by-file plan
 
-### 1) `src/github_agent_orchestrator/server/dashboard_router.py` (4103 lines)
+### 1) `src/github_agent_orchestrator/server/dashboard_router.py` (4746 lines)
 
 #### What it currently does (high-level)
 
@@ -96,41 +96,43 @@ The only true “router” content is relatively small; most bulk is helper/auto
 
 #### Target structure (suggested)
 
-Create a package folder:
+Already in place:
 - `src/github_agent_orchestrator/server/dashboard/`
 
-Proposed new modules (grouped by concern):
+Status (as of 2026-01-05)
+
+Already extracted (done):
 
 1) `server/dashboard/github_api.py`
 - `_github_headers`, `_repo_api_url`, `_graphql_api_url`
 - `_github_get_json`, `_github_get_list`, `_github_post_json`, `_github_patch_json`, `_github_put_json`, `_github_delete_json`
 - `_github_graphql_post`, `_graphql_errors_as_message`
 
-2) `server/dashboard/github_issue_pr_helpers.py`
+2) `server/dashboard/queue_helpers.py`
+- `_queue_filename`, `_queue_category_for_filename`, `_parse_queue_file_for_issue`, etc.
+
+Remaining suggested modules (grouped by concern):
+
+1) `server/dashboard/github_issue_pr_helpers.py`
 - `_list_issue_comments_raw`, `_list_issue_events_raw`, `_list_issue_timeline_raw`
 - `_linked_pr_numbers_from_issue_timeline`
 - `_pull_request_has_review_request`, `_pull_request_has_review_request_history`
 - `_pull_request_title_is_wip`, `_pull_request_is_ready_for_review`, `_pull_request_is_merge_candidate`
 
-3) `server/dashboard/queue_helpers.py`
-- `_queue_filename`, `_queue_category_for_filename`, `_template_category_from_filename`
-- `_first_markdown_line_as_title`, `_normalize_issue_title`, `_parse_queue_file_for_issue`
-- `_best_match_issue_number`
-
-4) `server/dashboard/automation_auto_link.py`
+2) `server/dashboard/automation_auto_link.py`
 - `_strip_fenced_code_blocks`, `_issue_is_mentioned_as_closing*`
 - `_copilot_login_candidates`, `_maybe_auto_link_focused_issue_to_pr`
 
-5) `server/dashboard/automation_auto_resume.py`
+3) `server/dashboard/automation_auto_resume.py`
 - `_maybe_auto_resume_copilot_after_rate_limit` plus its small helpers
 
-6) `server/dashboard/loop_actions.py`
+4) `server/dashboard/loop_actions.py`
 - `_promote_next_unpromoted_development_queue_item`
 - `_promote_next_unpromoted_capability_queue_item`
 - `_merge_next_ready_pull_request`, `_try_merge_next_ready_*`, `_merge_next_ready_development_pull_request`
 - `_render_capability_update_issue_body`, `_get_pull_request_discussion_markdown`
 
-7) `server/dashboard/loop_status.py`
+5) `server/dashboard/loop_status.py`
 - `_loop_status_for_repo` and any helpers that are only used for loop stage derivation
 
 Then keep `server/dashboard_router.py` mostly as:
@@ -142,12 +144,10 @@ Then keep `server/dashboard_router.py` mostly as:
 
 To minimize risk and avoid circular imports:
 
-1. Move pure URL/header/request helpers (`github_api.py`).
-2. Move timeline/PR evaluation helpers (`github_issue_pr_helpers.py`).
-3. Move markdown/title/queue parsing helpers (`queue_helpers.py`).
-4. Move auto-link and auto-resume helpers (very self-contained).
-5. Move loop actions (promote/merge) next.
-6. Move loop status last (it references most helper utilities).
+1. Move timeline/PR evaluation helpers (`github_issue_pr_helpers.py`).
+2. Move auto-link and auto-resume helpers (very self-contained).
+3. Move loop actions (promote/merge) next.
+4. Move loop status last (it references most helper utilities).
 
 ---
 
@@ -268,7 +268,7 @@ Then later we can consider moving larger method groups if we loosen the constrai
 
 ---
 
-### 5) `tests/unit/test_dashboard_api.py` (1960 lines)
+### 5) `tests/unit/test_dashboard_api.py` (2109 lines)
 
 #### What it currently tests
 

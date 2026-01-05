@@ -32,15 +32,22 @@ type LoopCounts = {
   openGapAnalysisIssues: number | null;
   openGapAnalysisIssuesWithPr?: number | null;
   openGapAnalysisIssuesReadyForReview?: number | null;
+  openReviewConsumptionIssues?: number | null;
+  openReviewUpdateIssues?: number | null;
   unpromotedPending: number | null;
 
   pendingDevelopment: number | null;
+  pendingReview?: number | null;
   pendingCapabilityUpdates: number | null;
   pendingExcluded: number | null;
 
   pendingDevelopmentWithoutPr: number | null;
   pendingDevelopmentWithPr: number | null;
   pendingDevelopmentReadyForReview: number | null;
+
+  pendingReviewWithoutPr?: number | null;
+  pendingReviewWithPr?: number | null;
+  pendingReviewReadyForReview?: number | null;
 
   pendingCapabilityUpdatesWithoutPr: number | null;
   pendingCapabilityUpdatesWithPr: number | null;
@@ -56,6 +63,7 @@ type RunningJob = {
 
 type LoopStatus = {
   nowIso: string;
+  loopMode?: 'build' | 'review';
   stage: '1a' | '1b' | '1c' | '2a' | '2b' | '2c' | '3a' | '3b' | '3c';
   stageLabel: string;
   activeStep: number;
@@ -63,7 +71,7 @@ type LoopStatus = {
   runningJob: RunningJob | null;
   lastAction: null | { tsIso: string; summary: string; kind: string };
   focus?: {
-    kind: 'development' | 'capability' | 'gap';
+    kind: 'development' | 'capability' | 'gap' | 'review' | 'reviewUpdate';
     title?: string;
     sourceTitle?: string;
     issueNumber?: number | null;
@@ -93,7 +101,7 @@ type PromoteResult = {
   summary: string;
 };
 
-type GapEnsureResult = {
+type Step1EnsureResult = {
   repo: string;
   branch: string;
   created: boolean;
@@ -123,7 +131,7 @@ type MergeResult = {
   summary: string;
 };
 
-const steps: Array<{
+const buildSteps: Array<{
   key: string;
   title: string;
   subtitle: string;
@@ -225,42 +233,109 @@ const steps: Array<{
   },
 ];
 
-function LoopStepIcon(props: StepIconProps): React.JSX.Element {
-  const iconNumber = typeof props.icon === 'number' ? props.icon : Number(props.icon);
-  const idx = Number.isFinite(iconNumber) ? iconNumber - 1 : -1;
-  const stageKey = idx >= 0 && idx < steps.length ? steps[idx]?.key ?? '?' : '?';
-
-  if (props.completed) {
-    return <CheckCircleIcon sx={{ color: 'success.main' }} />;
-  }
-
-  return (
-    <Box
-      sx={{
-        width: 24,
-        height: 24,
-        borderRadius: '50%',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        fontSize: 12,
-        fontWeight: 800,
-        border: '2px solid',
-        borderColor: props.active ? 'primary.main' : 'divider',
-        bgcolor: props.active ? 'primary.main' : 'transparent',
-        color: props.active ? 'primary.contrastText' : 'text.secondary',
-      }}
-    >
-      {stageKey}
-    </Box>
-  );
-}
+const reviewSteps: Array<{
+  key: string;
+  title: string;
+  subtitle: string;
+  details: React.ReactNode;
+}> = [
+  {
+    key: '1a',
+    title: 'Step 1a — Review intake issue',
+    subtitle: 'Deterministic: ensure a review-consumption issue exists and is assigned.',
+    details: (
+      <Typography variant="body2" color="text.secondary">
+        This stage ensures there is a live review-intake issue to turn a review document into one PR-sized queue item.
+      </Typography>
+    ),
+  },
+  {
+    key: '1b',
+    title: 'Step 1b — Review intake execution',
+    subtitle: 'Work happens on the review-intake issue; a PR may be opened.',
+    details: (
+      <Typography variant="body2" color="text.secondary">
+        Operator/Copilot consumes a review file and produces exactly one queue artefact representing an atomic unit of work.
+      </Typography>
+    ),
+  },
+  {
+    key: '1c',
+    title: 'Step 1c — Review intake PR completion & merge',
+    subtitle: 'Deterministic: merges the review-intake PR when it is ready and safe.',
+    details: (
+      <Typography variant="body2" color="text.secondary">
+        The orchestrator refuses to merge until the PR is not WIP and a review has been requested.
+      </Typography>
+    ),
+  },
+  {
+    key: '2a',
+    title: 'Step 2a — Work issue creation',
+    subtitle: 'Deterministic plumbing: pending file → GitHub issue → assign Copilot.',
+    details: (
+      <Typography variant="body2" color="text.secondary">
+        In review mode, Step 2 can include both <code>review-*.md</code> and <code>dev-*.md</code> queue artefacts.
+      </Typography>
+    ),
+  },
+  {
+    key: '2b',
+    title: 'Step 2b — Work execution',
+    subtitle: 'Copilot works the issue. PR created. Discussion happens.',
+    details: (
+      <Typography variant="body2" color="text.secondary">
+        This is outside the orchestrator's intelligence.
+      </Typography>
+    ),
+  },
+  {
+    key: '2c',
+    title: 'Step 2c — Work PR completion & merge',
+    subtitle: 'Deterministic job: checks status and merges (or refuses if unsafe).',
+    details: (
+      <Typography variant="body2" color="text.secondary">
+        One job at a time. Reliable and boring.
+      </Typography>
+    ),
+  },
+  {
+    key: '3a',
+    title: 'Step 3a — Review actions update issue',
+    subtitle: 'Triggered on merge: create a review-actions update issue and assign Copilot.',
+    details: (
+      <Typography variant="body2" color="text.secondary">
+        This updates the <code>review-YYYY-MM-DD.actions.md</code> file to record what was resolved.
+      </Typography>
+    ),
+  },
+  {
+    key: '3b',
+    title: 'Step 3b — Review actions update execution',
+    subtitle: 'Copilot updates the review actions file. Issue is closed.',
+    details: (
+      <Typography variant="body2" color="text.secondary">
+        After this, the review document has a clear “what changed” record.
+      </Typography>
+    ),
+  },
+  {
+    key: '3c',
+    title: 'Step 3c — Review actions PR completion & merge',
+    subtitle: 'Deterministic job: checks status and merges the review-actions update.',
+    details: (
+      <Typography variant="body2" color="text.secondary">
+        One job at a time. Reliable and boring.
+      </Typography>
+    ),
+  },
+];
 
 export function LoopPage(): React.JSX.Element {
   const res = useApiResource(() => apiFetch<LoopStatus>('/loop'), []);
-  const [gapBusy, setGapBusy] = React.useState(false);
-  const [gapError, setGapError] = React.useState<string | null>(null);
-  const [gapResult, setGapResult] = React.useState<GapEnsureResult | null>(null);
+  const [step1Busy, setStep1Busy] = React.useState(false);
+  const [step1Error, setStep1Error] = React.useState<string | null>(null);
+  const [step1Result, setStep1Result] = React.useState<Step1EnsureResult | null>(null);
   const [promoteBusy, setPromoteBusy] = React.useState(false);
   const [promoteError, setPromoteError] = React.useState<string | null>(null);
   const [promoteResult, setPromoteResult] = React.useState<PromoteResult | null>(null);
@@ -301,27 +376,69 @@ export function LoopPage(): React.JSX.Element {
   }
 
   const data = res.data;
+  const loopMode: 'build' | 'review' = data.loopMode === 'review' ? 'review' : 'build';
+  const isReviewMode = loopMode === 'review';
+  const steps = isReviewMode ? reviewSteps : buildSteps;
+
+  const step1ActionLabel = isReviewMode ? 'Ensure review intake issue' : 'Ensure gap analysis issue';
+  const step1ActionHelp = isReviewMode
+    ? 'Creates (or finds) the Review Consumption issue and assigns Copilot.'
+    : 'Creates (or finds) the Gap Analysis issue and assigns Copilot.';
+
+  const LoopStepIcon = (props: StepIconProps): React.JSX.Element => {
+    const iconNumber = typeof props.icon === 'number' ? props.icon : Number(props.icon);
+    const idx = Number.isFinite(iconNumber) ? iconNumber - 1 : -1;
+    const stageKey = idx >= 0 && idx < steps.length ? steps[idx]?.key ?? '?' : '?';
+
+    if (props.completed) {
+      return <CheckCircleIcon sx={{ color: 'success.main' }} />;
+    }
+
+    return (
+      <Box
+        sx={{
+          width: 24,
+          height: 24,
+          borderRadius: '50%',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          fontSize: 12,
+          fontWeight: 800,
+          border: '2px solid',
+          borderColor: props.active ? 'primary.main' : 'divider',
+          bgcolor: props.active ? 'primary.main' : 'transparent',
+          color: props.active ? 'primary.contrastText' : 'text.secondary',
+        }}
+      >
+        {stageKey}
+      </Box>
+    );
+  };
+
   const fmt = (v: number | null | undefined): string => (typeof v === 'number' ? String(v) : '—');
 
-  const canEnsureGap = data.stage === '1a';
+  const canEnsureStep1 = data.stage === '1a';
   const canPromote = data.stage === '2a';
   const canMerge = data.stage.endsWith('c');
 
-  const onEnsureGap = (): void => {
-    setGapBusy(true);
-    setGapError(null);
-    setGapResult(null);
+  const onEnsureStep1 = (): void => {
+    setStep1Busy(true);
+    setStep1Error(null);
+    setStep1Result(null);
 
-    void apiFetch<GapEnsureResult>('/loop/gap-analysis/ensure', { method: 'POST' })
+    const endpoint = isReviewMode ? '/loop/review/ensure' : '/loop/gap-analysis/ensure';
+
+    void apiFetch<Step1EnsureResult>(endpoint, { method: 'POST' })
       .then((out) => {
-        setGapResult(out);
+        setStep1Result(out);
         res.reload();
       })
       .catch((e: unknown) => {
-        setGapError(e instanceof Error ? e.message : String(e));
+        setStep1Error(e instanceof Error ? e.message : String(e));
       })
       .finally(() => {
-        setGapBusy(false);
+        setStep1Busy(false);
       });
   };
 
@@ -570,34 +687,34 @@ export function LoopPage(): React.JSX.Element {
                   </Button>
                 </Stack>
 
-                {canEnsureGap ? (
+                {canEnsureStep1 ? (
                   <Box>
                     <Divider sx={{ my: 1.5 }} />
                     <Typography variant="subtitle2" color="text.secondary" gutterBottom>
                       Step 1a actions
                     </Typography>
                     <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems={{ sm: 'center' }}>
-                      <Button variant="contained" size="small" onClick={onEnsureGap} disabled={gapBusy}>
-                        {gapBusy ? 'Ensuring…' : 'Ensure gap analysis issue'}
+                      <Button variant="contained" size="small" onClick={onEnsureStep1} disabled={step1Busy}>
+                        {step1Busy ? 'Ensuring…' : step1ActionLabel}
                       </Button>
                       <Typography variant="body2" color="text.secondary">
-                        Creates (or finds) the Gap Analysis issue and assigns Copilot.
+                        {step1ActionHelp}
                       </Typography>
                     </Stack>
 
-                    {gapError ? (
+                    {step1Error ? (
                       <Typography sx={{ mt: 1 }} variant="body2" color="error">
-                        {gapError}
+                        {step1Error}
                       </Typography>
                     ) : null}
 
-                    {gapResult ? (
+                    {step1Result ? (
                       <Typography sx={{ mt: 1 }} variant="body2" color="text.secondary">
-                        {gapResult.summary}{' '}
-                        {gapResult.issueUrl ? (
+                        {step1Result.summary}{' '}
+                        {step1Result.issueUrl ? (
                           <>
                             —{' '}
-                            <a href={gapResult.issueUrl} target="_blank" rel="noreferrer">
+                            <a href={step1Result.issueUrl} target="_blank" rel="noreferrer">
                               view issue
                             </a>
                           </>
@@ -658,8 +775,9 @@ export function LoopPage(): React.JSX.Element {
                         {mergeBusy ? 'Merging…' : 'Approve + merge ready PR'}
                       </Button>
                       <Typography variant="body2" color="text.secondary">
-                        Merges the next ready PR: capability-update PRs (Step 3c) take precedence; then gap-analysis PRs (Step 1c);
-                        otherwise development PRs (Step 2c).
+                        {isReviewMode
+                          ? 'Merges the next ready PR: review-actions update PRs (Step 3c) take precedence; then review-intake PRs (Step 1c); otherwise work PRs (Step 2c).'
+                          : 'Merges the next ready PR: capability-update PRs (Step 3c) take precedence; then gap-analysis PRs (Step 1c); otherwise development PRs (Step 2c).'}
                       </Typography>
                     </Stack>
 

@@ -23,6 +23,8 @@ class LabelSpec:
 LABEL_GAP_ANALYSIS = "Gap Analysis"
 LABEL_DEVELOPMENT = "Development"
 LABEL_UPDATE_CAPABILITY = "Update Capability"
+LABEL_REVIEW_CONSUMPTION = "Review Consumption"
+LABEL_UPDATE_REVIEW = "Update Review"
 
 
 FIXED_LABEL_SPECS: tuple[LabelSpec, ...] = (
@@ -40,6 +42,16 @@ FIXED_LABEL_SPECS: tuple[LabelSpec, ...] = (
         name=LABEL_UPDATE_CAPABILITY,
         color="fbca04",
         description="Orchestrator loop: update system capabilities",
+    ),
+    LabelSpec(
+        name=LABEL_REVIEW_CONSUMPTION,
+        color="5319e7",
+        description="Orchestrator loop: translate review critique into concrete queue tasks",
+    ),
+    LabelSpec(
+        name=LABEL_UPDATE_REVIEW,
+        color="d4c5f9",
+        description="Orchestrator loop: update review actions/completion artefacts after merges",
     ),
 )
 

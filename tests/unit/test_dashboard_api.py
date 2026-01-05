@@ -145,6 +145,155 @@ def test_loop_status_endpoint(monkeypatch, tmp_path: Path) -> None:
     assert loop["counts"]["pendingDevelopmentWithoutPr"] == 0
 
 
+def test_loop_status_review_mode_stage_1a_focus_review_issue(monkeypatch, tmp_path: Path) -> None:
+    planning = tmp_path / "planning"
+    agent_state = tmp_path / "agent_state"
+
+    monkeypatch.setenv("ORCHESTRATOR_PLANNING_ROOT", str(planning))
+    monkeypatch.setenv("AGENT_STATE_PATH", str(agent_state))
+    monkeypatch.setenv("ORCHESTRATOR_UI_DIST", str(tmp_path / "ui" / "dist"))
+    monkeypatch.setenv("ORCHESTRATOR_DEFAULT_REPO", "acme/repo")
+    monkeypatch.setenv("ORCHESTRATOR_LOOP_MODE", "review")
+
+    import github_agent_orchestrator.server.dashboard_router as dashboard_router
+
+    monkeypatch.setattr(dashboard_router, "_list_repo_markdown_files_under", lambda *_a, **_k: [])
+    monkeypatch.setattr(dashboard_router, "_list_open_pull_requests_raw", lambda *_a, **_k: [])
+    monkeypatch.setattr(dashboard_router, "_list_issue_timeline_raw", lambda *_a, **_k: [])
+    monkeypatch.setattr(dashboard_router, "_get_pull_request", lambda *_a, **_k: {})
+
+    monkeypatch.setattr(
+        dashboard_router,
+        "_list_open_issues_raw",
+        lambda *_a, **_k: [
+            {
+                "number": 201,
+                "title": "Review Consumption: 2026-01-05",
+                "state": "open",
+                "labels": [{"name": "Review Consumption"}],
+            }
+        ],
+    )
+
+    client = TestClient(create_app())
+    loop = client.get("/api/loop").json()
+
+    assert loop["loopMode"] == "review"
+    assert loop["stage"] == "1a"
+    assert loop.get("focus", {}).get("kind") == "review"
+    assert loop.get("focus", {}).get("issueNumber") == 201
+
+
+def test_loop_status_review_mode_stage_1b_focus_includes_pr(monkeypatch, tmp_path: Path) -> None:
+    planning = tmp_path / "planning"
+    agent_state = tmp_path / "agent_state"
+
+    monkeypatch.setenv("ORCHESTRATOR_PLANNING_ROOT", str(planning))
+    monkeypatch.setenv("AGENT_STATE_PATH", str(agent_state))
+    monkeypatch.setenv("ORCHESTRATOR_UI_DIST", str(tmp_path / "ui" / "dist"))
+    monkeypatch.setenv("ORCHESTRATOR_DEFAULT_REPO", "acme/repo")
+    monkeypatch.setenv("ORCHESTRATOR_LOOP_MODE", "review")
+
+    import github_agent_orchestrator.server.dashboard_router as dashboard_router
+
+    monkeypatch.setattr(dashboard_router, "_list_repo_markdown_files_under", lambda *_a, **_k: [])
+    monkeypatch.setattr(dashboard_router, "_list_open_pull_requests_raw", lambda *_a, **_k: [])
+
+    def fake_issue_timeline(*_a, **kwargs):
+        issue_number = kwargs.get("issue_number")
+        # Link the review-consumption issue to PR #5.
+        if issue_number == 201:
+            return [
+                {
+                    "event": "cross-referenced",
+                    "source": {"issue": {"number": 5, "pull_request": {}}},
+                }
+            ]
+        return []
+
+    monkeypatch.setattr(dashboard_router, "_list_issue_timeline_raw", fake_issue_timeline)
+    monkeypatch.setattr(
+        dashboard_router,
+        "_get_pull_request",
+        lambda *_a, **_k: {
+            "number": 5,
+            "state": "open",
+            "title": "Review intake",
+            "html_url": "https://example.com/pr/5",
+            "draft": False,
+            "mergeable_state": "clean",
+            "requested_reviewers": [],
+            "requested_teams": [],
+        },
+    )
+
+    monkeypatch.setattr(
+        dashboard_router,
+        "_list_open_issues_raw",
+        lambda *_a, **_k: [
+            {
+                "number": 201,
+                "title": "Review Consumption: 2026-01-05",
+                "state": "open",
+                "labels": [{"name": "Review Consumption"}],
+            }
+        ],
+    )
+
+    client = TestClient(create_app())
+    loop = client.get("/api/loop").json()
+
+    assert loop["loopMode"] == "review"
+    assert loop["stage"] == "1b"
+    assert loop.get("focus", {}).get("kind") == "review"
+    assert loop.get("focus", {}).get("pullNumber") == 5
+
+
+def test_loop_status_review_mode_stage_2a_focus_review_queue_item(monkeypatch, tmp_path: Path) -> None:
+    planning = tmp_path / "planning"
+    agent_state = tmp_path / "agent_state"
+
+    monkeypatch.setenv("ORCHESTRATOR_PLANNING_ROOT", str(planning))
+    monkeypatch.setenv("AGENT_STATE_PATH", str(agent_state))
+    monkeypatch.setenv("ORCHESTRATOR_UI_DIST", str(tmp_path / "ui" / "dist"))
+    monkeypatch.setenv("ORCHESTRATOR_DEFAULT_REPO", "acme/repo")
+    monkeypatch.setenv("ORCHESTRATOR_LOOP_MODE", "review")
+
+    import github_agent_orchestrator.server.dashboard_router as dashboard_router
+
+    def fake_list_repo_md(*_args, **kwargs):
+        dir_path = kwargs.get("dir_path")
+        if dir_path == "planning/issue_queue/pending":
+            return ["planning/issue_queue/pending/review-2026-01-05.md"]
+        if dir_path in {"planning/issue_queue/processed", "planning/issue_queue/complete"}:
+            return []
+        return []
+
+    monkeypatch.setattr(dashboard_router, "_list_repo_markdown_files_under", fake_list_repo_md)
+    monkeypatch.setattr(
+        dashboard_router,
+        "_get_repo_text_file",
+        lambda *_a, **kwargs: (
+            "Review: One\n\nBody\n",
+            "sha-review-1",
+        )
+        if kwargs.get("path") == "planning/issue_queue/pending/review-2026-01-05.md"
+        else (_ for _ in ()).throw(FileNotFoundError(str(kwargs.get("path")))),
+    )
+
+    monkeypatch.setattr(dashboard_router, "_list_open_issues_raw", lambda *_a, **_k: [])
+    monkeypatch.setattr(dashboard_router, "_list_open_pull_requests_raw", lambda *_a, **_k: [])
+    monkeypatch.setattr(dashboard_router, "_list_issue_timeline_raw", lambda *_a, **_k: [])
+    monkeypatch.setattr(dashboard_router, "_get_pull_request", lambda *_a, **_k: {})
+
+    client = TestClient(create_app())
+    loop = client.get("/api/loop").json()
+
+    assert loop["loopMode"] == "review"
+    assert loop["stage"] == "2a"
+    assert loop.get("focus", {}).get("queueId") == "review-2026-01-05.md"
+
+
 def test_loop_status_stage_c_when_issue_exists_but_no_pr(monkeypatch, tmp_path: Path) -> None:
     planning = tmp_path / "planning"
     agent_state = tmp_path / "agent_state"

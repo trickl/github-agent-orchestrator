@@ -99,12 +99,21 @@ def _maybe_start_auto_promotion(app: FastAPI, settings: ServerSettings) -> None:
 
                 # New loop model: 1a–3c.
                 if stage == "1a":
-                    # Ensure there is a live, assigned gap-analysis issue.
-                    dashboard_module._ensure_gap_analysis_issue_exists(settings=settings, repo=repo)
-                    logger.info(
-                        "Auto gap analysis issue ensured",
-                        extra={"repo": repo, "open_gap_analysis_issues": open_gap_issues},
-                    )
+                    if getattr(settings, "loop_mode", "build") == "review":
+                        dashboard_module._ensure_review_consumption_issue_exists(
+                            settings=settings,
+                            repo=repo,
+                        )
+                        logger.info("Auto review consumption issue ensured", extra={"repo": repo})
+                    else:
+                        # Ensure there is a live, assigned gap-analysis issue.
+                        dashboard_module._ensure_gap_analysis_issue_exists(
+                            settings=settings, repo=repo
+                        )
+                        logger.info(
+                            "Auto gap analysis issue ensured",
+                            extra={"repo": repo, "open_gap_analysis_issues": open_gap_issues},
+                        )
                 elif stage == "2a":
                     dashboard_module._promote_next_unpromoted_development_queue_item(
                         settings=settings,

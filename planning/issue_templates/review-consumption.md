@@ -1,29 +1,48 @@
-# Review Consumption Task Template
+# Review Intake / Consumption Task Template
 
-## Derive actionable tasks from a review document
+## Convert critique into the next achievable work item
 
-### Context
-You are asked to read an existing review and extract concrete, actionable follow-up tasks.
+### Purpose
+Translate a review document into **one** concrete task that can be delivered in **one PR**.
 
-### Input
-- A specific review file in `/planning/reviews/`
+### Inputs
+- Source review: `{{REVIEW_PATH}}`
+- Review actions/completions (may be missing/empty): `{{REVIEW_ACTIONS_PATH}}`
 
 ### Task
-1. Read the review carefully.
-2. Identify distinct, actionable concerns or recommendations.
-3. For each concern, define a single, focused task that could address it.
+1. Read the review carefully and extract distinct critique items.
+2. Compare against the actions/completions document to avoid duplicating already-addressed items.
+3. Choose the **next best batch of related items** that can be delivered in **one PR**.
+	 - Prefer batching multiple items when they share contextual similarity or can easily
+       be done at the same time without conflict. 
+	 - Avoid a grab-bag of unrelated changes.
+4. Produce one queue artefact describing the task.
 
 ### Constraints
 - Do not modify code.
 - Do not fix issues.
 - Do not create GitHub issues directly.
-- Do not prioritise or schedule tasks.
+- Do not produce multiple tasks.
 
 ### Output
-- Create one or more new files in `/planning/issue_queue/pending/`.
-- Each file should represent exactly one actionable task.
-- Each file’s first line must be a friendly task name.
-- Tasks should be concrete and implementable.
+- Create **exactly one** new file in `/planning/issue_queue/pending/`.
+- Filename must start with `review-`.
+- The file’s first line must be a friendly task name.
+- Clearly list which review items this task intends to address and give detailed,
+    verbose instructions on addressing them.
+
+### Refactor safety rule (mandatory)
+If the resulting task involves refactoring or moving code across files:
+1. Move code verbatim first into it's new location.
+2. Update imports/call sites to make it run, address visibility, scope and parameterization as a fix on the migrated code.
+3. Only then do targeted improvements.
+
+### Constraints
+1. Do not change the logic of code unless it has been identified as a clear bug
+2. Do not maintain legacy endpoints for backwards compatibility
+3. Always delete any leftover, unused code
+4. Do not leave comments on changes made within the code
+5. Do not rewrite functions from scratch during refactors.
 
 ### Tone
 Faithful to the review, pragmatic, and neutral. No new ideas beyond the review.

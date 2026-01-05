@@ -7,9 +7,10 @@ Important refactor invariant:
 
 from __future__ import annotations
 
+import base64
 from contextlib import suppress
-from importlib import resources
 from pathlib import Path
+from typing import Any
 
 from fastapi import HTTPException
 
@@ -73,56 +74,69 @@ _GAP_ANALYSIS_TEMPLATE_PATHS: tuple[str, ...] = (
 )
 
 
+def _get_repo_text_file(
+    settings: ServerSettings,
+    *,
+    repository: str,
+    path: str,
+    ref: str,
+) -> tuple[str, str]:
+    """Fetch and decode a UTF-8 text file from GitHub.
+
+    Returns (content, sha).
+    """
+
+    payload: dict[str, Any] = _github_get_json(
+        settings,
+        url=_repo_api_url(settings, repository=repository, path=f"contents/{path}"),
+        params={"ref": ref},
+    )
+
+    if payload.get("type") != "file":
+        raise HTTPException(status_code=502, detail=f"GitHub path is not a file: {path}")
+
+    content_b64 = payload.get("content")
+    if not isinstance(content_b64, str) or not content_b64.strip():
+        raise HTTPException(status_code=502, detail=f"GitHub file has no content: {path}")
+
+    try:
+        decoded = base64.b64decode(content_b64.encode("utf-8"))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Unable to decode GitHub file: {path}") from e
+
+    try:
+        text = decoded.decode("utf-8")
+    except Exception:
+        # Best-effort: keep going even if content isn't clean UTF-8.
+        text = decoded.decode("utf-8", errors="replace")
+
+    sha = payload.get("sha")
+    return text, sha if isinstance(sha, str) else ""
+
+
 def _load_gap_analysis_template_or_raise(
     *, settings: ServerSettings, repo: str, branch: str
 ) -> str:
     """Load the gap analysis issue template.
 
-    This template is an orchestrator-owned artefact and should NOT be fetched from the target
-    repository. Fetching from the target repo is both brittle (template often doesn't exist
-    there) and risks reintroducing unsafe prompt mutations.
-
-    We load from the local orchestrator installation (packaged resource) and fall back to a
-    local source checkout if running from a git working tree.
-
-    Important: do not fall back to a hard-coded prompt here. Bad fallback prompts can trigger
-    runaway self-referential agent behaviour.
+    Single source of truth: the target repository (GitHub) under planning/issue_templates.
     """
 
-    # Keep arguments "used" for ruff's ARG checks, but do not use them for network access.
-    _ = (settings, repo, branch)
-
-    # 1) Packaged resource (works for installed distributions).
-    with suppress(Exception):
-        packaged = resources.files("github_agent_orchestrator.server").joinpath(
-            "templates/gap-analysis.md"
-        )
-        content = packaged.read_text(encoding="utf-8")
-        if content.strip():
-            return content
-
-    # 2) Local checkout (this repo / source install).
-    candidate_roots: list[Path] = [Path.cwd()]
-    # Best-effort: in some packaging layouts the parent chain isn't stable.
-    with suppress(Exception):
-        candidate_roots.append(Path(__file__).resolve().parents[3])
-
-    for root in candidate_roots:
-        for template_path in _GAP_ANALYSIS_TEMPLATE_PATHS:
-            candidate = root / template_path
-            try:
-                if candidate.exists() and candidate.is_file():
-                    content = candidate.read_text(encoding="utf-8")
-                    if content.strip():
-                        return content
-            except Exception:
-                # Keep searching other candidates.
-                continue
+    for template_path in _GAP_ANALYSIS_TEMPLATE_PATHS:
+        with suppress(Exception):
+            content, _sha = _get_repo_text_file(
+                settings,
+                repository=repo,
+                path=template_path,
+                ref=branch,
+            )
+            if content.strip():
+                return content
 
     raise HTTPException(
         status_code=502,
         detail=(
-            "Unable to load gap analysis template from the local orchestrator install. "
+            "Unable to load gap analysis template from the target repository. "
             "Expected one of: planning/issue_templates/gap-analysis.md or "
             "planning/issue_templates/gap_analysis.md"
         ),
