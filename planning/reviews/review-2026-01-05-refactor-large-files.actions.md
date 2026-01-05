@@ -277,7 +277,7 @@ Modified:
 
 ### Remaining Work
 
-Two more extractions remain to reach target (~2900 lines remain):
+Two more extractions remain to reach target (~3067 lines remain):
 
 1. ✅ ~~`server/dashboard/github_issue_pr_helpers.py`~~ - Timeline/listing helpers and PR evaluation (COMPLETED in PR #36)
 2. ✅ ~~`server/dashboard/automation_auto_link.py`~~ - Auto-link helpers (COMPLETED in PR #42)
