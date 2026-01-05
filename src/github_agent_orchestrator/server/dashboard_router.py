@@ -78,6 +78,12 @@ from github_agent_orchestrator.server.dashboard.queue_helpers import (
     _queue_filename,
     _search_issue_number_by_queue_marker,
 )
+from github_agent_orchestrator.server.dashboard.automation_auto_link import (
+    maybe_auto_link_focused_issue_to_pr as _maybe_auto_link_focused_issue_to_pr,
+)
+from github_agent_orchestrator.server.dashboard.automation_auto_resume import (
+    maybe_auto_resume_copilot_after_rate_limit as _maybe_auto_resume_copilot_after_rate_limit,
+)
 from github_agent_orchestrator.server.dashboard.text_utilities import (
     _AUTO_LINK_NOTICE_MARKER,
     _COPILOT_RATE_LIMIT_RESUME_COMMENT,
@@ -112,380 +118,12 @@ _CAPABILITY_ISSUE_BODY_SOURCE_PR_RE = re.compile(
 )
 
 
-
-_ISSUE_CLOSING_KEYWORD_RE = re.compile(
-    r"\b(?:fixe[sd]?|close[sd]?|resolve[sd]?)\s+#(\d+)\b",
-    re.IGNORECASE,
-)
-
-
 def _settings(request: Request) -> ServerSettings:
     settings = getattr(request.app.state, "settings", None)
     if not isinstance(settings, ServerSettings):
         # This should never happen for the real app, but keeps the API fail-fast.
         raise HTTPException(status_code=500, detail="Server settings not configured")
     return settings
-
-
-
-
-def _maybe_auto_resume_copilot_after_rate_limit(
-    *,
-    settings: ServerSettings,
-    repository: str,
-    pr_number: int,
-) -> str | None:
-    """If enabled, post a resume nudge comment after detecting Copilot SWE Agent failure.
-
-    In practice, Copilot SWE Agent "stop" signals are most reliably observed via
-    the REST issue events stream (e.g. `copilot_work_finished_failure`).
-
-    The mechanism is intentionally simple and idempotent:
-    - Detect the latest `copilot_work_finished_failure` for the PR.
-    - Wait N minutes (default 45) after that timestamp.
-    - Post a single resume nudge comment tagging @copilot.
-    - Do not post if Copilot has started again after the failure.
-    - Do not post if we've already posted a nudge after that failure.
-    - Enforce a small "nudge budget" to avoid infinite retries.
-    """
-
-    if not settings.auto_resume_copilot_on_rate_limit:
-        return None
-    if not settings.github_token.strip():
-        return None
-
-    delay_minutes = int(settings.auto_resume_copilot_on_rate_limit_delay_minutes)
-    max_nudges = int(getattr(settings, "auto_resume_copilot_max_nudges", 3))
-    window_minutes = int(getattr(settings, "auto_resume_copilot_nudge_window_minutes", 1440))
-
-    now = _utc_now()
-
-    try:
-        events = _list_issue_events_raw(settings, repository=repository, issue_number=pr_number)
-    except HTTPException:
-        # Best-effort only: do not break status rendering.
-        return None
-
-    latest_failure_iso: str | None = None
-    for ev in events:
-        if not isinstance(ev, dict):
-            continue
-        if ev.get("event") != "copilot_work_finished_failure":
-            continue
-        created_at = ev.get("created_at")
-        if not isinstance(created_at, str) or not created_at.strip():
-            continue
-
-        # Best-effort: ensure the event was produced via the Copilot SWE Agent app.
-        app = ev.get("performed_via_github_app")
-        slug = app.get("slug") if isinstance(app, dict) else None
-        if isinstance(slug, str) and slug.strip() and slug.strip().lower() != "copilot-swe-agent":
-            continue
-
-        if latest_failure_iso is None or created_at > latest_failure_iso:
-            latest_failure_iso = created_at
-
-    if latest_failure_iso is None:
-        return None
-
-    # If Copilot has started work again after the failure, don't nudge.
-    for ev in events:
-        if not isinstance(ev, dict):
-            continue
-        created_at = ev.get("created_at")
-        if not isinstance(created_at, str) or created_at <= latest_failure_iso:
-            continue
-        if ev.get("event") in {"copilot_work_started", "copilot_work_finished_success"}:
-            return None
-
-    failure_dt = _dt_from_iso(latest_failure_iso)
-    due_dt = failure_dt + timedelta(minutes=delay_minutes)
-    if now < due_dt:
-        remaining = int(max(0, (due_dt - now).total_seconds()) // 60)
-        return (
-            f"Copilot failure detected on PR #{pr_number} at {latest_failure_iso}; "
-            f"auto-resume eligible in ~{remaining} minutes."
-        )
-
-    try:
-        comments = _list_issue_comments_raw(settings, repository=repository, issue_number=pr_number)
-    except HTTPException:
-        # If we can't check for idempotency/budget, don't risk spamming.
-        return None
-
-    # Do not post if a resume nudge already exists after the failure timestamp.
-    for it in comments:
-        if not isinstance(it, dict):
-            continue
-        created_at = it.get("created_at")
-        if not isinstance(created_at, str) or created_at <= latest_failure_iso:
-            continue
-        body = it.get("body")
-        if isinstance(body, str) and _comment_body_is_copilot_resume_nudge(body):
-            return None
-
-    # Enforce a simple "nudge budget" to prevent infinite retry loops.
-    # Budget window is the max of: (now - window_minutes) and the last observed Copilot start/success.
-    last_progress_iso: str | None = None
-    for ev in events:
-        if not isinstance(ev, dict):
-            continue
-        if ev.get("event") not in {"copilot_work_started", "copilot_work_finished_success"}:
-            continue
-        created_at = ev.get("created_at")
-        if not isinstance(created_at, str) or not created_at.strip():
-            continue
-        if created_at > latest_failure_iso:
-            continue
-        if last_progress_iso is None or created_at > last_progress_iso:
-            last_progress_iso = created_at
-
-    cutoff_dt = now - timedelta(minutes=window_minutes)
-    if last_progress_iso is not None:
-        cutoff_dt = max(cutoff_dt, _dt_from_iso(last_progress_iso))
-
-    nudge_count = 0
-    for it in comments:
-        if not isinstance(it, dict):
-            continue
-        created_at = it.get("created_at")
-        if not isinstance(created_at, str) or not created_at.strip():
-            continue
-        if _dt_from_iso(created_at) < cutoff_dt:
-            continue
-        body = it.get("body")
-        if isinstance(body, str) and _comment_body_is_copilot_resume_nudge(body):
-            nudge_count += 1
-
-    if max_nudges <= 0:
-        return "Auto-resume suppressed (nudge budget disabled)."
-    if nudge_count >= max_nudges:
-        return (
-            "Auto-resume suppressed (nudge budget exhausted): "
-            f"{nudge_count}/{max_nudges} resume nudges within the active window."
-        )
-
-    _github_post_json(
-        settings,
-        url=_repo_api_url(settings, repository=repository, path=f"issues/{pr_number}/comments"),
-        payload={"body": _COPILOT_RATE_LIMIT_RESUME_COMMENT},
-    )
-    return f"Posted auto-resume comment on PR #{pr_number} after Copilot failure."
-
-
-def _copilot_login_candidates(settings: ServerSettings) -> set[str]:
-    """Return likely GitHub logins for the Copilot SWE Agent account."""
-
-    raw = settings.copilot_assignee.strip()
-    out: set[str] = {"copilot-swe-agent"}
-    if raw:
-        cleaned = raw.strip().lstrip("@").strip().lower()
-        if cleaned:
-            out.add(cleaned)
-            out.add(cleaned.replace("[bot]", "").strip())
-    return {c for c in out if c}
-
-
-def _issue_is_mentioned_as_closing(body: str, issue_number: int) -> bool:
-    if not isinstance(body, str) or not body.strip():
-        return False
-    for m in _ISSUE_CLOSING_KEYWORD_RE.finditer(body):
-        try:
-            if int(m.group(1)) == int(issue_number):
-                return True
-        except Exception:
-            continue
-    return False
-
-
-def _issue_is_mentioned_as_closing_outside_code_blocks(body: str, issue_number: int) -> bool:
-    return _issue_is_mentioned_as_closing(_strip_fenced_code_blocks(body), issue_number)
-
-
-def _maybe_auto_link_focused_issue_to_pr(
-    *,
-    settings: ServerSettings,
-    repository: str,
-    focus: dict[str, object],
-    raw_open_prs: list[dict[str, Any]],
-    debug: list[str] | None = None,
-) -> str | None:
-    """Best-effort: link the focused issue to a likely PR when GitHub signals are missing.
-
-    This addresses cases where Copilot created a PR but didn't include `Fixes #<issue>` in the PR
-    body, so the issue has no PR cross-reference and the loop appears "stuck" in stage 2b.
-
-    Safety properties:
-      - opt-in via settings.auto_link_focused_issue_pr
-      - only runs when focus has an issueNumber but no pullNumber
-      - only acts when a single high-confidence PR candidate can be identified
-      - idempotent: does nothing if PR body already contains a closing keyword for the issue
-    """
-
-    if not getattr(settings, "auto_link_focused_issue_pr", False):
-        if debug is not None:
-            debug.append("Auto-link disabled (ORCHESTRATOR_AUTO_LINK_FOCUSED_ISSUE_PR is false).")
-        return None
-    if not settings.github_token.strip():
-        if debug is not None:
-            debug.append("No GitHub token configured (ORCHESTRATOR_GITHUB_TOKEN is empty).")
-        return None
-
-    issue_number = focus.get("issueNumber")
-    pull_number = focus.get("pullNumber")
-    if not isinstance(issue_number, int) or issue_number <= 0:
-        if debug is not None:
-            debug.append("Focus has no valid issueNumber; nothing to link.")
-        return None
-    if pull_number is not None:
-        if debug is not None:
-            debug.append("Focus already has a pullNumber; auto-link not applicable.")
-        return None
-
-    focus_title = focus.get("title")
-    normalized_focus_title = (
-        _normalize_issue_title(focus_title) if isinstance(focus_title, str) else ""
-    )
-
-    candidates: list[dict[str, Any]] = []
-    copilot_logins = _copilot_login_candidates(settings)
-
-    if debug is not None:
-        debug.append(f"Open PRs observed: {len(raw_open_prs)}")
-        debug.append(f"Copilot login candidates: {sorted(copilot_logins)}")
-
-    scanned = 0
-    skipped_not_copilot_like = 0
-    skipped_missing_title = 0
-    title_matched = 0
-    accepted_via_author = 0
-    accepted_via_branch = 0
-
-    for pr in raw_open_prs:
-        if not isinstance(pr, dict):
-            continue
-        pr_num = pr.get("number")
-        if not isinstance(pr_num, int) or pr_num <= 0:
-            continue
-
-        scanned += 1
-
-        user = pr.get("user")
-        login = user.get("login") if isinstance(user, dict) else None
-        login_norm = login.strip().lower() if isinstance(login, str) and login.strip() else ""
-
-        head = pr.get("head")
-        head_ref = head.get("ref") if isinstance(head, dict) else None
-        head_ref_norm = head_ref.strip() if isinstance(head_ref, str) and head_ref.strip() else ""
-
-        looks_copilot_authored = bool(login_norm) and login_norm in copilot_logins
-        looks_copilot_branched = head_ref_norm.lower().startswith("copilot/")
-
-        if not (looks_copilot_authored or looks_copilot_branched):
-            skipped_not_copilot_like += 1
-            continue
-        if looks_copilot_authored:
-            accepted_via_author += 1
-        if looks_copilot_branched:
-            accepted_via_branch += 1
-
-        title = pr.get("title")
-        if not isinstance(title, str) or not title.strip():
-            skipped_missing_title += 1
-            continue
-        if normalized_focus_title and _normalize_issue_title(title) == normalized_focus_title:
-            title_matched += 1
-            candidates.append(pr)
-
-    if debug is not None:
-        debug.append(
-            "PR scan summary: "
-            f"scanned={scanned}, skipped_not_copilot_like={skipped_not_copilot_like}, "
-            f"accepted_via_author={accepted_via_author}, accepted_via_branch={accepted_via_branch}, "
-            f"skipped_missing_title={skipped_missing_title}, title_matched={title_matched}."
-        )
-
-    # If we didn't get an exact title match, fall back to a very conservative heuristic:
-    # only one open PR total AND it appears Copilot-authored.
-    if not candidates and len(raw_open_prs) == 1 and isinstance(raw_open_prs[0], dict):
-        pr = raw_open_prs[0]
-        user = pr.get("user")
-        login = user.get("login") if isinstance(user, dict) else None
-        login_norm = login.strip().lower() if isinstance(login, str) and login.strip() else ""
-        head = pr.get("head")
-        head_ref = head.get("ref") if isinstance(head, dict) else None
-        head_ref_norm = head_ref.strip() if isinstance(head_ref, str) and head_ref.strip() else ""
-        if login_norm in copilot_logins or head_ref_norm.lower().startswith("copilot/"):
-            if debug is not None:
-                debug.append("No exact title match; using single-open-PR fallback.")
-            candidates = [pr]
-
-    if len(candidates) != 1:
-        if debug is not None:
-            debug.append(f"Candidate count is {len(candidates)} (expected 1); not linking.")
-        return None
-
-    pr_num = candidates[0].get("number")
-    if not isinstance(pr_num, int) or pr_num <= 0:
-        if debug is not None:
-            debug.append("Candidate PR had no valid number; not linking.")
-        return None
-
-    pr_data = _get_pull_request(settings, repository=repository, pr_number=pr_num)
-    pr_body = pr_data.get("body")
-    if not isinstance(pr_body, str):
-        pr_body = ""
-
-    if _issue_is_mentioned_as_closing_outside_code_blocks(pr_body, issue_number):
-        if debug is not None:
-            debug.append(
-                f"PR #{pr_num} body already contains a closing keyword for issue #{issue_number}; no-op."
-            )
-        return None
-
-    # Put the closing keyword at the top-level of the PR body to avoid being swallowed by
-    # unclosed Markdown fences (which would make GitHub ignore the keyword).
-    new_body = (
-        f"Fixes #{issue_number}\n\n<!-- {_AUTO_LINK_NOTICE_MARKER} -->\n\n" + pr_body.lstrip()
-    )
-    _github_patch_json(
-        settings,
-        url=_repo_api_url(settings, repository=repository, path=f"pulls/{pr_num}"),
-        payload={"body": new_body},
-    )
-
-    # Add an explicit PR comment for transparency. (Note: comments don't create closing linkage,
-    # but they do provide an audit trail for the intervention.)
-    with suppress(HTTPException):
-        comments = _list_issue_comments_raw(settings, repository=repository, issue_number=pr_num)
-        already_noted = False
-        for it in comments:
-            if not isinstance(it, dict):
-                continue
-            body = it.get("body")
-            if isinstance(body, str) and _comment_body_is_auto_link_notice(body):
-                already_noted = True
-                break
-        if not already_noted:
-            notice = (
-                f"<!-- {_AUTO_LINK_NOTICE_MARKER} -->\n"
-                f"Orchestrator auto-linked this PR to issue #{issue_number} by adding "
-                f"`Fixes #{issue_number}` to the PR description."
-            )
-            _github_post_json(
-                settings,
-                url=_repo_api_url(
-                    settings, repository=repository, path=f"issues/{pr_num}/comments"
-                ),
-                payload={"body": notice},
-            )
-
-    if debug is not None:
-        debug.append(f"Patched PR #{pr_num} body with 'Fixes #{issue_number}' (prepended).")
-    return (
-        f"Auto-linked PR #{pr_num} to issue #{issue_number} by prepending 'Fixes #{issue_number}' "
-        "to the PR body."
-    )
 
 
 def _make_github_issue_url(repo: str, issue_number: int) -> str | None:
@@ -507,7 +145,6 @@ def _active_repo(request: Request, settings: ServerSettings) -> str:
 
 def _active_ref(request: Request) -> str:
     return request.query_params.get("ref", "").strip()
-
 
 
 _GAP_ANALYSIS_TEMPLATE_PATHS: tuple[str, ...] = (
@@ -905,7 +542,6 @@ def _ensure_review_consumption_issue_exists(
         "issueUrl": _make_github_issue_url(repo, issue_num),
         "assigned": assigned,
     }
-
 
 
 def _queue_file_is_excluded_for_loop_mode(*, filename: str, loop_mode: str) -> bool:
@@ -2282,8 +1918,6 @@ def _promote_next_unpromoted_capability_queue_item(
     }
 
 
-
-
 def _extract_source_pr_number_from_capability_issue(
     *, repository: str, issue_title: str, issue_body: str
 ) -> int | None:
@@ -2448,8 +2082,6 @@ def _render_review_actions_update_issue_body(
 
     title = f"Update review actions based on merged PR #{pr_number}"
     return title, body
-
-
 
 
 def _merge_next_ready_development_pull_request(
@@ -2816,9 +2448,6 @@ def _merge_next_ready_development_pull_request(
             else f"Merged PR #{pr_number}; ensured {follow_issue_label.lower()} issue #{follow_issue_number}"
         ),
     }
-
-
-
 
 
 def _template_category_from_filename(name: str) -> str:
