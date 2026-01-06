@@ -77,8 +77,8 @@ All acceptance criteria met:
 
 ## Review Item A: Continue splitting `dashboard_router.py` (IN PROGRESS)
 
-**Status**: In Progress  
-**Addressed by**: PR #12 (merged 2026-01-05), PR #30 (merged 2026-01-05), PR #36 (merged 2026-01-05)
+**Status**: In Progress (4 of 5 planned extractions completed, 61.4% reduction achieved)  
+**Addressed by**: PR #12 (merged 2026-01-05), PR #30 (merged 2026-01-05), PR #36 (merged 2026-01-05), PR #42 (merged 2026-01-05), PR #48 (merged 2026-01-06)
 
 ### Phase 1: Pure Utility Extraction (COMPLETED)
 
@@ -266,27 +266,127 @@ Modified:
 - ✅ **A.2**: `server/dashboard/automation_auto_link.py` - Auto-link helpers extracted (COMPLETED)
 - ✅ **A.3**: `server/dashboard/automation_auto_resume.py` - Auto-resume helpers extracted (COMPLETED)
 
+### Phase 4: Loop Action Module Extraction (COMPLETED)
+
+**Status**: Completed  
+**Addressed by**: PR #48 (merged 2026-01-06)
+
+PR #48 successfully extracted loop action operations (promote and merge) from `dashboard_router.py`, continuing the incremental refactoring strategy and achieving the fourth of five planned extractions.
+
+**Created `src/github_agent_orchestrator/server/dashboard/loop_actions.py` (2152 lines)**
+- Module docstring explaining purpose: loop action operations for promote and merge orchestration
+- **Template loading functions (2)**:
+  - `_load_gap_analysis_template_or_raise()` - Loads gap analysis issue template from repository
+  - `_load_review_actions_after_merge_template_or_raise()` - Loads review-actions-after-merge template
+- **Gap analysis helpers (3)**:
+  - `_gap_analysis_issue_body_looks_unsafe()` - Safety check for unsafe gap-analysis issue bodies
+  - `_repair_gap_analysis_issue_body_if_unsafe()` - Repairs unsafe issue bodies with repo template
+  - `_ensure_gap_analysis_issue_exists()` - Ensures gap-analysis issue exists and is assigned
+- **Promote operations (2)**:
+  - `_promote_next_unpromoted_development_queue_item()` - Promotes development queue items to issues
+  - `_promote_next_unpromoted_capability_queue_item()` - Promotes capability queue items (legacy support)
+- **Merge orchestration (6)**:
+  - `_merge_next_ready_pull_request()` - Main merge dispatcher with priority logic
+  - `_try_merge_next_ready_labeled_issue_pull_request()` - Generic labeled issue PR merge
+  - `_try_merge_next_ready_review_update_pull_request()` - Merges review update PRs
+  - `_try_merge_next_ready_gap_analysis_pull_request()` - Merges gap analysis PRs
+  - `_try_merge_next_ready_review_consumption_pull_request()` - Merges review consumption PRs
+  - `_try_merge_next_ready_capability_pull_request()` - Merges capability tracking PRs
+  - `_merge_next_ready_development_pull_request()` - Merges development PRs and creates follow-up issues
+- **Supporting helpers (2)**:
+  - `_extract_source_pr_number_from_capability_issue()` - Extracts original PR number from capability issues
+  - `_render_capability_update_issue_body()` - Renders capability update issue body with PR context
+- **Public FastAPI endpoints (3)**:
+  - `promote_next_pending_issue_queue_item()` - Step 2a: promote one pending queue file
+  - `ensure_gap_analysis_issue()` - Step 1a: ensure gap-analysis issue exists
+  - `merge_next_ready_development_pull_request()` - Step 1c/2c/3c: merge next ready PR
+
+**Modified `src/github_agent_orchestrator/server/dashboard_router.py`**
+- **Before**: 3667 lines
+- **After**: 1834 lines (1833 line reduction, 50%)
+- Imports 19 extracted functions from `loop_actions.py` with aliases for test compatibility
+- Router decorators applied to imported endpoints (`@router.post()`) to maintain API routes
+- Functions not extracted remain in place (review consumption logic, loop status helpers, generic GitHub operations)
+
+**Modified `tests/unit/test_dashboard_api_loop_actions.py`**
+- **Changes**: 68 additions (no deletions)
+- Updated 10 tests to patch both `dashboard_router` and `loop_actions` modules
+- Pattern: `monkeypatch.setattr(loop_actions, "_function_name", mock)` added alongside existing `dashboard_router` patches
+- Maintains test compatibility with aliased imports while ensuring extracted module is also mocked
+- All tests continue passing with no behavior changes
+
+#### Technical Approach: Lazy Imports for Circular Dependency Resolution
+
+PR #48 used lazy imports (similar to PR #42) to avoid circular dependencies while maintaining test compatibility:
+
+```python
+# Inside loop_actions.py, import dashboard_router helpers lazily:
+def _queue_file_is_excluded_for_loop_mode(*, filename: str, loop_mode: str) -> bool:
+    from github_agent_orchestrator.server import dashboard_router
+    return dashboard_router._queue_file_is_excluded_for_loop_mode(
+        filename=filename, loop_mode=loop_mode
+    )
+```
+
+Functions in `loop_actions.py` that need helpers still residing in `dashboard_router.py` use lazy imports to:
+- Avoid circular imports at module load time
+- Preserve test mocking compatibility (tests can patch `dashboard_router._function_name`)
+- Keep functions moved verbatim with no logic changes
+- Maintain backward compatibility via import aliases in `dashboard_router.py`
+
+Lazily imported helpers include:
+- `_settings()`, `_active_repo()`, `_make_github_issue_url()` - Request context helpers
+- `_assign_issue_to_copilot()` - Issue assignment logic
+- `_queue_file_is_excluded_for_loop_mode()` - Loop mode filtering logic
+- `_review_actions_path_for_review_path()` - Review file path helper
+- `_pick_next_review_file()` - Review selection logic
+- `_extract_review_paths_from_queue_content()` - Review queue parsing
+- `_render_review_actions_update_issue_body()` - Review actions issue body rendering
+
+These helpers will be refactored or extracted in future PRs (particularly with `loop_status.py` extraction).
+
+#### Implementation Summary
+
+- **Functions extracted**: 19 functions (template loading, gap analysis, promote, merge, helpers) + 3 public endpoints
+- **Line count reduction**: 1833 lines (3667 → 1834, 50% reduction)
+- **Pattern followed**: Move-first verbatim extraction with lazy imports for circular dependency resolution
+- **Verification**: All tests pass with dual-patching strategy; no behavior changes
+
+#### Files Created/Modified
+
+Created:
+- `src/github_agent_orchestrator/server/dashboard/loop_actions.py` (2152 lines, 19 functions + 3 endpoints)
+
+Modified:
+- `src/github_agent_orchestrator/server/dashboard_router.py` (3667 → 1834 lines)
+- `tests/unit/test_dashboard_api_loop_actions.py` (68 line additions for dual patching)
+
+#### Review Items Completed
+
+- ✅ **A.4**: `server/dashboard/loop_actions.py` - Promote/merge helpers extracted (COMPLETED)
+
 ### Current Status
 
 - ✅ **Phase 1 completed**: Pure utilities extracted (PR #30)
 - ✅ **Phase 2 foundation**: Architectural blockers resolved, first extraction complete (PR #36)
 - ✅ **Phase 3 completed**: Automation modules extracted (PR #42)
-- `dashboard_router.py` reduced from 4746 → 4661 → 4038 → 3667 lines (22.7% total reduction)
-- Lazy imports pattern established for cases where architectural refactoring isn't feasible
-- Three of five planned extractions completed
+- ✅ **Phase 4 completed**: Loop action modules extracted (PR #48)
+- `dashboard_router.py` reduced from 4746 → 4661 → 4038 → 3667 → 1834 lines (61.4% total reduction)
+- Lazy imports pattern successfully applied for loop action extraction
+- Four of five planned extractions completed
 
 ### Remaining Work
 
-Two more extractions remain to reach target (need to reduce by ~3067 lines):
+One more extraction remains to reach target (need to reduce by ~1234 lines):
 
 1. ✅ ~~`server/dashboard/github_issue_pr_helpers.py`~~ - Timeline/listing helpers and PR evaluation (COMPLETED in PR #36)
 2. ✅ ~~`server/dashboard/automation_auto_link.py`~~ - Auto-link helpers (COMPLETED in PR #42)
 3. ✅ ~~`server/dashboard/automation_auto_resume.py`~~ - Auto-resume helpers (COMPLETED in PR #42)
-4. `server/dashboard/loop_actions.py` - Promote/merge helpers (~1300 lines)
-5. `server/dashboard/loop_status.py` - Loop-stage computation helpers (~920 lines)
+4. ✅ ~~`server/dashboard/loop_actions.py`~~ - Promote/merge helpers (COMPLETED in PR #48)
+5. `server/dashboard/loop_status.py` - Loop-stage computation helpers (~1234 lines estimated)
 
 Target: `dashboard_router.py` at ~600 lines (87% total reduction from original 4746 lines).
-Remaining reduction needed: ~3067 lines (currently 3667, target 600).
+Remaining reduction needed: ~1234 lines (currently 1834, target 600).
 
 ## Review Item C: Tackle `orchestrator/main.py` and `orchestrator/github/client.py` (COMPLETED)
 
