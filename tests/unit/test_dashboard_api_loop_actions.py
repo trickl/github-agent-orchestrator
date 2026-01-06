@@ -69,10 +69,31 @@ def test_loop_promote_endpoint_promotes_one_file(monkeypatch, tmp_path: Path) ->
 
     monkeypatch.setattr(dashboard_router, "_github_post_json", fake_post_json)
     monkeypatch.setattr(loop_actions, "_github_post_json", fake_post_json)
+
+    # Merge completion moves the processed queue file to complete/ and deletes the processed file.
+    # Those helpers live in github_operations (imported into loop_actions), so patch them here.
+    monkeypatch.setattr(loop_actions, "_ensure_repo_file_present_in_complete", lambda *_a, **_k: None)
+    monkeypatch.setattr(loop_actions, "_delete_repo_file_if_present", lambda *_a, **_k: None)
+
+    # Merge completion moves the processed queue file to complete/ and deletes it.
+    # These helpers are implemented in github_operations and imported into loop_actions.
+    monkeypatch.setattr(loop_actions, "_ensure_repo_file_present_in_complete", lambda *_a, **_k: None)
+    monkeypatch.setattr(loop_actions, "_delete_repo_file_if_present", lambda *_a, **_k: None)
+
+    # Merge completion moves the processed queue file to complete/ and deletes the processed file.
+    # Those operations are implemented in github_operations and imported into loop_actions.
+    monkeypatch.setattr(loop_actions, "_ensure_repo_file_present_in_complete", lambda *_a, **_k: None)
+    monkeypatch.setattr(loop_actions, "_delete_repo_file_if_present", lambda *_a, **_k: None)
     monkeypatch.setattr(dashboard_router, "_github_put_json", lambda *_a, **_k: (201, {}))
     monkeypatch.setattr(loop_actions, "_github_put_json", lambda *_a, **_k: (201, {}))
     monkeypatch.setattr(dashboard_router, "_github_delete_json", lambda *_a, **_k: (200, {}))
     monkeypatch.setattr(loop_actions, "_github_delete_json", lambda *_a, **_k: (200, {}))
+
+    # The promote path moves the queue file from pending -> processed.
+    # Those operations live in github_operations and are imported into loop_actions;
+    # patch them here to avoid accidental real GitHub writes.
+    monkeypatch.setattr(loop_actions, "_ensure_repo_file_present_in_processed", lambda *_a, **_k: None)
+    monkeypatch.setattr(loop_actions, "_delete_repo_file_if_present", lambda *_a, **_k: None)
 
     client = TestClient(create_app())
     resp = client.post("/api/loop/promote")
@@ -98,6 +119,11 @@ def test_ensure_gap_analysis_issue_exists_creates_and_assigns(monkeypatch) -> No
     monkeypatch.setattr(loop_actions, "_list_open_issues_raw", lambda *_a, **_k: [])
     monkeypatch.setattr(
         dashboard_router,
+        "_load_gap_analysis_template_or_raise",
+        lambda **_k: "# Gap Analysis\n\nDo the thing\n",
+    )
+    monkeypatch.setattr(
+        loop_actions,
         "_load_gap_analysis_template_or_raise",
         lambda **_k: "# Gap Analysis\n\nDo the thing\n",
     )
@@ -155,6 +181,17 @@ def test_ensure_gap_analysis_issue_exists_assigns_existing_when_unassigned(monke
             }
         ],
     )
+    monkeypatch.setattr(
+        loop_actions,
+        "_list_open_issues_raw",
+        lambda *_a, **_k: [
+            {
+                "number": 42,
+                "title": "Identify the next most important development gap",
+                "assignees": [],
+            }
+        ],
+    )
 
     called: dict[str, object] = {}
 
@@ -195,6 +232,11 @@ def test_loop_gap_analysis_ensure_endpoint_creates_and_assigns(monkeypatch, tmp_
     monkeypatch.setattr(loop_actions, "_list_open_issues_raw", lambda *_a, **_k: [])
     monkeypatch.setattr(
         dashboard_router,
+        "_get_repo_text_file",
+        lambda *_a, **_k: ("# Gap Analysis\n\nDo the thing\n", "sha"),
+    )
+    monkeypatch.setattr(
+        loop_actions,
         "_get_repo_text_file",
         lambda *_a, **_k: ("# Gap Analysis\n\nDo the thing\n", "sha"),
     )
@@ -260,7 +302,24 @@ def test_ensure_gap_analysis_issue_exists_repairs_unsafe_existing_issue_before_a
         ],
     )
     monkeypatch.setattr(
+        loop_actions,
+        "_list_open_issues_raw",
+        lambda *_a, **_k: [
+            {
+                "number": 99,
+                "title": "Identify the next most important development gap",
+                "assignees": [],
+                "body": "# Gap Analysis\n\nCompletion:\n- Open a PR that adds exactly one new file\n",
+            }
+        ],
+    )
+    monkeypatch.setattr(
         dashboard_router,
+        "_load_gap_analysis_template_or_raise",
+        lambda **_k: "# Gap Analysis\n\nUse the template\n",
+    )
+    monkeypatch.setattr(
+        loop_actions,
         "_load_gap_analysis_template_or_raise",
         lambda **_k: "# Gap Analysis\n\nUse the template\n",
     )
@@ -317,6 +376,9 @@ def test_loop_merge_endpoint_merges_one_ready_pr_and_creates_capability_issue(
     monkeypatch.setattr(
         dashboard_router, "_search_issue_number_by_body_marker", lambda *_a, **_k: None
     )
+    monkeypatch.setattr(
+        loop_actions, "_search_issue_number_by_body_marker", lambda *_a, **_k: None
+    )
     monkeypatch.setattr(dashboard_router, "_github_get_list", lambda *_a, **_k: [])
     monkeypatch.setattr(loop_actions, "_github_get_list", lambda *_a, **_k: [])
 
@@ -347,6 +409,11 @@ def test_loop_merge_endpoint_merges_one_ready_pr_and_creates_capability_issue(
         "_list_open_issues_raw",
         lambda *_a, **_k: [{"number": 101, "title": "Dev: One", "state": "open"}],
     )
+    monkeypatch.setattr(
+        loop_actions,
+        "_list_open_issues_raw",
+        lambda *_a, **_k: [{"number": 101, "title": "Dev: One", "state": "open"}],
+    )
 
     monkeypatch.setattr(
         dashboard_router,
@@ -358,9 +425,34 @@ def test_loop_merge_endpoint_merges_one_ready_pr_and_creates_capability_issue(
             }
         ],
     )
+    monkeypatch.setattr(
+        loop_actions,
+        "_list_issue_timeline_raw",
+        lambda *_a, **_k: [
+            {
+                "event": "cross-referenced",
+                "source": {"issue": {"number": 5, "pull_request": {}}},
+            }
+        ],
+    )
 
     monkeypatch.setattr(
         dashboard_router,
+        "_get_pull_request",
+        lambda *_a, **_k: {
+            "number": 5,
+            "state": "open",
+            "draft": False,
+            "requested_reviewers": [{"login": "alice"}],
+            "requested_teams": [],
+            "mergeable_state": "clean",
+            "title": "Add thing",
+            "body": "PR body",
+            "head": {"ref": "feature/one", "repo": {"full_name": "acme/repo"}},
+        },
+    )
+    monkeypatch.setattr(
+        loop_actions,
         "_get_pull_request",
         lambda *_a, **_k: {
             "number": 5,
@@ -405,6 +497,11 @@ def test_loop_merge_endpoint_merges_one_ready_pr_and_creates_capability_issue(
     monkeypatch.setattr(dashboard_router, "_github_post_json", fake_post_json)
     monkeypatch.setattr(loop_actions, "_github_post_json", fake_post_json)
 
+    # Merge completion moves the processed queue file to complete/ and deletes the processed file.
+    # These helpers are implemented in github_operations and imported into loop_actions.
+    monkeypatch.setattr(loop_actions, "_ensure_repo_file_present_in_complete", lambda *_a, **_k: None)
+    monkeypatch.setattr(loop_actions, "_delete_repo_file_if_present", lambda *_a, **_k: None)
+
     client = TestClient(create_app())
     resp = client.post("/api/loop/merge")
     assert resp.status_code == 200
@@ -446,6 +543,18 @@ def test_loop_merge_endpoint_merges_ready_capability_pr_and_closes_issue(
             }
         ],
     )
+    monkeypatch.setattr(
+        loop_actions,
+        "_list_open_issues_raw",
+        lambda *_a, **_k: [
+            {
+                "number": 202,
+                "title": "Update system capabilities based on merged PR #5",
+                "state": "open",
+                "labels": [{"name": "Update Capability"}],
+            }
+        ],
+    )
 
     # Issue timeline cross-references PR #5.
     def fake_timeline(*_a, **kwargs):
@@ -467,6 +576,21 @@ def test_loop_merge_endpoint_merges_ready_capability_pr_and_closes_issue(
     # PR is open, non-draft, review requested, and conflict-free.
     monkeypatch.setattr(
         dashboard_router,
+        "_get_pull_request",
+        lambda *_a, **_k: {
+            "number": 5,
+            "state": "open",
+            "draft": False,
+            "requested_reviewers": [{"login": "alice"}],
+            "requested_teams": [],
+            "mergeable_state": "clean",
+            "title": "Update capabilities",
+            "body": "Update system_capabilities.md",
+            "head": {"ref": "feature/caps", "repo": {"full_name": "acme/repo"}},
+        },
+    )
+    monkeypatch.setattr(
+        loop_actions,
         "_get_pull_request",
         lambda *_a, **_k: {
             "number": 5,
@@ -540,7 +664,17 @@ def test_promote_next_unpromoted_capability_queue_item_promotes_one_file(
         lambda *_a, **_k: ["planning/issue_queue/pending/system-1.md"],
     )
     monkeypatch.setattr(
+        loop_actions,
+        "_list_repo_markdown_files_under",
+        lambda *_a, **_k: ["planning/issue_queue/pending/system-1.md"],
+    )
+    monkeypatch.setattr(
         dashboard_router,
+        "_get_repo_text_file",
+        lambda *_a, **_k: ("System: Update capability\n\nBody\n", "sha-1"),
+    )
+    monkeypatch.setattr(
+        loop_actions,
         "_get_repo_text_file",
         lambda *_a, **_k: ("System: Update capability\n\nBody\n", "sha-1"),
     )
@@ -548,6 +682,11 @@ def test_promote_next_unpromoted_capability_queue_item_promotes_one_file(
     monkeypatch.setattr(loop_actions, "_list_open_issues_raw", lambda *_a, **_k: [])
     monkeypatch.setattr(
         dashboard_router,
+        "_search_issue_number_by_queue_marker",
+        lambda *_a, **_k: None,
+    )
+    monkeypatch.setattr(
+        loop_actions,
         "_search_issue_number_by_queue_marker",
         lambda *_a, **_k: None,
     )
@@ -569,6 +708,10 @@ def test_promote_next_unpromoted_capability_queue_item_promotes_one_file(
     monkeypatch.setattr(loop_actions, "_github_put_json", lambda *_a, **_k: (201, {}))
     monkeypatch.setattr(dashboard_router, "_github_delete_json", lambda *_a, **_k: (204, None))
     monkeypatch.setattr(loop_actions, "_github_delete_json", lambda *_a, **_k: (204, None))
+
+    # Capability promotion also writes processed queue files and deletes the pending file.
+    monkeypatch.setattr(loop_actions, "_ensure_repo_file_present_in_processed", lambda *_a, **_k: None)
+    monkeypatch.setattr(loop_actions, "_delete_repo_file_if_present", lambda *_a, **_k: None)
 
     out = dashboard_router._promote_next_unpromoted_capability_queue_item(
         settings=dashboard_router.ServerSettings(),
@@ -616,15 +759,32 @@ def test_loop_merge_endpoint_fails_cleanly_when_pr_stays_draft(monkeypatch, tmp_
         "_get_repo_text_file",
         lambda *_a, **_k: ("Dev: One\n\nBody\n", "sha-queue"),
     )
+    monkeypatch.setattr(
+        loop_actions,
+        "_get_repo_text_file",
+        lambda *_a, **_k: ("Dev: One\n\nBody\n", "sha-queue"),
+    )
 
     monkeypatch.setattr(
         dashboard_router,
         "_list_open_issues_raw",
         lambda *_a, **_k: [{"number": 101, "title": "Dev: One", "state": "open"}],
     )
+    monkeypatch.setattr(
+        loop_actions,
+        "_list_open_issues_raw",
+        lambda *_a, **_k: [{"number": 101, "title": "Dev: One", "state": "open"}],
+    )
 
     monkeypatch.setattr(
         dashboard_router,
+        "_list_issue_timeline_raw",
+        lambda *_a, **_k: [
+            {"event": "cross-referenced", "source": {"issue": {"number": 5, "pull_request": {}}}}
+        ],
+    )
+    monkeypatch.setattr(
+        loop_actions,
         "_list_issue_timeline_raw",
         lambda *_a, **_k: [
             {"event": "cross-referenced", "source": {"issue": {"number": 5, "pull_request": {}}}}
@@ -645,6 +805,19 @@ def test_loop_merge_endpoint_fails_cleanly_when_pr_stays_draft(monkeypatch, tmp_
             "mergeable_state": "clean",
         },
     )
+    monkeypatch.setattr(
+        loop_actions,
+        "_get_pull_request",
+        lambda *_a, **_k: {
+            "number": 5,
+            "state": "open",
+            "draft": True,
+            "node_id": "PR_node_id",
+            "requested_reviewers": [{"login": "alice"}],
+            "requested_teams": [],
+            "mergeable_state": "clean",
+        },
+    )
 
     # GraphQL markPullRequestReadyForReview fails (simulate GitHub refusing or insufficient perms).
     monkeypatch.setattr(
@@ -652,10 +825,20 @@ def test_loop_merge_endpoint_fails_cleanly_when_pr_stays_draft(monkeypatch, tmp_
         "_github_graphql_post",
         lambda *_a, **_k: {"errors": [{"message": "Pull Request is still a draft"}]},
     )
+    monkeypatch.setattr(
+        loop_actions,
+        "_github_graphql_post",
+        lambda *_a, **_k: {"errors": [{"message": "Pull Request is still a draft"}]},
+    )
 
     # Merge must not be attempted; if it is, fail the test.
     monkeypatch.setattr(
         dashboard_router,
+        "_github_put_json",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("merge should not be attempted")),
+    )
+    monkeypatch.setattr(
+        loop_actions,
         "_github_put_json",
         lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("merge should not be attempted")),
     )
@@ -700,10 +883,31 @@ def test_loop_merge_endpoint_merges_ready_gap_analysis_pr_and_closes_issue(
             }
         ],
     )
+    monkeypatch.setattr(
+        loop_actions,
+        "_list_open_issues_raw",
+        lambda *_a, **_k: [
+            {
+                "number": 42,
+                "title": "Identify the next most important development gap",
+                "state": "open",
+            }
+        ],
+    )
 
     # Issue timeline cross-references PR #5.
     monkeypatch.setattr(
         dashboard_router,
+        "_list_issue_timeline_raw",
+        lambda *_a, **_k: [
+            {
+                "event": "cross-referenced",
+                "source": {"issue": {"number": 5, "pull_request": {}}},
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        loop_actions,
         "_list_issue_timeline_raw",
         lambda *_a, **_k: [
             {
@@ -719,6 +923,21 @@ def test_loop_merge_endpoint_merges_ready_gap_analysis_pr_and_closes_issue(
     # PR is open, non-draft, review requested, and conflict-free.
     monkeypatch.setattr(
         dashboard_router,
+        "_get_pull_request",
+        lambda *_a, **_k: {
+            "number": 5,
+            "state": "open",
+            "draft": False,
+            "requested_reviewers": [{"login": "alice"}],
+            "requested_teams": [],
+            "mergeable_state": "clean",
+            "title": "Gap analysis results",
+            "body": "Gap analysis body",
+            "head": {"ref": "feature/gap", "repo": {"full_name": "acme/repo"}},
+        },
+    )
+    monkeypatch.setattr(
+        loop_actions,
         "_get_pull_request",
         lambda *_a, **_k: {
             "number": 5,

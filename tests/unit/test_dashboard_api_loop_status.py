@@ -400,8 +400,8 @@ def test_loop_status_stage_d_when_processed_has_review_requested_event_even_with
         return []
 
     _dual_patch(monkeypatch, "_list_repo_markdown_files_under", fake_list_repo_md)
-    monkeypatch.setattr(
-        dashboard_router,
+    _dual_patch(
+        monkeypatch,
         "_get_repo_text_file",
         lambda *_a, **_k: ("Dev: One\n\nBody\n", "sha-1"),
     )
@@ -473,8 +473,8 @@ def test_loop_status_does_not_advance_when_pr_is_wip(monkeypatch, tmp_path: Path
         return []
 
     _dual_patch(monkeypatch, "_list_repo_markdown_files_under", fake_list_repo_md)
-    monkeypatch.setattr(
-        dashboard_router,
+    _dual_patch(
+        monkeypatch,
         "_get_repo_text_file",
         lambda *_a, **_k: ("Dev: One\n\nBody\n", "sha-1"),
     )
@@ -697,8 +697,8 @@ def test_loop_status_stage_e_when_open_update_capability_issue_exists(
         fake_list_repo_md,
     )
 
-    monkeypatch.setattr(
-        dashboard_router,
+    _dual_patch(
+        monkeypatch,
         "_get_repo_text_file",
         lambda *_a, **_k: ("Dev: One\n\nBody\n", "sha-1"),
     )

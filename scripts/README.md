@@ -1,10 +1,10 @@
 # Scripts
 
-This directory contains utility scripts for development and CI verification.
+This directory contains utility scripts for development and local verification.
 
 ## verify-ci.sh
 
-Simulates the GitHub Actions CI pipeline locally. Runs all linting, type checking, and testing steps.
+Runs all linting, type checking, and testing steps locally.
 
 **Usage:**
 ```bash
@@ -27,4 +27,4 @@ This script will:
 - 0: All checks passed
 - 1: One or more checks failed
 
-Use this script before pushing changes to ensure CI will pass.
+Run this script after changes to verify everything still passes.

@@ -1,7 +1,4 @@
 # GitHub Agent Orchestrator
-
-[![Tests](https://github.com/trickl/github-agent-orchestrator/workflows/Tests/badge.svg)](https://github.com/trickl/github-agent-orchestrator/actions)
-[![Lint](https://github.com/trickl/github-agent-orchestrator/workflows/Lint/badge.svg)](https://github.com/trickl/github-agent-orchestrator/actions)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
@@ -188,6 +185,16 @@ These are never mixed.
 - Copilot-only planning and execution
 - Structured JSON logs (used by the dashboard and API)
 - Optional REST server and UI dashboard for observability
+
+## Running checks locally (recommended)
+
+This repository does **not** run GitHub Actions by default.
+
+After making changes, run the local verification script:
+
+- `./scripts/verify-ci.sh`
+
+It runs linting, formatting checks, type checking, and tests.
 
 ---
 

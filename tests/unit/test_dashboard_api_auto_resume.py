@@ -25,6 +25,7 @@ def test_loop_status_auto_resumes_copilot_from_issue_events_fallback(
     monkeypatch.setenv("ORCHESTRATOR_AUTO_RESUME_COPILOT_ON_RATE_LIMIT_DELAY_MINUTES", "45")
 
     import github_agent_orchestrator.server.dashboard_router as dashboard_router
+    from github_agent_orchestrator.server.dashboard import loop_status
 
     def fake_list_repo_md(*_args, **kwargs):
         dir_path = kwargs.get("dir_path")
@@ -37,8 +38,14 @@ def test_loop_status_auto_resumes_copilot_from_issue_events_fallback(
         return []
 
     monkeypatch.setattr(dashboard_router, "_list_repo_markdown_files_under", fake_list_repo_md)
+    monkeypatch.setattr(loop_status, "_list_repo_markdown_files_under", fake_list_repo_md)
     monkeypatch.setattr(
         dashboard_router,
+        "_get_repo_text_file",
+        lambda *_a, **_k: ("Dev: One\n\nBody\n", "sha-1"),
+    )
+    monkeypatch.setattr(
+        loop_status,
         "_get_repo_text_file",
         lambda *_a, **_k: ("Dev: One\n\nBody\n", "sha-1"),
     )
@@ -47,7 +54,13 @@ def test_loop_status_auto_resumes_copilot_from_issue_events_fallback(
         "_list_open_issues_raw",
         lambda *_a, **_k: [{"number": 101, "title": "Dev: One", "state": "open"}],
     )
+    monkeypatch.setattr(
+        loop_status,
+        "_list_open_issues_raw",
+        lambda *_a, **_k: [{"number": 101, "title": "Dev: One", "state": "open"}],
+    )
     monkeypatch.setattr(dashboard_router, "_list_open_pull_requests_raw", lambda *_a, **_k: [])
+    monkeypatch.setattr(loop_status, "_list_open_pull_requests_raw", lambda *_a, **_k: [])
     monkeypatch.setattr(
         dashboard_router,
         "_list_issue_timeline_raw",
@@ -59,7 +72,31 @@ def test_loop_status_auto_resumes_copilot_from_issue_events_fallback(
         ],
     )
     monkeypatch.setattr(
+        loop_status,
+        "_list_issue_timeline_raw",
+        lambda *_a, **_k: [
+            {
+                "event": "cross-referenced",
+                "source": {"issue": {"number": 5, "pull_request": {}}},
+            }
+        ],
+    )
+    monkeypatch.setattr(
         dashboard_router,
+        "_get_pull_request",
+        lambda *_a, **_k: {
+            "number": 5,
+            "state": "open",
+            "draft": False,
+            "title": "Dev: One",
+            "requested_reviewers": [],
+            "requested_teams": [],
+            "mergeable_state": "clean",
+            "html_url": "https://github.com/acme/repo/pull/5",
+        },
+    )
+    monkeypatch.setattr(
+        loop_status,
         "_get_pull_request",
         lambda *_a, **_k: {
             "number": 5,
@@ -132,6 +169,7 @@ def test_loop_status_auto_resume_copilot_respects_nudge_budget(monkeypatch, tmp_
     monkeypatch.setenv("ORCHESTRATOR_AUTO_RESUME_COPILOT_NUDGE_WINDOW_MINUTES", "1440")
 
     import github_agent_orchestrator.server.dashboard_router as dashboard_router
+    from github_agent_orchestrator.server.dashboard import loop_status
 
     def fake_list_repo_md(*_args, **kwargs):
         dir_path = kwargs.get("dir_path")
@@ -144,8 +182,14 @@ def test_loop_status_auto_resume_copilot_respects_nudge_budget(monkeypatch, tmp_
         return []
 
     monkeypatch.setattr(dashboard_router, "_list_repo_markdown_files_under", fake_list_repo_md)
+    monkeypatch.setattr(loop_status, "_list_repo_markdown_files_under", fake_list_repo_md)
     monkeypatch.setattr(
         dashboard_router,
+        "_get_repo_text_file",
+        lambda *_a, **_k: ("Dev: One\n\nBody\n", "sha-1"),
+    )
+    monkeypatch.setattr(
+        loop_status,
         "_get_repo_text_file",
         lambda *_a, **_k: ("Dev: One\n\nBody\n", "sha-1"),
     )
@@ -154,7 +198,13 @@ def test_loop_status_auto_resume_copilot_respects_nudge_budget(monkeypatch, tmp_
         "_list_open_issues_raw",
         lambda *_a, **_k: [{"number": 101, "title": "Dev: One", "state": "open"}],
     )
+    monkeypatch.setattr(
+        loop_status,
+        "_list_open_issues_raw",
+        lambda *_a, **_k: [{"number": 101, "title": "Dev: One", "state": "open"}],
+    )
     monkeypatch.setattr(dashboard_router, "_list_open_pull_requests_raw", lambda *_a, **_k: [])
+    monkeypatch.setattr(loop_status, "_list_open_pull_requests_raw", lambda *_a, **_k: [])
     monkeypatch.setattr(
         dashboard_router,
         "_list_issue_timeline_raw",
@@ -166,7 +216,31 @@ def test_loop_status_auto_resume_copilot_respects_nudge_budget(monkeypatch, tmp_
         ],
     )
     monkeypatch.setattr(
+        loop_status,
+        "_list_issue_timeline_raw",
+        lambda *_a, **_k: [
+            {
+                "event": "cross-referenced",
+                "source": {"issue": {"number": 5, "pull_request": {}}},
+            }
+        ],
+    )
+    monkeypatch.setattr(
         dashboard_router,
+        "_get_pull_request",
+        lambda *_a, **_k: {
+            "number": 5,
+            "state": "open",
+            "draft": False,
+            "title": "Dev: One",
+            "requested_reviewers": [],
+            "requested_teams": [],
+            "mergeable_state": "clean",
+            "html_url": "https://github.com/acme/repo/pull/5",
+        },
+    )
+    monkeypatch.setattr(
+        loop_status,
         "_get_pull_request",
         lambda *_a, **_k: {
             "number": 5,

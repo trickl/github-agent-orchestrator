@@ -12,11 +12,7 @@ from typing import Any
 
 from github_agent_orchestrator.server.config import ServerSettings
 from github_agent_orchestrator.server.dashboard.github_api import (
-    _github_get_list,
     _repo_api_url,
-)
-from github_agent_orchestrator.server.dashboard.github_operations import (
-    list_issue_timeline_raw,
 )
 from github_agent_orchestrator.server.dashboard.text_utilities import (
     _normalize_issue_title,
@@ -101,7 +97,16 @@ def pull_request_has_review_request_history(
     events.
     """
 
-    timeline = list_issue_timeline_raw(settings, repository=repository, issue_number=pr_number)
+    # Import here to avoid circular imports and to make this function easy to patch in unit tests.
+    #
+    # Important: do NOT call github_operations.list_issue_timeline_raw directly here.
+    # The dashboard test suite patches dashboard_router._list_issue_timeline_raw (and sometimes
+    # loop_status._list_issue_timeline_raw) to prevent accidental real GitHub calls.
+    from github_agent_orchestrator.server import dashboard_router
+
+    timeline = dashboard_router._list_issue_timeline_raw(
+        settings, repository=repository, issue_number=pr_number
+    )
     for ev in timeline:
         if not isinstance(ev, dict):
             continue
@@ -253,6 +258,10 @@ def get_pull_request_discussion_markdown(
 ) -> str:
     """Best-effort compact discussion rendering for a PR (issue comments + reviews + review comments)."""
 
+    # Import here to avoid circular imports and to keep this function easy to patch in unit tests.
+    # Tests patch dashboard_router._github_get_list to prevent accidental real GitHub calls.
+    from github_agent_orchestrator.server import dashboard_router
+
     def _as_items(kind: str, raw: list[dict[str, Any]]) -> list[dict[str, str]]:
         out: list[dict[str, str]] = []
         for it in raw:
@@ -276,17 +285,17 @@ def get_pull_request_discussion_markdown(
             )
         return out
 
-    issue_comments = _github_get_list(
+    issue_comments = dashboard_router._github_get_list(
         settings,
         url=_repo_api_url(settings, repository=repository, path=f"issues/{pr_number}/comments"),
         params={"per_page": "100"},
     )
-    reviews = _github_get_list(
+    reviews = dashboard_router._github_get_list(
         settings,
         url=_repo_api_url(settings, repository=repository, path=f"pulls/{pr_number}/reviews"),
         params={"per_page": "100"},
     )
-    review_comments = _github_get_list(
+    review_comments = dashboard_router._github_get_list(
         settings,
         url=_repo_api_url(settings, repository=repository, path=f"pulls/{pr_number}/comments"),
         params={"per_page": "100"},

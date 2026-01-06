@@ -22,9 +22,16 @@ from github_agent_orchestrator.github_labels import (
 )
 from github_agent_orchestrator.server.config import ServerSettings
 from github_agent_orchestrator.server.dashboard.github_api import (
+    _github_delete_json,
     _github_get_json,
+    _github_get_list,
+    _github_graphql_post,
     _github_headers,
+    _github_patch_json,
     _github_post_json,
+    _github_put_json,
+    _graphql_api_url,
+    _graphql_errors_as_message,
     _repo_api_url,
 )
 from github_agent_orchestrator.server.dashboard.github_issue_pr_helpers import (
@@ -37,13 +44,31 @@ from github_agent_orchestrator.server.dashboard.github_operations import (
     get_default_branch as _get_default_branch,
 )
 from github_agent_orchestrator.server.dashboard.github_operations import (
+    get_pull_request as _get_pull_request,
+)
+from github_agent_orchestrator.server.dashboard.github_operations import (
     get_repo_text_file as _get_repo_text_file,
+)
+from github_agent_orchestrator.server.dashboard.github_operations import (
+    list_issue_comments_raw as _list_issue_comments_raw,
+)
+from github_agent_orchestrator.server.dashboard.github_operations import (
+    list_issue_events_raw as _list_issue_events_raw,
+)
+from github_agent_orchestrator.server.dashboard.github_operations import (
+    list_issue_timeline_raw as _list_issue_timeline_raw,
 )
 from github_agent_orchestrator.server.dashboard.github_operations import (
     list_open_issues_raw as _list_open_issues_raw,
 )
 from github_agent_orchestrator.server.dashboard.github_operations import (
+    list_open_pull_requests_raw as _list_open_pull_requests_raw,
+)
+from github_agent_orchestrator.server.dashboard.github_operations import (
     list_repo_markdown_files_under as _list_repo_markdown_files_under,
+)
+from github_agent_orchestrator.server.dashboard.github_operations import (
+    search_issue_number_by_body_marker as _search_issue_number_by_body_marker,
 )
 from github_agent_orchestrator.server.dashboard.loop_actions import (
     _ensure_gap_analysis_issue_exists as _ensure_gap_analysis_issue_exists,
@@ -84,10 +109,18 @@ from github_agent_orchestrator.server.dashboard.loop_status import (
 from github_agent_orchestrator.server.dashboard.loop_status import loop_status as loop_status
 from github_agent_orchestrator.server.dashboard.queue_helpers import (
     _is_gap_analysis_issue_title,
+    _search_issue_number_by_queue_marker,
 )
 from github_agent_orchestrator.server.dashboard.text_utilities import (
+    _AUTO_LINK_NOTICE_MARKER,
+    _COPILOT_RATE_LIMIT_RESUME_COMMENT,
+    _comment_body_is_auto_link_notice,
+    _comment_body_is_copilot_resume_nudge,
     _dt_from_iso,
+    _normalize_issue_title,
     _normalize_repo_path_candidate,
+    _strip_fenced_code_blocks,
+    _utc_now,
     _utc_now_iso,
 )
 

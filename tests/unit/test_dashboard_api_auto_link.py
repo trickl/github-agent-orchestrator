@@ -22,10 +22,20 @@ def test_loop_status_auto_links_focused_issue_to_likely_pr(monkeypatch, tmp_path
     monkeypatch.setenv("ORCHESTRATOR_AUTO_LINK_FOCUSED_ISSUE_PR", "true")
 
     import github_agent_orchestrator.server.dashboard_router as dashboard_router
+    from github_agent_orchestrator.server.dashboard import loop_status
 
     # Processed development item exists, and its issue is open (stage 2b).
     monkeypatch.setattr(
         dashboard_router,
+        "_list_repo_markdown_files_under",
+        lambda *_a, **kwargs: (
+            ["planning/issue_queue/processed/restore-drag-and-drop.md"]
+            if kwargs.get("dir_path") == "planning/issue_queue/processed"
+            else []
+        ),
+    )
+    monkeypatch.setattr(
+        loop_status,
         "_list_repo_markdown_files_under",
         lambda *_a, **kwargs: (
             ["planning/issue_queue/processed/restore-drag-and-drop.md"]
@@ -39,7 +49,17 @@ def test_loop_status_auto_links_focused_issue_to_likely_pr(monkeypatch, tmp_path
         lambda *_a, **_k: ("Restore drag-and-drop\n\nBody\n", "sha-1"),
     )
     monkeypatch.setattr(
+        loop_status,
+        "_get_repo_text_file",
+        lambda *_a, **_k: ("Restore drag-and-drop\n\nBody\n", "sha-1"),
+    )
+    monkeypatch.setattr(
         dashboard_router,
+        "_list_open_issues_raw",
+        lambda *_a, **_k: [{"number": 184, "title": "Restore drag-and-drop", "state": "open"}],
+    )
+    monkeypatch.setattr(
+        loop_status,
         "_list_open_issues_raw",
         lambda *_a, **_k: [{"number": 184, "title": "Restore drag-and-drop", "state": "open"}],
     )
@@ -58,11 +78,30 @@ def test_loop_status_auto_links_focused_issue_to_likely_pr(monkeypatch, tmp_path
             }
         ],
     )
+    monkeypatch.setattr(
+        loop_status,
+        "_list_open_pull_requests_raw",
+        lambda *_a, **_k: [
+            {
+                "number": 185,
+                "state": "open",
+                "title": "Restore drag-and-drop",
+                "draft": True,
+                "user": {"login": "copilot-swe-agent"},
+            }
+        ],
+    )
     monkeypatch.setattr(dashboard_router, "_list_issue_timeline_raw", lambda *_a, **_k: [])
+    monkeypatch.setattr(loop_status, "_list_issue_timeline_raw", lambda *_a, **_k: [])
 
     # PR body does not yet mention `Fixes #184`.
     monkeypatch.setattr(
         dashboard_router,
+        "_get_pull_request",
+        lambda *_a, **_k: {"number": 185, "body": "Implementation details\n"},
+    )
+    monkeypatch.setattr(
+        loop_status,
         "_get_pull_request",
         lambda *_a, **_k: {"number": 185, "body": "Implementation details\n"},
     )
@@ -108,10 +147,20 @@ def test_loop_status_auto_links_when_pr_branch_is_copilot_prefixed(
     monkeypatch.setenv("ORCHESTRATOR_AUTO_LINK_FOCUSED_ISSUE_PR", "true")
 
     import github_agent_orchestrator.server.dashboard_router as dashboard_router
+    from github_agent_orchestrator.server.dashboard import loop_status
 
     # Processed development item exists, and its issue is open (stage 2b).
     monkeypatch.setattr(
         dashboard_router,
+        "_list_repo_markdown_files_under",
+        lambda *_a, **kwargs: (
+            ["planning/issue_queue/processed/restore-drag-and-drop.md"]
+            if kwargs.get("dir_path") == "planning/issue_queue/processed"
+            else []
+        ),
+    )
+    monkeypatch.setattr(
+        loop_status,
         "_list_repo_markdown_files_under",
         lambda *_a, **kwargs: (
             ["planning/issue_queue/processed/restore-drag-and-drop.md"]
@@ -125,7 +174,17 @@ def test_loop_status_auto_links_when_pr_branch_is_copilot_prefixed(
         lambda *_a, **_k: ("Restore drag-and-drop\n\nBody\n", "sha-1"),
     )
     monkeypatch.setattr(
+        loop_status,
+        "_get_repo_text_file",
+        lambda *_a, **_k: ("Restore drag-and-drop\n\nBody\n", "sha-1"),
+    )
+    monkeypatch.setattr(
         dashboard_router,
+        "_list_open_issues_raw",
+        lambda *_a, **_k: [{"number": 184, "title": "Restore drag-and-drop", "state": "open"}],
+    )
+    monkeypatch.setattr(
+        loop_status,
         "_list_open_issues_raw",
         lambda *_a, **_k: [{"number": 184, "title": "Restore drag-and-drop", "state": "open"}],
     )
@@ -145,10 +204,30 @@ def test_loop_status_auto_links_when_pr_branch_is_copilot_prefixed(
             }
         ],
     )
+    monkeypatch.setattr(
+        loop_status,
+        "_list_open_pull_requests_raw",
+        lambda *_a, **_k: [
+            {
+                "number": 185,
+                "state": "open",
+                "title": "Restore drag-and-drop",
+                "draft": True,
+                "user": {"login": "alice"},
+                "head": {"ref": "copilot/restore-drag-and-drop"},
+            }
+        ],
+    )
     monkeypatch.setattr(dashboard_router, "_list_issue_timeline_raw", lambda *_a, **_k: [])
+    monkeypatch.setattr(loop_status, "_list_issue_timeline_raw", lambda *_a, **_k: [])
 
     monkeypatch.setattr(
         dashboard_router,
+        "_get_pull_request",
+        lambda *_a, **_k: {"number": 185, "body": "Implementation details\n"},
+    )
+    monkeypatch.setattr(
+        loop_status,
         "_get_pull_request",
         lambda *_a, **_k: {"number": 185, "body": "Implementation details\n"},
     )
@@ -193,9 +272,19 @@ def test_auto_link_ignores_closing_keyword_inside_unclosed_code_fence(
     monkeypatch.setenv("ORCHESTRATOR_AUTO_LINK_FOCUSED_ISSUE_PR", "true")
 
     import github_agent_orchestrator.server.dashboard_router as dashboard_router
+    from github_agent_orchestrator.server.dashboard import loop_status
 
     monkeypatch.setattr(
         dashboard_router,
+        "_list_repo_markdown_files_under",
+        lambda *_a, **kwargs: (
+            ["planning/issue_queue/processed/restore-drag-and-drop.md"]
+            if kwargs.get("dir_path") == "planning/issue_queue/processed"
+            else []
+        ),
+    )
+    monkeypatch.setattr(
+        loop_status,
         "_list_repo_markdown_files_under",
         lambda *_a, **kwargs: (
             ["planning/issue_queue/processed/restore-drag-and-drop.md"]
@@ -209,7 +298,17 @@ def test_auto_link_ignores_closing_keyword_inside_unclosed_code_fence(
         lambda *_a, **_k: ("Restore drag-and-drop\n\nBody\n", "sha-1"),
     )
     monkeypatch.setattr(
+        loop_status,
+        "_get_repo_text_file",
+        lambda *_a, **_k: ("Restore drag-and-drop\n\nBody\n", "sha-1"),
+    )
+    monkeypatch.setattr(
         dashboard_router,
+        "_list_open_issues_raw",
+        lambda *_a, **_k: [{"number": 184, "title": "Restore drag-and-drop", "state": "open"}],
+    )
+    monkeypatch.setattr(
+        loop_status,
         "_list_open_issues_raw",
         lambda *_a, **_k: [{"number": 184, "title": "Restore drag-and-drop", "state": "open"}],
     )
@@ -227,11 +326,30 @@ def test_auto_link_ignores_closing_keyword_inside_unclosed_code_fence(
             }
         ],
     )
+    monkeypatch.setattr(
+        loop_status,
+        "_list_open_pull_requests_raw",
+        lambda *_a, **_k: [
+            {
+                "number": 185,
+                "state": "open",
+                "title": "Restore drag-and-drop",
+                "draft": True,
+                "user": {"login": "copilot-swe-agent"},
+            }
+        ],
+    )
     monkeypatch.setattr(dashboard_router, "_list_issue_timeline_raw", lambda *_a, **_k: [])
+    monkeypatch.setattr(loop_status, "_list_issue_timeline_raw", lambda *_a, **_k: [])
 
     # PR body contains `Fixes #184` but only inside an unclosed fenced code block.
     monkeypatch.setattr(
         dashboard_router,
+        "_get_pull_request",
+        lambda *_a, **_k: {"number": 185, "body": "```\nFixes #184\n"},
+    )
+    monkeypatch.setattr(
+        loop_status,
         "_get_pull_request",
         lambda *_a, **_k: {"number": 185, "body": "```\nFixes #184\n"},
     )

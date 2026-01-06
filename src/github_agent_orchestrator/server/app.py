@@ -8,6 +8,7 @@ Design principle: no legacy compatibility surfaces. Old interfaces are removed.
 from __future__ import annotations
 
 import logging
+import os
 import threading
 from pathlib import Path
 
@@ -16,8 +17,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
-import github_agent_orchestrator.server.dashboard_router as dashboard_module
 from github_agent_orchestrator.server.config import ServerSettings
+from github_agent_orchestrator.server.dashboard.loop_actions import (
+    _ensure_gap_analysis_issue_exists,
+    _merge_next_ready_pull_request,
+    _promote_next_unpromoted_capability_queue_item,
+    _promote_next_unpromoted_development_queue_item,
+)
+from github_agent_orchestrator.server.dashboard.loop_status import _loop_status_for_repo
+from github_agent_orchestrator.server.dashboard_router import (
+    _ensure_review_consumption_issue_exists,
+)
 from github_agent_orchestrator.server.dashboard_router import router as dashboard_router
 
 logger = logging.getLogger(__name__)
@@ -58,6 +68,10 @@ def create_app() -> FastAPI:
 
 
 def _maybe_start_auto_promotion(app: FastAPI, settings: ServerSettings) -> None:
+    # Unit tests create many apps; starting a background thread can lead to non-deterministic
+    # behavior and accidental network calls (e.g. from developer-local .env configuration).
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        return
     if not settings.auto_promote_enabled:
         return
     if not settings.github_token.strip():
@@ -86,7 +100,7 @@ def _maybe_start_auto_promotion(app: FastAPI, settings: ServerSettings) -> None:
         )
         while not stop.is_set():
             try:
-                status = dashboard_module._loop_status_for_repo(
+                status = _loop_status_for_repo(
                     settings=settings,
                     active_repo=repo,
                     ref="",
@@ -100,35 +114,24 @@ def _maybe_start_auto_promotion(app: FastAPI, settings: ServerSettings) -> None:
                 # New loop model: 1a–3c.
                 if stage == "1a":
                     if getattr(settings, "loop_mode", "build") == "review":
-                        dashboard_module._ensure_review_consumption_issue_exists(
-                            settings=settings,
-                            repo=repo,
-                        )
+                        _ensure_review_consumption_issue_exists(settings=settings, repo=repo)
                         logger.info("Auto review consumption issue ensured", extra={"repo": repo})
                     else:
                         # Ensure there is a live, assigned gap-analysis issue.
-                        dashboard_module._ensure_gap_analysis_issue_exists(
-                            settings=settings, repo=repo
-                        )
+                        _ensure_gap_analysis_issue_exists(settings=settings, repo=repo)
                         logger.info(
                             "Auto gap analysis issue ensured",
                             extra={"repo": repo, "open_gap_analysis_issues": open_gap_issues},
                         )
                 elif stage == "2a":
-                    dashboard_module._promote_next_unpromoted_development_queue_item(
-                        settings=settings,
-                        repo=repo,
-                    )
+                    _promote_next_unpromoted_development_queue_item(settings=settings, repo=repo)
                     logger.info("Auto promotion succeeded", extra={"repo": repo})
                 elif stage == "3a":
                     # Legacy path: capability updates represented by queue artefacts.
-                    dashboard_module._promote_next_unpromoted_capability_queue_item(
-                        settings=settings,
-                        repo=repo,
-                    )
+                    _promote_next_unpromoted_capability_queue_item(settings=settings, repo=repo)
                     logger.info("Auto capability promotion succeeded", extra={"repo": repo})
                 elif stage in {"1c", "2c", "3c"}:
-                    dashboard_module._merge_next_ready_pull_request(settings=settings, repo=repo)
+                    _merge_next_ready_pull_request(settings=settings, repo=repo)
                     logger.info("Auto merge succeeded", extra={"repo": repo})
             except Exception as e:
                 # 409 means "nothing to do"; treat as idle rather than an error.

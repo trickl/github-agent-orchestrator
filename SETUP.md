@@ -75,7 +75,6 @@ Repository selection is intentionally not stored in `.env`; you pass it per comm
 2. Click "Generate new token (classic)"
 3. Select scopes:
    - `repo` (full repository access)
-   - `workflow` (if you need workflow access)
 4. Click "Generate token"
 5. Copy the token and save it securely
 

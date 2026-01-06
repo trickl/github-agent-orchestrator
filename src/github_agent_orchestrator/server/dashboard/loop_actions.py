@@ -26,6 +26,7 @@ from github_agent_orchestrator.github_labels import (
 from github_agent_orchestrator.server.config import ServerSettings
 from github_agent_orchestrator.server.dashboard.github_api import (
     _github_delete_json,
+    _github_get_list,
     _github_get_json,
     _github_graphql_post,
     _github_patch_json,
