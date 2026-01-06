@@ -35,28 +35,62 @@ from github_agent_orchestrator.server.dashboard.github_api import (
     _graphql_errors_as_message,
     _repo_api_url,
 )
-from github_agent_orchestrator.server.dashboard.github_operations import (
-    delete_repo_file_if_present as _delete_repo_file_if_present,
-    ensure_repo_file_present_in_complete as _ensure_repo_file_present_in_complete,
-    ensure_repo_file_present_in_processed as _ensure_repo_file_present_in_processed,
-    ensure_repo_label_exists as _ensure_repo_label_exists,
-    get_default_branch as _get_default_branch,
-    get_pull_request as _get_pull_request,
-    get_repo_text_file as _get_repo_text_file,
-    list_issue_timeline_raw as _list_issue_timeline_raw,
-    list_open_issues_raw as _list_open_issues_raw,
-    list_repo_markdown_files_under as _list_repo_markdown_files_under,
-    search_issue_number_by_body_marker as _search_issue_number_by_body_marker,
-)
 from github_agent_orchestrator.server.dashboard.github_issue_pr_helpers import (
     best_match_issue_number as _best_match_issue_number,
+)
+from github_agent_orchestrator.server.dashboard.github_issue_pr_helpers import (
     get_pull_request_discussion_markdown as _get_pull_request_discussion_markdown,
+)
+from github_agent_orchestrator.server.dashboard.github_issue_pr_helpers import (
     issue_has_label as _issue_has_label,
+)
+from github_agent_orchestrator.server.dashboard.github_issue_pr_helpers import (
     linked_pr_numbers_from_issue_timeline as _linked_pr_numbers_from_issue_timeline,
+)
+from github_agent_orchestrator.server.dashboard.github_issue_pr_helpers import (
     pull_request_has_review_request as _pull_request_has_review_request,
+)
+from github_agent_orchestrator.server.dashboard.github_issue_pr_helpers import (
     pull_request_has_review_request_history as _pull_request_has_review_request_history,
+)
+from github_agent_orchestrator.server.dashboard.github_issue_pr_helpers import (
     pull_request_is_merge_candidate as _pull_request_is_merge_candidate,
+)
+from github_agent_orchestrator.server.dashboard.github_issue_pr_helpers import (
     pull_request_title_is_wip as _pull_request_title_is_wip,
+)
+from github_agent_orchestrator.server.dashboard.github_operations import (
+    delete_repo_file_if_present as _delete_repo_file_if_present,
+)
+from github_agent_orchestrator.server.dashboard.github_operations import (
+    ensure_repo_file_present_in_complete as _ensure_repo_file_present_in_complete,
+)
+from github_agent_orchestrator.server.dashboard.github_operations import (
+    ensure_repo_file_present_in_processed as _ensure_repo_file_present_in_processed,
+)
+from github_agent_orchestrator.server.dashboard.github_operations import (
+    ensure_repo_label_exists as _ensure_repo_label_exists,
+)
+from github_agent_orchestrator.server.dashboard.github_operations import (
+    get_default_branch as _get_default_branch,
+)
+from github_agent_orchestrator.server.dashboard.github_operations import (
+    get_pull_request as _get_pull_request,
+)
+from github_agent_orchestrator.server.dashboard.github_operations import (
+    get_repo_text_file as _get_repo_text_file,
+)
+from github_agent_orchestrator.server.dashboard.github_operations import (
+    list_issue_timeline_raw as _list_issue_timeline_raw,
+)
+from github_agent_orchestrator.server.dashboard.github_operations import (
+    list_open_issues_raw as _list_open_issues_raw,
+)
+from github_agent_orchestrator.server.dashboard.github_operations import (
+    list_repo_markdown_files_under as _list_repo_markdown_files_under,
+)
+from github_agent_orchestrator.server.dashboard.github_operations import (
+    search_issue_number_by_body_marker as _search_issue_number_by_body_marker,
 )
 from github_agent_orchestrator.server.dashboard.queue_helpers import (
     _is_gap_analysis_issue_title,
@@ -69,7 +103,6 @@ from github_agent_orchestrator.server.dashboard.text_utilities import (
     _first_markdown_line_as_title,
     _normalize_repo_path_candidate,
 )
-
 
 # Marker used to make capability-update issues (created after merges) idempotent.
 _CAPABILITY_UPDATE_FROM_PR_MARKER_PREFIX = "orchestrator:capability-update-from-pr"
@@ -101,18 +134,21 @@ _REVIEW_QUEUE_ID_DATE_RE = re.compile(r"\breview-(\d{4}-\d{2}-\d{2})\b", re.IGNO
 def _settings(request: Request) -> ServerSettings:
     """Import from dashboard_router to avoid circular dependency."""
     from github_agent_orchestrator.server import dashboard_router
+
     return dashboard_router._settings(request)
 
 
 def _active_repo(request: Request, settings: ServerSettings) -> str:
     """Import from dashboard_router to avoid circular dependency."""
     from github_agent_orchestrator.server import dashboard_router
+
     return dashboard_router._active_repo(request, settings)
 
 
 def _make_github_issue_url(repo: str, issue_number: int) -> str | None:
     """Import from dashboard_router to avoid circular dependency."""
     from github_agent_orchestrator.server import dashboard_router
+
     return dashboard_router._make_github_issue_url(repo, issue_number)
 
 
@@ -127,6 +163,7 @@ def _assign_issue_to_copilot(
 ) -> list[str]:
     """Import from dashboard_router to avoid circular dependency."""
     from github_agent_orchestrator.server import dashboard_router
+
     return dashboard_router._assign_issue_to_copilot(
         settings,
         repository=repository,
@@ -140,6 +177,7 @@ def _assign_issue_to_copilot(
 def _queue_file_is_excluded_for_loop_mode(*, filename: str, loop_mode: str) -> bool:
     """Import from dashboard_router to avoid circular dependency."""
     from github_agent_orchestrator.server import dashboard_router
+
     return dashboard_router._queue_file_is_excluded_for_loop_mode(
         filename=filename, loop_mode=loop_mode
     )
@@ -148,12 +186,14 @@ def _queue_file_is_excluded_for_loop_mode(*, filename: str, loop_mode: str) -> b
 def _review_actions_path_for_review_path(review_path: str) -> str:
     """Import from dashboard_router to avoid circular dependency."""
     from github_agent_orchestrator.server import dashboard_router
+
     return dashboard_router._review_actions_path_for_review_path(review_path)
 
 
 def _pick_next_review_file(*, settings: ServerSettings, repo: str, branch: str) -> str | None:
     """Import from dashboard_router to avoid circular dependency."""
     from github_agent_orchestrator.server import dashboard_router
+
     return dashboard_router._pick_next_review_file(settings=settings, repo=repo, branch=branch)
 
 
@@ -162,6 +202,7 @@ def _extract_review_paths_from_queue_content(
 ) -> tuple[str | None, str | None]:
     """Import from dashboard_router to avoid circular dependency."""
     from github_agent_orchestrator.server import dashboard_router
+
     return dashboard_router._extract_review_paths_from_queue_content(
         queue_id=queue_id, queue_content=queue_content
     )
@@ -181,6 +222,7 @@ def _render_review_actions_update_issue_body(
 ) -> tuple[str, str]:
     """Import from dashboard_router to avoid circular dependency."""
     from github_agent_orchestrator.server import dashboard_router
+
     return dashboard_router._render_review_actions_update_issue_body(
         settings=settings,
         repo=repo,
@@ -475,7 +517,6 @@ def merge_next_ready_development_pull_request(request: Request) -> dict[str, obj
     return _merge_next_ready_pull_request(settings=settings, repo=repo)
 
 
-
 def _merge_next_ready_pull_request(*, settings: ServerSettings, repo: str) -> dict[str, object]:
     """Merge the next ready PR, preferring capability-update work when present."""
 
@@ -508,7 +549,6 @@ def _merge_next_ready_pull_request(*, settings: ServerSettings, repo: str) -> di
     if gap_merged is not None:
         return gap_merged
     return _merge_next_ready_development_pull_request(settings=settings, repo=repo)
-
 
 
 def _try_merge_next_ready_labeled_issue_pull_request(
@@ -725,8 +765,6 @@ def _try_merge_next_ready_labeled_issue_pull_request(
     }
 
 
-
-
 def _try_merge_next_ready_review_update_pull_request(
     *, settings: ServerSettings, repo: str
 ) -> dict[str, object] | None:
@@ -736,8 +774,6 @@ def _try_merge_next_ready_review_update_pull_request(
         label_name=LABEL_UPDATE_REVIEW,
         issue_kind_for_summary="review update",
     )
-
-
 
 
 def _try_merge_next_ready_gap_analysis_pull_request(
@@ -969,8 +1005,6 @@ def _try_merge_next_ready_gap_analysis_pull_request(
     }
 
 
-
-
 def _try_merge_next_ready_review_consumption_pull_request(
     *, settings: ServerSettings, repo: str
 ) -> dict[str, object] | None:
@@ -1188,8 +1222,6 @@ def _try_merge_next_ready_review_consumption_pull_request(
         "capabilityIssueClosed": issue_closed,
         "summary": summary,
     }
-
-
 
 
 def _try_merge_next_ready_capability_pull_request(
@@ -1410,8 +1442,6 @@ def _try_merge_next_ready_capability_pull_request(
     }
 
 
-
-
 def _promote_next_unpromoted_development_queue_item(
     *, settings: ServerSettings, repo: str
 ) -> dict[str, object]:
@@ -1544,7 +1574,6 @@ def _promote_next_unpromoted_development_queue_item(
         "normalizedTitle": selected_title_norm,
         "summary": f"Promoted {queue_id} to issue #{existing_issue_num}",
     }
-
 
 
 def _promote_next_unpromoted_capability_queue_item(
@@ -1686,8 +1715,6 @@ def _promote_next_unpromoted_capability_queue_item(
     }
 
 
-
-
 def _extract_source_pr_number_from_capability_issue(
     *, repository: str, issue_title: str, issue_body: str
 ) -> int | None:
@@ -1727,7 +1754,6 @@ def _extract_source_pr_number_from_capability_issue(
     return None
 
 
-
 def _render_capability_update_issue_body(
     *,
     repo: str,
@@ -1758,7 +1784,6 @@ def _render_capability_update_issue_body(
         "PR comments and discussion (chronological):\n\n"
         f"\n\n{discussion}\n\n---\n\n{marker}\n"
     )
-
 
 
 def _merge_next_ready_development_pull_request(
@@ -2123,4 +2148,5 @@ def _merge_next_ready_development_pull_request(
             f"Merged PR #{pr_number}; created {follow_issue_label.lower()} issue #{follow_issue_number}"
             if follow_issue_created
             else f"Merged PR #{pr_number}; ensured {follow_issue_label.lower()} issue #{follow_issue_number}"
-        ),    }
+        ),
+    }

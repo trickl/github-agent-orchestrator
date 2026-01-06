@@ -24,6 +24,12 @@ from github_agent_orchestrator.github_labels import (
     LABEL_UPDATE_REVIEW,
 )
 from github_agent_orchestrator.server.config import ServerSettings
+from github_agent_orchestrator.server.dashboard.automation_auto_link import (
+    maybe_auto_link_focused_issue_to_pr as _maybe_auto_link_focused_issue_to_pr,
+)
+from github_agent_orchestrator.server.dashboard.automation_auto_resume import (
+    maybe_auto_resume_copilot_after_rate_limit as _maybe_auto_resume_copilot_after_rate_limit,
+)
 from github_agent_orchestrator.server.dashboard.github_api import (
     _github_delete_json,
     _github_get_json,
@@ -38,36 +44,110 @@ from github_agent_orchestrator.server.dashboard.github_api import (
     _graphql_errors_as_message,
     _repo_api_url,
 )
-from github_agent_orchestrator.server.dashboard.github_operations import (
-    delete_repo_file_if_present as _delete_repo_file_if_present,
-    ensure_repo_file_present_in_complete as _ensure_repo_file_present_in_complete,
-    ensure_repo_file_present_in_processed as _ensure_repo_file_present_in_processed,
-    ensure_repo_label_exists as _ensure_repo_label_exists,
-    get_branch_head_commit_sha as _get_branch_head_commit_sha,
-    get_commit_tree_sha as _get_commit_tree_sha,
-    get_default_branch as _get_default_branch,
-    get_pull_request as _get_pull_request,
-    get_repo_text_file as _get_repo_text_file,
-    get_repo_tree_recursive as _get_repo_tree_recursive,
-    list_issue_comments_raw as _list_issue_comments_raw,
-    list_issue_events_raw as _list_issue_events_raw,
-    list_issue_timeline_raw as _list_issue_timeline_raw,
-    list_open_issues_raw as _list_open_issues_raw,
-    list_open_pull_requests_raw as _list_open_pull_requests_raw,
-    list_repo_markdown_files_under as _list_repo_markdown_files_under,
-    search_issue_number_by_body_marker as _search_issue_number_by_body_marker,
-)
 from github_agent_orchestrator.server.dashboard.github_issue_pr_helpers import (
     best_match_issue_number as _best_match_issue_number,
+)
+from github_agent_orchestrator.server.dashboard.github_issue_pr_helpers import (
     get_pull_request_discussion_markdown as _get_pull_request_discussion_markdown,
+)
+from github_agent_orchestrator.server.dashboard.github_issue_pr_helpers import (
     issue_has_label as _issue_has_label,
+)
+from github_agent_orchestrator.server.dashboard.github_issue_pr_helpers import (
     linked_pr_numbers_from_issue_timeline as _linked_pr_numbers_from_issue_timeline,
+)
+from github_agent_orchestrator.server.dashboard.github_issue_pr_helpers import (
     pull_request_has_review_request as _pull_request_has_review_request,
+)
+from github_agent_orchestrator.server.dashboard.github_issue_pr_helpers import (
     pull_request_has_review_request_history as _pull_request_has_review_request_history,
+)
+from github_agent_orchestrator.server.dashboard.github_issue_pr_helpers import (
     pull_request_is_approved_from_reviews as _pull_request_is_approved_from_reviews,
+)
+from github_agent_orchestrator.server.dashboard.github_issue_pr_helpers import (
     pull_request_is_merge_candidate as _pull_request_is_merge_candidate,
+)
+from github_agent_orchestrator.server.dashboard.github_issue_pr_helpers import (
     pull_request_is_ready_for_review as _pull_request_is_ready_for_review,
+)
+from github_agent_orchestrator.server.dashboard.github_issue_pr_helpers import (
     pull_request_title_is_wip as _pull_request_title_is_wip,
+)
+from github_agent_orchestrator.server.dashboard.github_operations import (
+    delete_repo_file_if_present as _delete_repo_file_if_present,
+)
+from github_agent_orchestrator.server.dashboard.github_operations import (
+    ensure_repo_file_present_in_complete as _ensure_repo_file_present_in_complete,
+)
+from github_agent_orchestrator.server.dashboard.github_operations import (
+    ensure_repo_file_present_in_processed as _ensure_repo_file_present_in_processed,
+)
+from github_agent_orchestrator.server.dashboard.github_operations import (
+    ensure_repo_label_exists as _ensure_repo_label_exists,
+)
+from github_agent_orchestrator.server.dashboard.github_operations import (
+    get_branch_head_commit_sha as _get_branch_head_commit_sha,
+)
+from github_agent_orchestrator.server.dashboard.github_operations import (
+    get_commit_tree_sha as _get_commit_tree_sha,
+)
+from github_agent_orchestrator.server.dashboard.github_operations import (
+    get_default_branch as _get_default_branch,
+)
+from github_agent_orchestrator.server.dashboard.github_operations import (
+    get_pull_request as _get_pull_request,
+)
+from github_agent_orchestrator.server.dashboard.github_operations import (
+    get_repo_text_file as _get_repo_text_file,
+)
+from github_agent_orchestrator.server.dashboard.github_operations import (
+    get_repo_tree_recursive as _get_repo_tree_recursive,
+)
+from github_agent_orchestrator.server.dashboard.github_operations import (
+    list_issue_comments_raw as _list_issue_comments_raw,
+)
+from github_agent_orchestrator.server.dashboard.github_operations import (
+    list_issue_events_raw as _list_issue_events_raw,
+)
+from github_agent_orchestrator.server.dashboard.github_operations import (
+    list_issue_timeline_raw as _list_issue_timeline_raw,
+)
+from github_agent_orchestrator.server.dashboard.github_operations import (
+    list_open_issues_raw as _list_open_issues_raw,
+)
+from github_agent_orchestrator.server.dashboard.github_operations import (
+    list_open_pull_requests_raw as _list_open_pull_requests_raw,
+)
+from github_agent_orchestrator.server.dashboard.github_operations import (
+    list_repo_markdown_files_under as _list_repo_markdown_files_under,
+)
+from github_agent_orchestrator.server.dashboard.github_operations import (
+    search_issue_number_by_body_marker as _search_issue_number_by_body_marker,
+)
+from github_agent_orchestrator.server.dashboard.loop_actions import (
+    _ensure_gap_analysis_issue_exists as _ensure_gap_analysis_issue_exists,
+)
+from github_agent_orchestrator.server.dashboard.loop_actions import (
+    _load_gap_analysis_template_or_raise as _load_gap_analysis_template_or_raise,
+)
+from github_agent_orchestrator.server.dashboard.loop_actions import (
+    _merge_next_ready_pull_request as _merge_next_ready_pull_request,
+)
+from github_agent_orchestrator.server.dashboard.loop_actions import (
+    _promote_next_unpromoted_capability_queue_item as _promote_next_unpromoted_capability_queue_item,
+)
+from github_agent_orchestrator.server.dashboard.loop_actions import (
+    _promote_next_unpromoted_development_queue_item as _promote_next_unpromoted_development_queue_item,
+)
+from github_agent_orchestrator.server.dashboard.loop_actions import (
+    ensure_gap_analysis_issue as ensure_gap_analysis_issue,
+)
+from github_agent_orchestrator.server.dashboard.loop_actions import (
+    merge_next_ready_development_pull_request as merge_next_ready_development_pull_request,
+)
+from github_agent_orchestrator.server.dashboard.loop_actions import (
+    promote_next_pending_issue_queue_item as promote_next_pending_issue_queue_item,
 )
 from github_agent_orchestrator.server.dashboard.queue_helpers import (
     _GAP_ANALYSIS_TITLES,
@@ -77,12 +157,6 @@ from github_agent_orchestrator.server.dashboard.queue_helpers import (
     _queue_category_for_filename,
     _queue_filename,
     _search_issue_number_by_queue_marker,
-)
-from github_agent_orchestrator.server.dashboard.automation_auto_link import (
-    maybe_auto_link_focused_issue_to_pr as _maybe_auto_link_focused_issue_to_pr,
-)
-from github_agent_orchestrator.server.dashboard.automation_auto_resume import (
-    maybe_auto_resume_copilot_after_rate_limit as _maybe_auto_resume_copilot_after_rate_limit,
 )
 from github_agent_orchestrator.server.dashboard.text_utilities import (
     _AUTO_LINK_NOTICE_MARKER,
@@ -97,24 +171,18 @@ from github_agent_orchestrator.server.dashboard.text_utilities import (
     _utc_now,
     _utc_now_iso,
 )
-from github_agent_orchestrator.server.dashboard.loop_actions import (
-    promote_next_pending_issue_queue_item as promote_next_pending_issue_queue_item,
-    ensure_gap_analysis_issue as ensure_gap_analysis_issue,
-    merge_next_ready_development_pull_request as merge_next_ready_development_pull_request,
-    _ensure_gap_analysis_issue_exists as _ensure_gap_analysis_issue_exists,
-    _load_gap_analysis_template_or_raise as _load_gap_analysis_template_or_raise,
-    _promote_next_unpromoted_capability_queue_item as _promote_next_unpromoted_capability_queue_item,
-    _promote_next_unpromoted_development_queue_item as _promote_next_unpromoted_development_queue_item,
-    _merge_next_ready_pull_request as _merge_next_ready_pull_request,
-)
 
 router = APIRouter()
 
 
 # Apply router decorators to imported loop action endpoints
-promote_next_pending_issue_queue_item = router.post("/loop/promote")(promote_next_pending_issue_queue_item)
+promote_next_pending_issue_queue_item = router.post("/loop/promote")(
+    promote_next_pending_issue_queue_item
+)
 ensure_gap_analysis_issue = router.post("/loop/gap-analysis/ensure")(ensure_gap_analysis_issue)
-merge_next_ready_development_pull_request = router.post("/loop/merge")(merge_next_ready_development_pull_request)
+merge_next_ready_development_pull_request = router.post("/loop/merge")(
+    merge_next_ready_development_pull_request
+)
 
 
 # Marker used to make capability-update issues (created after merges) idempotent.
@@ -181,8 +249,6 @@ _REVIEW_ACTIONS_AFTER_MERGE_TEMPLATE_PATHS: tuple[str, ...] = (
 )
 
 
-
-
 def _load_review_consumption_template_or_raise(
     *, settings: ServerSettings, repo: str, branch: str
 ) -> str:
@@ -206,14 +272,6 @@ def _load_review_consumption_template_or_raise(
             "Expected planning/issue_templates/review-consumption.md"
         ),
     )
-
-
-
-
-
-
-
-
 
 
 def _review_actions_path_for_review_path(review_path: str) -> str:
@@ -442,11 +500,7 @@ def _assign_issue_to_copilot(
 
 
 @router.post("/loop/promote")
-
-
 @router.post("/loop/gap-analysis/ensure")
-
-
 @router.post("/loop/review/ensure")
 def ensure_review_consumption_issue(request: Request) -> dict[str, object]:
     """Step 1a (review mode) action: ensure a review-consumption issue exists and is assigned."""
@@ -466,21 +520,6 @@ def ensure_review_consumption_issue(request: Request) -> dict[str, object]:
         "branch": _get_default_branch(settings, repository=repo),
         "summary": summary,
     }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 _REVIEW_QUEUE_SOURCE_RE = re.compile(r"^\s*source\s+review\s*:\s*(.+?)\s*$", re.IGNORECASE)
