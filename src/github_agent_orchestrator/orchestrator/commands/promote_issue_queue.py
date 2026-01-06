@@ -66,7 +66,8 @@ def handle_promote_issue_queue(args: argparse.Namespace, settings: OrchestratorS
         else:
             print(f"Issue already exists: #{queue_record.issue_number} '{queue_record.title}'")
 
-        assert queue_record is not None
+        if queue_record is None:
+            raise RuntimeError("Expected an issue record to be created or discovered")
 
         target_repo = args.target_repo or args.repository
         if args.reassign:

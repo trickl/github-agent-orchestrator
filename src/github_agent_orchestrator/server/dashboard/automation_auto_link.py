@@ -30,11 +30,9 @@ def _issue_is_mentioned_as_closing(body: str, issue_number: int) -> bool:
     if not isinstance(body, str) or not body.strip():
         return False
     for m in _ISSUE_CLOSING_KEYWORD_RE.finditer(body):
-        try:
+        with suppress(ValueError, TypeError):
             if int(m.group(1)) == int(issue_number):
                 return True
-        except Exception:
-            continue
     return False
 
 

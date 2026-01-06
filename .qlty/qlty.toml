@@ -112,3 +112,20 @@ drivers = [
 
 [[plugin]]
 name = "trufflehog"
+
+
+# Bandit flags pytest-style asserts and test tokens heavily; we scope Bandit to runtime code.
+[[exclude]]
+plugins = ["bandit"]
+file_patterns = ["tests/**", "**/tests/**"]
+
+
+# Bandit B105 is a heuristic that misfires on user-facing help strings mentioning env vars.
+[[triage]]
+match.plugins = ["bandit"]
+match.rules = ["bandit:B105"]
+match.file_patterns = [
+  "src/github_agent_orchestrator/server/dashboard/github_api.py",
+  "src/github_agent_orchestrator/server/dashboard/loop_actions.py",
+]
+set.ignored = true

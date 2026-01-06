@@ -334,6 +334,13 @@ class GitHubClient:
         iso = value.replace("Z", "+00:00")
         return datetime.fromisoformat(iso)
 
+    @staticmethod
+    def _try_parse_datetime(value: object) -> datetime | None:
+        try:
+            return GitHubClient._parse_datetime(value)
+        except ValueError:
+            return None
+
     def _get_paginated_json_list(self, url: str) -> list[dict[str, Any]]:
         """Fetch a REST endpoint that returns a JSON list, following basic pagination.
 
@@ -438,9 +445,8 @@ class GitHubClient:
             repository=self._repository_name, path=f"issues/{pull_number}/comments"
         )
         for item in self._get_paginated_json_list(issue_comments_url):
-            try:
-                created_dt = self._parse_datetime(item.get("created_at"))
-            except Exception:
+            created_dt = self._try_parse_datetime(item.get("created_at"))
+            if created_dt is None:
                 continue
 
             body = item.get("body")
@@ -470,9 +476,8 @@ class GitHubClient:
         )
         for item in self._get_paginated_json_list(reviews_url):
             created_at = item.get("submitted_at") or item.get("created_at")
-            try:
-                created_dt = self._parse_datetime(created_at)
-            except Exception:
+            created_dt = self._try_parse_datetime(created_at)
+            if created_dt is None:
                 continue
 
             state = item.get("state")
@@ -506,9 +511,8 @@ class GitHubClient:
             repository=self._repository_name, path=f"pulls/{pull_number}/comments"
         )
         for item in self._get_paginated_json_list(review_comments_url):
-            try:
-                created_dt = self._parse_datetime(item.get("created_at"))
-            except Exception:
+            created_dt = self._try_parse_datetime(item.get("created_at"))
+            if created_dt is None:
                 continue
 
             body = item.get("body")
