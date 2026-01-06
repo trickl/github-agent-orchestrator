@@ -21,13 +21,22 @@ def test_loop_promote_endpoint_promotes_one_file(monkeypatch, tmp_path: Path) ->
     monkeypatch.setenv("COPILOT_ASSIGNEE", "copilot-swe-agent[bot]")
 
     import github_agent_orchestrator.server.dashboard_router as dashboard_router
+    import github_agent_orchestrator.server.dashboard.loop_actions as loop_actions
+    import github_agent_orchestrator.server.dashboard.loop_actions as loop_actions
 
     monkeypatch.setattr(dashboard_router, "_get_default_branch", lambda *_a, **_k: "main")
+    monkeypatch.setattr(loop_actions, "_get_default_branch", lambda *_a, **_k: "main")
 
     monkeypatch.setattr(dashboard_router, "_ensure_repo_label_exists", lambda *_a, **_k: None)
+    monkeypatch.setattr(loop_actions, "_ensure_repo_label_exists", lambda *_a, **_k: None)
 
     monkeypatch.setattr(
         dashboard_router,
+        "_list_repo_markdown_files_under",
+        lambda *_a, **_k: ["planning/issue_queue/pending/dev-1.md"],
+    )
+    monkeypatch.setattr(
+        loop_actions,
         "_list_repo_markdown_files_under",
         lambda *_a, **_k: ["planning/issue_queue/pending/dev-1.md"],
     )
@@ -39,10 +48,15 @@ def test_loop_promote_endpoint_promotes_one_file(monkeypatch, tmp_path: Path) ->
         raise FileNotFoundError(str(path))
 
     monkeypatch.setattr(dashboard_router, "_get_repo_text_file", fake_get_repo_text_file)
+    monkeypatch.setattr(loop_actions, "_get_repo_text_file", fake_get_repo_text_file)
 
     monkeypatch.setattr(dashboard_router, "_list_open_issues_raw", lambda *_a, **_k: [])
+    monkeypatch.setattr(loop_actions, "_list_open_issues_raw", lambda *_a, **_k: [])
     monkeypatch.setattr(
         dashboard_router, "_search_issue_number_by_queue_marker", lambda *_a, **_k: None
+    )
+    monkeypatch.setattr(
+        loop_actions, "_search_issue_number_by_queue_marker", lambda *_a, **_k: None
     )
 
     def fake_post_json(*_a, **kwargs):
@@ -54,8 +68,11 @@ def test_loop_promote_endpoint_promotes_one_file(monkeypatch, tmp_path: Path) ->
         raise AssertionError(f"Unexpected POST url: {url}")
 
     monkeypatch.setattr(dashboard_router, "_github_post_json", fake_post_json)
+    monkeypatch.setattr(loop_actions, "_github_post_json", fake_post_json)
     monkeypatch.setattr(dashboard_router, "_github_put_json", lambda *_a, **_k: (201, {}))
+    monkeypatch.setattr(loop_actions, "_github_put_json", lambda *_a, **_k: (201, {}))
     monkeypatch.setattr(dashboard_router, "_github_delete_json", lambda *_a, **_k: (200, {}))
+    monkeypatch.setattr(loop_actions, "_github_delete_json", lambda *_a, **_k: (200, {}))
 
     client = TestClient(create_app())
     resp = client.post("/api/loop/promote")
@@ -73,9 +90,12 @@ def test_ensure_gap_analysis_issue_exists_creates_and_assigns(monkeypatch) -> No
     monkeypatch.setenv("ORCHESTRATOR_GITHUB_TOKEN", "test-token")
 
     import github_agent_orchestrator.server.dashboard_router as dashboard_router
+    import github_agent_orchestrator.server.dashboard.loop_actions as loop_actions
 
     monkeypatch.setattr(dashboard_router, "_get_default_branch", lambda *_a, **_k: "main")
+    monkeypatch.setattr(loop_actions, "_get_default_branch", lambda *_a, **_k: "main")
     monkeypatch.setattr(dashboard_router, "_list_open_issues_raw", lambda *_a, **_k: [])
+    monkeypatch.setattr(loop_actions, "_list_open_issues_raw", lambda *_a, **_k: [])
     monkeypatch.setattr(
         dashboard_router,
         "_load_gap_analysis_template_or_raise",
@@ -95,6 +115,7 @@ def test_ensure_gap_analysis_issue_exists_creates_and_assigns(monkeypatch) -> No
         raise AssertionError(f"Unexpected POST url: {url}")
 
     monkeypatch.setattr(dashboard_router, "_github_post_json", fake_post_json)
+    monkeypatch.setattr(loop_actions, "_github_post_json", fake_post_json)
     monkeypatch.setattr(
         dashboard_router,
         "_assign_issue_to_copilot",
@@ -119,8 +140,10 @@ def test_ensure_gap_analysis_issue_exists_assigns_existing_when_unassigned(monke
     monkeypatch.setenv("ORCHESTRATOR_GITHUB_TOKEN", "test-token")
 
     import github_agent_orchestrator.server.dashboard_router as dashboard_router
+    import github_agent_orchestrator.server.dashboard.loop_actions as loop_actions
 
     monkeypatch.setattr(dashboard_router, "_get_default_branch", lambda *_a, **_k: "main")
+    monkeypatch.setattr(loop_actions, "_get_default_branch", lambda *_a, **_k: "main")
     monkeypatch.setattr(
         dashboard_router,
         "_list_open_issues_raw",
@@ -140,6 +163,7 @@ def test_ensure_gap_analysis_issue_exists_assigns_existing_when_unassigned(monke
         return [{"login": "copilot-swe-agent[bot]"}]
 
     monkeypatch.setattr(dashboard_router, "_assign_issue_to_copilot", fake_assign)
+    monkeypatch.setattr(loop_actions, "_assign_issue_to_copilot", fake_assign)
 
     out = dashboard_router._ensure_gap_analysis_issue_exists(
         settings=dashboard_router.ServerSettings(),
@@ -163,9 +187,12 @@ def test_loop_gap_analysis_ensure_endpoint_creates_and_assigns(monkeypatch, tmp_
     monkeypatch.setenv("COPILOT_ASSIGNEE", "copilot-swe-agent[bot]")
 
     import github_agent_orchestrator.server.dashboard_router as dashboard_router
+    import github_agent_orchestrator.server.dashboard.loop_actions as loop_actions
 
     monkeypatch.setattr(dashboard_router, "_get_default_branch", lambda *_a, **_k: "main")
+    monkeypatch.setattr(loop_actions, "_get_default_branch", lambda *_a, **_k: "main")
     monkeypatch.setattr(dashboard_router, "_list_open_issues_raw", lambda *_a, **_k: [])
+    monkeypatch.setattr(loop_actions, "_list_open_issues_raw", lambda *_a, **_k: [])
     monkeypatch.setattr(
         dashboard_router,
         "_get_repo_text_file",
@@ -184,6 +211,7 @@ def test_loop_gap_analysis_ensure_endpoint_creates_and_assigns(monkeypatch, tmp_
         raise AssertionError(f"Unexpected GET url: {url}")
 
     monkeypatch.setattr(dashboard_router, "_github_get_json", fake_get_json)
+    monkeypatch.setattr(loop_actions, "_github_get_json", fake_get_json)
 
     def fake_post_json(*_a, **kwargs):
         url = str(kwargs.get("url") or "")
@@ -196,6 +224,7 @@ def test_loop_gap_analysis_ensure_endpoint_creates_and_assigns(monkeypatch, tmp_
         raise AssertionError(f"Unexpected POST url: {url}")
 
     monkeypatch.setattr(dashboard_router, "_github_post_json", fake_post_json)
+    monkeypatch.setattr(loop_actions, "_github_post_json", fake_post_json)
 
     client = TestClient(create_app())
     resp = client.post("/api/loop/gap-analysis/ensure")
@@ -214,8 +243,10 @@ def test_ensure_gap_analysis_issue_exists_repairs_unsafe_existing_issue_before_a
     monkeypatch.setenv("ORCHESTRATOR_GITHUB_TOKEN", "test-token")
 
     import github_agent_orchestrator.server.dashboard_router as dashboard_router
+    import github_agent_orchestrator.server.dashboard.loop_actions as loop_actions
 
     monkeypatch.setattr(dashboard_router, "_get_default_branch", lambda *_a, **_k: "main")
+    monkeypatch.setattr(loop_actions, "_get_default_branch", lambda *_a, **_k: "main")
     monkeypatch.setattr(
         dashboard_router,
         "_list_open_issues_raw",
@@ -241,6 +272,7 @@ def test_ensure_gap_analysis_issue_exists_repairs_unsafe_existing_issue_before_a
         return {"number": 99}
 
     monkeypatch.setattr(dashboard_router, "_github_patch_json", fake_patch_json)
+    monkeypatch.setattr(loop_actions, "_github_patch_json", fake_patch_json)
 
     assigned_called: dict[str, object] = {}
 
@@ -249,6 +281,7 @@ def test_ensure_gap_analysis_issue_exists_repairs_unsafe_existing_issue_before_a
         return [{"login": "copilot-swe-agent[bot]"}]
 
     monkeypatch.setattr(dashboard_router, "_assign_issue_to_copilot", fake_assign)
+    monkeypatch.setattr(loop_actions, "_assign_issue_to_copilot", fake_assign)
 
     out = dashboard_router._ensure_gap_analysis_issue_exists(
         settings=dashboard_router.ServerSettings(),
@@ -275,13 +308,17 @@ def test_loop_merge_endpoint_merges_one_ready_pr_and_creates_capability_issue(
     monkeypatch.setenv("COPILOT_ASSIGNEE", "copilot-swe-agent[bot]")
 
     import github_agent_orchestrator.server.dashboard_router as dashboard_router
+    import github_agent_orchestrator.server.dashboard.loop_actions as loop_actions
 
     monkeypatch.setattr(dashboard_router, "_get_default_branch", lambda *_a, **_k: "main")
+    monkeypatch.setattr(loop_actions, "_get_default_branch", lambda *_a, **_k: "main")
     monkeypatch.setattr(dashboard_router, "_ensure_repo_label_exists", lambda *_a, **_k: None)
+    monkeypatch.setattr(loop_actions, "_ensure_repo_label_exists", lambda *_a, **_k: None)
     monkeypatch.setattr(
         dashboard_router, "_search_issue_number_by_body_marker", lambda *_a, **_k: None
     )
     monkeypatch.setattr(dashboard_router, "_github_get_list", lambda *_a, **_k: [])
+    monkeypatch.setattr(loop_actions, "_github_get_list", lambda *_a, **_k: [])
 
     def fake_list_repo_md(*_a, **kwargs):
         dir_path = kwargs.get("dir_path")
@@ -294,6 +331,7 @@ def test_loop_merge_endpoint_merges_one_ready_pr_and_creates_capability_issue(
         return []
 
     monkeypatch.setattr(dashboard_router, "_list_repo_markdown_files_under", fake_list_repo_md)
+    monkeypatch.setattr(loop_actions, "_list_repo_markdown_files_under", fake_list_repo_md)
 
     def fake_get_repo_text_file(*_a, **kwargs):
         path = kwargs.get("path")
@@ -302,6 +340,7 @@ def test_loop_merge_endpoint_merges_one_ready_pr_and_creates_capability_issue(
         raise FileNotFoundError(str(path))
 
     monkeypatch.setattr(dashboard_router, "_get_repo_text_file", fake_get_repo_text_file)
+    monkeypatch.setattr(loop_actions, "_get_repo_text_file", fake_get_repo_text_file)
 
     monkeypatch.setattr(
         dashboard_router,
@@ -345,11 +384,13 @@ def test_loop_merge_endpoint_merges_one_ready_pr_and_creates_capability_issue(
         return 500, {"message": "unexpected"}
 
     monkeypatch.setattr(dashboard_router, "_github_put_json", fake_put_json)
+    monkeypatch.setattr(loop_actions, "_github_put_json", fake_put_json)
 
     def fake_delete_json(*_a, **_k):
         return 204, None
 
     monkeypatch.setattr(dashboard_router, "_github_delete_json", fake_delete_json)
+    monkeypatch.setattr(loop_actions, "_github_delete_json", fake_delete_json)
 
     def fake_post_json(*_a, **kwargs):
         url = str(kwargs.get("url") or "")
@@ -362,6 +403,7 @@ def test_loop_merge_endpoint_merges_one_ready_pr_and_creates_capability_issue(
         raise AssertionError(f"Unexpected POST url: {url}")
 
     monkeypatch.setattr(dashboard_router, "_github_post_json", fake_post_json)
+    monkeypatch.setattr(loop_actions, "_github_post_json", fake_post_json)
 
     client = TestClient(create_app())
     resp = client.post("/api/loop/merge")
@@ -386,8 +428,10 @@ def test_loop_merge_endpoint_merges_ready_capability_pr_and_closes_issue(
     monkeypatch.setenv("COPILOT_ASSIGNEE", "copilot-swe-agent[bot]")
 
     import github_agent_orchestrator.server.dashboard_router as dashboard_router
+    import github_agent_orchestrator.server.dashboard.loop_actions as loop_actions
 
     monkeypatch.setattr(dashboard_router, "_get_default_branch", lambda *_a, **_k: "main")
+    monkeypatch.setattr(loop_actions, "_get_default_branch", lambda *_a, **_k: "main")
 
     # An open Update Capability issue exists.
     monkeypatch.setattr(
@@ -415,8 +459,10 @@ def test_loop_merge_endpoint_merges_ready_capability_pr_and_closes_issue(
         return []
 
     monkeypatch.setattr(dashboard_router, "_list_issue_timeline_raw", fake_timeline)
+    monkeypatch.setattr(loop_actions, "_list_issue_timeline_raw", fake_timeline)
 
     monkeypatch.setattr(dashboard_router, "_github_get_list", lambda *_a, **_k: [])
+    monkeypatch.setattr(loop_actions, "_github_get_list", lambda *_a, **_k: [])
 
     # PR is open, non-draft, review requested, and conflict-free.
     monkeypatch.setattr(
@@ -443,6 +489,7 @@ def test_loop_merge_endpoint_merges_ready_capability_pr_and_closes_issue(
         raise AssertionError(f"Unexpected POST url: {url}")
 
     monkeypatch.setattr(dashboard_router, "_github_post_json", fake_post_json)
+    monkeypatch.setattr(loop_actions, "_github_post_json", fake_post_json)
 
     # Merge call.
     def fake_put_json(*_a, **kwargs):
@@ -452,7 +499,9 @@ def test_loop_merge_endpoint_merges_ready_capability_pr_and_closes_issue(
         return 500, {"message": "unexpected"}
 
     monkeypatch.setattr(dashboard_router, "_github_put_json", fake_put_json)
+    monkeypatch.setattr(loop_actions, "_github_put_json", fake_put_json)
     monkeypatch.setattr(dashboard_router, "_github_delete_json", lambda *_a, **_k: (204, None))
+    monkeypatch.setattr(loop_actions, "_github_delete_json", lambda *_a, **_k: (204, None))
 
     # Close issue.
     def fake_patch_json(*_a, **kwargs):
@@ -462,6 +511,7 @@ def test_loop_merge_endpoint_merges_ready_capability_pr_and_closes_issue(
         raise AssertionError(f"Unexpected PATCH url: {url}")
 
     monkeypatch.setattr(dashboard_router, "_github_patch_json", fake_patch_json)
+    monkeypatch.setattr(loop_actions, "_github_patch_json", fake_patch_json)
 
     client = TestClient(create_app())
     resp = client.post("/api/loop/merge")
@@ -478,9 +528,12 @@ def test_promote_next_unpromoted_capability_queue_item_promotes_one_file(
     monkeypatch.setenv("ORCHESTRATOR_GITHUB_TOKEN", "test-token")
 
     import github_agent_orchestrator.server.dashboard_router as dashboard_router
+    import github_agent_orchestrator.server.dashboard.loop_actions as loop_actions
 
     monkeypatch.setattr(dashboard_router, "_get_default_branch", lambda *_a, **_k: "main")
+    monkeypatch.setattr(loop_actions, "_get_default_branch", lambda *_a, **_k: "main")
     monkeypatch.setattr(dashboard_router, "_ensure_repo_label_exists", lambda *_a, **_k: None)
+    monkeypatch.setattr(loop_actions, "_ensure_repo_label_exists", lambda *_a, **_k: None)
     monkeypatch.setattr(
         dashboard_router,
         "_list_repo_markdown_files_under",
@@ -492,6 +545,7 @@ def test_promote_next_unpromoted_capability_queue_item_promotes_one_file(
         lambda *_a, **_k: ("System: Update capability\n\nBody\n", "sha-1"),
     )
     monkeypatch.setattr(dashboard_router, "_list_open_issues_raw", lambda *_a, **_k: [])
+    monkeypatch.setattr(loop_actions, "_list_open_issues_raw", lambda *_a, **_k: [])
     monkeypatch.setattr(
         dashboard_router,
         "_search_issue_number_by_queue_marker",
@@ -510,8 +564,11 @@ def test_promote_next_unpromoted_capability_queue_item_promotes_one_file(
         raise AssertionError(f"Unexpected POST url: {url}")
 
     monkeypatch.setattr(dashboard_router, "_github_post_json", fake_post_json)
+    monkeypatch.setattr(loop_actions, "_github_post_json", fake_post_json)
     monkeypatch.setattr(dashboard_router, "_github_put_json", lambda *_a, **_k: (201, {}))
+    monkeypatch.setattr(loop_actions, "_github_put_json", lambda *_a, **_k: (201, {}))
     monkeypatch.setattr(dashboard_router, "_github_delete_json", lambda *_a, **_k: (204, None))
+    monkeypatch.setattr(loop_actions, "_github_delete_json", lambda *_a, **_k: (204, None))
 
     out = dashboard_router._promote_next_unpromoted_capability_queue_item(
         settings=dashboard_router.ServerSettings(),
@@ -534,9 +591,12 @@ def test_loop_merge_endpoint_fails_cleanly_when_pr_stays_draft(monkeypatch, tmp_
     monkeypatch.setenv("COPILOT_ASSIGNEE", "copilot-swe-agent[bot]")
 
     import github_agent_orchestrator.server.dashboard_router as dashboard_router
+    import github_agent_orchestrator.server.dashboard.loop_actions as loop_actions
 
     monkeypatch.setattr(dashboard_router, "_get_default_branch", lambda *_a, **_k: "main")
+    monkeypatch.setattr(loop_actions, "_get_default_branch", lambda *_a, **_k: "main")
     monkeypatch.setattr(dashboard_router, "_ensure_repo_label_exists", lambda *_a, **_k: None)
+    monkeypatch.setattr(loop_actions, "_ensure_repo_label_exists", lambda *_a, **_k: None)
 
     def fake_list_repo_md(*_a, **kwargs):
         dir_path = kwargs.get("dir_path")
@@ -549,6 +609,7 @@ def test_loop_merge_endpoint_fails_cleanly_when_pr_stays_draft(monkeypatch, tmp_
         return []
 
     monkeypatch.setattr(dashboard_router, "_list_repo_markdown_files_under", fake_list_repo_md)
+    monkeypatch.setattr(loop_actions, "_list_repo_markdown_files_under", fake_list_repo_md)
 
     monkeypatch.setattr(
         dashboard_router,
@@ -622,8 +683,10 @@ def test_loop_merge_endpoint_merges_ready_gap_analysis_pr_and_closes_issue(
     monkeypatch.setenv("COPILOT_ASSIGNEE", "copilot-swe-agent[bot]")
 
     import github_agent_orchestrator.server.dashboard_router as dashboard_router
+    import github_agent_orchestrator.server.dashboard.loop_actions as loop_actions
 
     monkeypatch.setattr(dashboard_router, "_get_default_branch", lambda *_a, **_k: "main")
+    monkeypatch.setattr(loop_actions, "_get_default_branch", lambda *_a, **_k: "main")
 
     # An open gap-analysis issue exists.
     monkeypatch.setattr(
@@ -651,6 +714,7 @@ def test_loop_merge_endpoint_merges_ready_gap_analysis_pr_and_closes_issue(
     )
 
     monkeypatch.setattr(dashboard_router, "_github_get_list", lambda *_a, **_k: [])
+    monkeypatch.setattr(loop_actions, "_github_get_list", lambda *_a, **_k: [])
 
     # PR is open, non-draft, review requested, and conflict-free.
     monkeypatch.setattr(
@@ -677,6 +741,7 @@ def test_loop_merge_endpoint_merges_ready_gap_analysis_pr_and_closes_issue(
         raise AssertionError(f"Unexpected POST url: {url}")
 
     monkeypatch.setattr(dashboard_router, "_github_post_json", fake_post_json)
+    monkeypatch.setattr(loop_actions, "_github_post_json", fake_post_json)
 
     # Merge call.
     def fake_put_json(*_a, **kwargs):
@@ -686,7 +751,9 @@ def test_loop_merge_endpoint_merges_ready_gap_analysis_pr_and_closes_issue(
         return 500, {"message": "unexpected"}
 
     monkeypatch.setattr(dashboard_router, "_github_put_json", fake_put_json)
+    monkeypatch.setattr(loop_actions, "_github_put_json", fake_put_json)
     monkeypatch.setattr(dashboard_router, "_github_delete_json", lambda *_a, **_k: (204, None))
+    monkeypatch.setattr(loop_actions, "_github_delete_json", lambda *_a, **_k: (204, None))
 
     # Close issue.
     def fake_patch_json(*_a, **kwargs):
@@ -696,6 +763,7 @@ def test_loop_merge_endpoint_merges_ready_gap_analysis_pr_and_closes_issue(
         raise AssertionError(f"Unexpected PATCH url: {url}")
 
     monkeypatch.setattr(dashboard_router, "_github_patch_json", fake_patch_json)
+    monkeypatch.setattr(loop_actions, "_github_patch_json", fake_patch_json)
 
     client = TestClient(create_app())
     resp = client.post("/api/loop/merge")
