@@ -576,6 +576,235 @@ def merge_next_ready_development_pull_request(request: Request) -> dict[str, obj
     return _merge_next_ready_pull_request(settings=settings, repo=repo)
 
 
+def heal_orphaned_processed_queue_items(request: Request) -> dict[str, object]:
+    """Heal orphaned processed queue artefacts.
+
+    This addresses a common "broken loop" scenario:
+    - A queue artefact exists under planning/issue_queue/processed/
+    - There are no open issues/PRs that match it (so the loop sits in Stage 2b forever)
+
+    Healing is conservative:
+    - Only move processed -> complete when we can prove a linked PR was merged.
+    - In build mode, ensure the corresponding 'Update Capability' follow-up issue exists.
+
+    This endpoint intentionally performs ONE healing pass per call.
+    """
+
+    settings = _settings(request)
+    repo = _active_repo(request, settings)
+    return _heal_orphaned_processed_queue_items(settings=settings, repo=repo)
+
+
+def _pull_request_is_merged(pr_data: dict[str, Any]) -> bool:
+    merged = pr_data.get("merged")
+    if merged is True:
+        return True
+    merged_at = pr_data.get("merged_at")
+    return isinstance(merged_at, str) and bool(merged_at.strip())
+
+
+def _heal_orphaned_processed_queue_items(
+    *, settings: ServerSettings, repo: str
+) -> dict[str, object]:
+    if not settings.github_token.strip():
+        raise HTTPException(
+            status_code=409,
+            detail="ORCHESTRATOR_GITHUB_TOKEN is required to heal orphaned processed queue items",
+        )
+
+    branch = _get_default_branch(settings, repository=repo)
+    mode = getattr(settings, "loop_mode", "build")
+
+    processed_paths = _list_repo_markdown_files_under(
+        settings=settings,
+        repository=repo,
+        dir_path="planning/issue_queue/processed",
+        ref=branch,
+    )
+    if not processed_paths:
+        raise HTTPException(status_code=409, detail="No processed queue artefacts to heal")
+
+    # Open issues are used for title matching; if none match a processed item, it's a candidate orphan.
+    raw_issues = _list_open_issues_raw(settings, repository=repo)
+    open_issues_for_matching = [it for it in raw_issues if isinstance(it, dict)]
+
+    healed: list[dict[str, object]] = []
+    skipped: list[dict[str, object]] = []
+
+    for processed_path in sorted(processed_paths):
+        queue_id = _queue_filename(processed_path)
+        content, sha = _get_repo_text_file(
+            settings,
+            repository=repo,
+            path=processed_path,
+            ref=branch,
+        )
+
+        title_norm = _first_markdown_line_as_title(content)
+        matched_open_issue = None
+        if title_norm:
+            matched_open_issue = _best_match_issue_number(title_norm, open_issues_for_matching)
+
+        if isinstance(matched_open_issue, int):
+            skipped.append(
+                {
+                    "queueId": queue_id,
+                    "queuePath": processed_path,
+                    "reason": "queue artefact still matches an open issue (not orphaned)",
+                    "issueNumber": matched_open_issue,
+                }
+            )
+            continue
+
+        # Try to locate the historical issue by the queue marker.
+        issue_num = _search_issue_number_by_queue_marker(settings, repository=repo, queue_id=queue_id)
+        if not isinstance(issue_num, int):
+            skipped.append(
+                {
+                    "queueId": queue_id,
+                    "queuePath": processed_path,
+                    "reason": "no issue found containing the queue marker; refusing to auto-heal",
+                }
+            )
+            continue
+
+        try:
+            issue_data = _github_get_json(
+                settings,
+                url=_repo_api_url(settings, repository=repo, path=f"issues/{issue_num}"),
+            )
+        except HTTPException as e:
+            skipped.append(
+                {
+                    "queueId": queue_id,
+                    "queuePath": processed_path,
+                    "issueNumber": issue_num,
+                    "reason": f"unable to fetch issue #{issue_num} (HTTP {e.status_code}); refusing to auto-heal",
+                }
+            )
+            continue
+
+        issue_state = issue_data.get("state") if isinstance(issue_data, dict) else None
+        if issue_state != "closed":
+            skipped.append(
+                {
+                    "queueId": queue_id,
+                    "queuePath": processed_path,
+                    "issueNumber": issue_num,
+                    "reason": "issue containing queue marker is not closed; refusing to mark complete",
+                }
+            )
+            continue
+
+        timeline = _list_issue_timeline_raw(settings, repository=repo, issue_number=issue_num)
+        pr_nums = _linked_pr_numbers_from_issue_timeline(timeline)
+        merged_pr_data: dict[str, Any] | None = None
+        merged_pr_number: int | None = None
+        for pr_num in sorted(pr_nums):
+            with suppress(Exception):
+                pr_data = _get_pull_request(settings, repository=repo, pr_number=pr_num)
+                if _pull_request_is_merged(pr_data):
+                    merged_pr_data = pr_data
+                    merged_pr_number = int(pr_num)
+                    break
+
+        if merged_pr_data is None or merged_pr_number is None:
+            skipped.append(
+                {
+                    "queueId": queue_id,
+                    "queuePath": processed_path,
+                    "issueNumber": issue_num,
+                    "reason": "no merged PR linked from the historical issue; refusing to auto-heal",
+                }
+            )
+            continue
+
+        # Case A: we have proof a linked PR was merged -> mark artefact complete.
+        complete_path = f"planning/issue_queue/complete/{queue_id}"
+        _ensure_repo_file_present_in_complete(
+            settings,
+            repository=repo,
+            complete_path=complete_path,
+            content_text=content,
+            branch=branch,
+            message=f"Heal orphaned processed artefact: move {queue_id} to issue_queue/complete",
+        )
+        _delete_repo_file_if_present(
+            settings,
+            repository=repo,
+            path=processed_path,
+            sha=sha,
+            branch=branch,
+            message=f"Heal orphaned processed artefact: remove {queue_id} from issue_queue/processed",
+        )
+
+        raw_pr_title = merged_pr_data.get("title")
+        raw_pr_body = merged_pr_data.get("body")
+        pr_title = raw_pr_title if isinstance(raw_pr_title, str) else ""
+        pr_body = raw_pr_body if isinstance(raw_pr_body, str) else ""
+
+        follow_issue_number: int | None = None
+        follow_issue_created: bool | None = None
+        follow_issue_label: str | None = None
+        follow_issue_assigned: list[str] | None = None
+
+        # Ensure the follow-up issue (capability update in build mode, review update in review mode).
+        with suppress(Exception):
+            follow_issue_number, follow_issue_created, follow_issue_label = (
+                _ensure_followup_issue_after_development_merge(
+                    settings=settings,
+                    repo=repo,
+                    branch=branch,
+                    loop_mode=mode,
+                    pr_number=merged_pr_number,
+                    pr_title=pr_title,
+                    pr_body=pr_body,
+                    queue_path=processed_path,
+                    queue_content=content,
+                )
+            )
+            follow_issue_assigned = _assign_issue_to_copilot(
+                settings,
+                repository=repo,
+                issue_number=follow_issue_number,
+                target_repo=repo,
+                base_branch=branch,
+                instructions="",
+            )
+
+        healed.append(
+            {
+                "queueId": queue_id,
+                "queuePath": processed_path,
+                "completePath": complete_path,
+                "historicalIssueNumber": issue_num,
+                "mergedPullNumber": merged_pr_number,
+                "followupIssueNumber": follow_issue_number,
+                "followupIssueCreated": follow_issue_created,
+                "followupIssueLabel": follow_issue_label,
+                "followupIssueAssigned": follow_issue_assigned,
+            }
+        )
+
+    if not healed:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "No orphaned processed queue artefacts could be healed (either still in-flight or "
+                "insufficient evidence of merge)"
+            ),
+        )
+
+    return {
+        "repo": repo,
+        "branch": branch,
+        "mode": mode,
+        "healed": healed,
+        "skipped": skipped,
+        "summary": f"Healed {len(healed)} orphaned processed artefact(s)",
+    }
+
+
 def _merge_next_ready_pull_request(*, settings: ServerSettings, repo: str) -> dict[str, object]:
     """Merge the next ready PR, preferring capability-update work when present."""
 

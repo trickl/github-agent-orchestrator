@@ -80,6 +80,7 @@ from github_agent_orchestrator.server.dashboard.loop_actions import (
     _repair_gap_analysis_issue_body_if_unsafe as _repair_gap_analysis_issue_body_if_unsafe,
 )
 from github_agent_orchestrator.server.dashboard.loop_actions import (
+    heal_orphaned_processed_queue_items as heal_orphaned_processed_queue_items,
     ensure_gap_analysis_issue as ensure_gap_analysis_issue,
 )
 from github_agent_orchestrator.server.dashboard.loop_actions import (
@@ -234,6 +235,9 @@ promote_next_pending_issue_queue_item = router.post("/loop/promote")(
 ensure_gap_analysis_issue = router.post("/loop/gap-analysis/ensure")(ensure_gap_analysis_issue)
 merge_next_ready_development_pull_request = router.post("/loop/merge")(
     merge_next_ready_development_pull_request
+)
+heal_orphaned_processed_queue_items = router.post("/loop/heal")(
+    heal_orphaned_processed_queue_items
 )
 
 # Apply router decorator to imported loop status endpoint

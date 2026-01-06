@@ -20,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from github_agent_orchestrator.server.config import ServerSettings
 from github_agent_orchestrator.server.dashboard.loop_actions import (
     _ensure_gap_analysis_issue_exists,
+    _heal_orphaned_processed_queue_items,
     _merge_next_ready_pull_request,
     _promote_next_unpromoted_capability_queue_item,
     _promote_next_unpromoted_development_queue_item,
@@ -80,6 +81,12 @@ def _perform_auto_action_for_stage(
     if stage == "2a":
         _promote_next_unpromoted_development_queue_item(settings=settings, repo=repo)
         logger.info("Auto promotion succeeded", extra={"repo": repo})
+        return
+    if stage == "2b" and getattr(settings, "auto_heal_orphaned_processed_queue_items", False):
+        # Best-effort self-healing: if the loop is stuck in 2b due to orphaned processed artefacts,
+        # attempt to move them to complete (only when merge evidence exists).
+        _heal_orphaned_processed_queue_items(settings=settings, repo=repo)
+        logger.info("Auto heal attempted", extra={"repo": repo})
         return
     if stage == "3a":
         # Legacy path: capability updates represented by queue artefacts.

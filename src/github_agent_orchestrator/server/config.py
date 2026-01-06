@@ -52,6 +52,17 @@ class ServerSettings(BaseSettings):
         description="Polling interval (seconds) for auto promotion when enabled.",
     )
 
+    auto_heal_orphaned_processed_queue_items: bool = Field(
+        default=False,
+        validation_alias="ORCHESTRATOR_AUTO_HEAL_ORPHANED_PROCESSED_QUEUE_ITEMS",
+        description=(
+            "If true, the server may attempt to automatically heal orphaned development queue artefacts "
+            "that are stuck under planning/issue_queue/processed with no associated open issue/PR. "
+            "Healing is conservative: it only marks a processed artefact complete when it can prove a linked PR "
+            "was merged; in build mode it will also ensure an 'Update Capability' follow-up issue exists."
+        ),
+    )
+
     auto_resume_copilot_on_rate_limit: bool = Field(
         default=False,
         validation_alias="ORCHESTRATOR_AUTO_RESUME_COPILOT_ON_RATE_LIMIT",

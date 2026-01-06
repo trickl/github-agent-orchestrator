@@ -520,6 +520,149 @@ def test_loop_merge_endpoint_merges_one_ready_pr_and_creates_capability_issue(
     assert data["capabilityIssueNumber"] == 456
 
 
+def test_loop_heal_endpoint_moves_orphaned_processed_to_complete_and_ensures_followup_issue(
+    monkeypatch, tmp_path: Path
+) -> None:
+    planning = tmp_path / "planning"
+    agent_state = tmp_path / "agent_state"
+
+    monkeypatch.setenv("ORCHESTRATOR_PLANNING_ROOT", str(planning))
+    monkeypatch.setenv("AGENT_STATE_PATH", str(agent_state))
+    monkeypatch.setenv("ORCHESTRATOR_UI_DIST", str(tmp_path / "ui" / "dist"))
+    monkeypatch.setenv("ORCHESTRATOR_DEFAULT_REPO", "acme/repo")
+    monkeypatch.setenv("ORCHESTRATOR_GITHUB_TOKEN", "test-token")
+    monkeypatch.setenv("COPILOT_ASSIGNEE", "copilot-swe-agent[bot]")
+
+    import github_agent_orchestrator.server.dashboard.loop_actions as loop_actions
+    import github_agent_orchestrator.server.dashboard_router as dashboard_router
+
+    monkeypatch.setattr(dashboard_router, "_get_default_branch", lambda *_a, **_k: "main")
+    monkeypatch.setattr(loop_actions, "_get_default_branch", lambda *_a, **_k: "main")
+
+    def fake_list_repo_md(*_a, **kwargs):
+        dir_path = kwargs.get("dir_path")
+        if dir_path == "planning/issue_queue/processed":
+            return ["planning/issue_queue/processed/dev-1.md"]
+        return []
+
+    monkeypatch.setattr(dashboard_router, "_list_repo_markdown_files_under", fake_list_repo_md)
+    monkeypatch.setattr(loop_actions, "_list_repo_markdown_files_under", fake_list_repo_md)
+
+    # Processed queue file exists.
+    def fake_get_repo_text_file(*_a, **kwargs):
+        if kwargs.get("path") == "planning/issue_queue/processed/dev-1.md":
+            return "Dev: One\n\nBody\n", "sha-queue"
+        raise FileNotFoundError(str(kwargs.get("path")))
+
+    monkeypatch.setattr(dashboard_router, "_get_repo_text_file", fake_get_repo_text_file)
+    monkeypatch.setattr(loop_actions, "_get_repo_text_file", fake_get_repo_text_file)
+
+    # No open issues -> orphan candidate.
+    monkeypatch.setattr(dashboard_router, "_list_open_issues_raw", lambda *_a, **_k: [])
+    monkeypatch.setattr(loop_actions, "_list_open_issues_raw", lambda *_a, **_k: [])
+
+    # Find the historical issue by queue marker.
+    monkeypatch.setattr(dashboard_router, "_search_issue_number_by_queue_marker", lambda *_a, **_k: 101)
+    monkeypatch.setattr(loop_actions, "_search_issue_number_by_queue_marker", lambda *_a, **_k: 101)
+
+    # Issue is closed.
+    def fake_get_json(*_a, **kwargs):
+        url = str(kwargs.get("url") or "")
+        if url.endswith("/repos/acme/repo/issues/101"):
+            return {"number": 101, "state": "closed", "title": "Dev: One", "body": "x"}
+        raise AssertionError(f"Unexpected GET url: {url}")
+
+    monkeypatch.setattr(dashboard_router, "_github_get_json", fake_get_json)
+    monkeypatch.setattr(loop_actions, "_github_get_json", fake_get_json)
+
+    # Issue timeline links PR #5.
+    monkeypatch.setattr(
+        dashboard_router,
+        "_list_issue_timeline_raw",
+        lambda *_a, **_k: [
+            {"event": "cross-referenced", "source": {"issue": {"number": 5, "pull_request": {}}}}
+        ],
+    )
+    monkeypatch.setattr(
+        loop_actions,
+        "_list_issue_timeline_raw",
+        lambda *_a, **_k: [
+            {"event": "cross-referenced", "source": {"issue": {"number": 5, "pull_request": {}}}}
+        ],
+    )
+
+    # PR is merged (Case A).
+    monkeypatch.setattr(
+        dashboard_router,
+        "_get_pull_request",
+        lambda *_a, **_k: {
+            "number": 5,
+            "state": "closed",
+            "merged_at": "2026-01-01T00:00:00Z",
+            "title": "Add undo/redo",
+            "body": "PR body",
+        },
+    )
+    monkeypatch.setattr(
+        loop_actions,
+        "_get_pull_request",
+        lambda *_a, **_k: {
+            "number": 5,
+            "state": "closed",
+            "merged_at": "2026-01-01T00:00:00Z",
+            "title": "Add undo/redo",
+            "body": "PR body",
+        },
+    )
+
+    # Follow-up issue idempotency search should yield none.
+    monkeypatch.setattr(dashboard_router, "_search_issue_number_by_body_marker", lambda *_a, **_k: None)
+    monkeypatch.setattr(loop_actions, "_search_issue_number_by_body_marker", lambda *_a, **_k: None)
+
+    # Avoid label creation side effects.
+    monkeypatch.setattr(dashboard_router, "_ensure_repo_label_exists", lambda *_a, **_k: None)
+    monkeypatch.setattr(loop_actions, "_ensure_repo_label_exists", lambda *_a, **_k: None)
+
+    # Follow-up issue body needs discussion markdown.
+    monkeypatch.setattr(loop_actions, "_get_pull_request_discussion_markdown", lambda *_a, **_k: "discussion")
+
+    # Creating follow-up issue and assignment.
+    def fake_post_json(*_a, **kwargs):
+        url = str(kwargs.get("url") or "")
+        if url.endswith("/issues"):
+            return {"number": 456}
+        if url.endswith("/issues/456/assignees"):
+            return {"assignees": [{"login": "copilot-swe-agent[bot]"}]}
+        raise AssertionError(f"Unexpected POST url: {url}")
+
+    monkeypatch.setattr(dashboard_router, "_github_post_json", fake_post_json)
+    monkeypatch.setattr(loop_actions, "_github_post_json", fake_post_json)
+
+    # Move processed -> complete and delete processed.
+    moved: dict[str, object] = {}
+    deleted: dict[str, object] = {}
+    monkeypatch.setattr(
+        loop_actions,
+        "_ensure_repo_file_present_in_complete",
+        lambda *_a, **kwargs: moved.update(kwargs),
+    )
+    monkeypatch.setattr(
+        loop_actions,
+        "_delete_repo_file_if_present",
+        lambda *_a, **kwargs: deleted.update(kwargs),
+    )
+
+    client = TestClient(create_app())
+    resp = client.post("/api/loop/heal")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["repo"] == "acme/repo"
+    assert data["branch"] == "main"
+    assert data["healed"]
+    assert moved.get("complete_path") == "planning/issue_queue/complete/dev-1.md"
+    assert deleted.get("path") == "planning/issue_queue/processed/dev-1.md"
+
+
 def test_loop_merge_endpoint_merges_ready_capability_pr_and_closes_issue(
     monkeypatch, tmp_path: Path
 ) -> None:
