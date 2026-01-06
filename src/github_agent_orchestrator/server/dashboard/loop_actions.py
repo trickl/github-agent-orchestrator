@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import re
 from contextlib import suppress
-from pathlib import Path
 from typing import Any
 
 from fastapi import HTTPException, Request
@@ -26,8 +25,6 @@ from github_agent_orchestrator.github_labels import (
 from github_agent_orchestrator.server.config import ServerSettings
 from github_agent_orchestrator.server.dashboard.github_api import (
     _github_delete_json,
-    _github_get_list,
-    _github_get_json,
     _github_graphql_post,
     _github_patch_json,
     _github_post_json,
@@ -102,8 +99,30 @@ from github_agent_orchestrator.server.dashboard.queue_helpers import (
 )
 from github_agent_orchestrator.server.dashboard.text_utilities import (
     _first_markdown_line_as_title,
-    _normalize_repo_path_candidate,
 )
+
+# --- Compatibility shims (tests + monkeypatching) ---
+#
+# Unit tests patch these names on `loop_actions` to prevent real GitHub API calls.
+# Implement them as wrapper functions so they remain available even when not used directly.
+
+
+def _github_get_json(
+    settings: ServerSettings, *, url: str, params: dict[str, str] | None = None
+) -> dict[str, Any]:
+    from github_agent_orchestrator.server.dashboard.github_api import _github_get_json as _impl
+
+    return _impl(settings, url=url, params=params)
+
+
+def _github_get_list(
+    settings: ServerSettings, *, url: str, params: dict[str, str] | None = None
+) -> list[dict[str, Any]]:
+    from github_agent_orchestrator.server.dashboard.github_api import _github_get_list as _impl
+
+    return _impl(settings, url=url, params=params)
+
+
 
 # Marker used to make capability-update issues (created after merges) idempotent.
 _CAPABILITY_UPDATE_FROM_PR_MARKER_PREFIX = "orchestrator:capability-update-from-pr"

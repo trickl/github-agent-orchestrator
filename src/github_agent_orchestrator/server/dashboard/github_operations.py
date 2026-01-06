@@ -253,10 +253,12 @@ def search_issue_number_by_body_marker(
         return None
 
     q = f'repo:{repository} "{marker_norm}" in:body is:issue'
+    # Use updated-desc ordering to make this deterministic for markers that may be reused over time
+    # (e.g. multiple review-consumption iterations for the same review source file).
     data = _github_get_json(
         settings,
         url=f"{settings.github_base_url.rstrip('/')}/search/issues",
-        params={"q": q, "per_page": "5"},
+        params={"q": q, "per_page": "5", "sort": "updated", "order": "desc"},
     )
     items = data.get("items")
     if not isinstance(items, list) or not items:

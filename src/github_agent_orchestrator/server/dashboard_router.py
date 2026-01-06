@@ -7,6 +7,7 @@ All routes are mounted under `/api`.
 
 from __future__ import annotations
 
+import base64
 import re
 from contextlib import suppress
 from datetime import UTC, datetime
@@ -21,17 +22,13 @@ from github_agent_orchestrator.github_labels import (
     LABEL_REVIEW_CONSUMPTION,
 )
 from github_agent_orchestrator.server.config import ServerSettings
+from github_agent_orchestrator.server.dashboard import text_utilities as _text_utilities
 from github_agent_orchestrator.server.dashboard.github_api import (
     _github_delete_json,
     _github_get_json,
-    _github_get_list,
-    _github_graphql_post,
     _github_headers,
-    _github_patch_json,
     _github_post_json,
     _github_put_json,
-    _graphql_api_url,
-    _graphql_errors_as_message,
     _repo_api_url,
 )
 from github_agent_orchestrator.server.dashboard.github_issue_pr_helpers import (
@@ -44,25 +41,13 @@ from github_agent_orchestrator.server.dashboard.github_operations import (
     get_default_branch as _get_default_branch,
 )
 from github_agent_orchestrator.server.dashboard.github_operations import (
-    get_pull_request as _get_pull_request,
-)
-from github_agent_orchestrator.server.dashboard.github_operations import (
     get_repo_text_file as _get_repo_text_file,
-)
-from github_agent_orchestrator.server.dashboard.github_operations import (
-    list_issue_comments_raw as _list_issue_comments_raw,
-)
-from github_agent_orchestrator.server.dashboard.github_operations import (
-    list_issue_events_raw as _list_issue_events_raw,
 )
 from github_agent_orchestrator.server.dashboard.github_operations import (
     list_issue_timeline_raw as _list_issue_timeline_raw,
 )
 from github_agent_orchestrator.server.dashboard.github_operations import (
     list_open_issues_raw as _list_open_issues_raw,
-)
-from github_agent_orchestrator.server.dashboard.github_operations import (
-    list_open_pull_requests_raw as _list_open_pull_requests_raw,
 )
 from github_agent_orchestrator.server.dashboard.github_operations import (
     list_repo_markdown_files_under as _list_repo_markdown_files_under,
@@ -109,22 +94,134 @@ from github_agent_orchestrator.server.dashboard.loop_status import (
 from github_agent_orchestrator.server.dashboard.loop_status import loop_status as loop_status
 from github_agent_orchestrator.server.dashboard.queue_helpers import (
     _is_gap_analysis_issue_title,
-    _search_issue_number_by_queue_marker,
 )
 from github_agent_orchestrator.server.dashboard.text_utilities import (
-    _AUTO_LINK_NOTICE_MARKER,
-    _COPILOT_RATE_LIMIT_RESUME_COMMENT,
-    _comment_body_is_auto_link_notice,
-    _comment_body_is_copilot_resume_nudge,
     _dt_from_iso,
-    _normalize_issue_title,
     _normalize_repo_path_candidate,
-    _strip_fenced_code_blocks,
-    _utc_now,
     _utc_now_iso,
 )
 
 router = APIRouter()
+
+
+# --- Compatibility shims (tests + intra-module monkeypatching) ---
+#
+# Several modules (and unit tests) monkeypatch these names on `dashboard_router` to ensure
+# deterministic behavior and prevent accidental real GitHub API calls.
+#
+# Ruff may remove unused imports; keeping these as small wrapper functions ensures they
+# remain available without relying on unused re-exports.
+
+_AUTO_LINK_NOTICE_MARKER = _text_utilities._AUTO_LINK_NOTICE_MARKER
+_COPILOT_RATE_LIMIT_RESUME_COMMENT = _text_utilities._COPILOT_RATE_LIMIT_RESUME_COMMENT
+
+
+def _comment_body_is_auto_link_notice(body: str) -> bool:
+    return _text_utilities._comment_body_is_auto_link_notice(body)
+
+
+def _comment_body_is_copilot_resume_nudge(body: str) -> bool:
+    return _text_utilities._comment_body_is_copilot_resume_nudge(body)
+
+
+def _github_get_list(
+    settings: ServerSettings, *, url: str, params: dict[str, str] | None = None
+) -> list[dict[str, Any]]:
+    from github_agent_orchestrator.server.dashboard.github_api import _github_get_list as _impl
+
+    return _impl(settings, url=url, params=params)
+
+
+def _github_patch_json(
+    settings: ServerSettings,
+    *,
+    url: str,
+    payload: dict[str, Any],
+    params: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    from github_agent_orchestrator.server.dashboard.github_api import _github_patch_json as _impl
+
+    return _impl(settings, url=url, payload=payload, params=params)
+
+
+def _list_open_pull_requests_raw(
+    settings: ServerSettings, *, repository: str, limit: int = 30
+) -> list[dict[str, Any]]:
+    from github_agent_orchestrator.server.dashboard.github_operations import (
+        list_open_pull_requests_raw as _impl,
+    )
+
+    return _impl(settings, repository=repository, limit=limit)
+
+
+def _get_pull_request(
+    settings: ServerSettings, *, repository: str, pr_number: int
+) -> dict[str, Any]:
+    from github_agent_orchestrator.server.dashboard.github_operations import (
+        get_pull_request as _impl,
+    )
+
+    return _impl(settings, repository=repository, pr_number=pr_number)
+
+
+def _search_issue_number_by_queue_marker(
+    settings: ServerSettings, *, repository: str, issue_title: str
+) -> int | None:
+    from github_agent_orchestrator.server.dashboard.queue_helpers import (
+        _search_issue_number_by_queue_marker as _impl,
+    )
+
+    return _impl(settings, repository=repository, issue_title=issue_title)
+
+
+def _normalize_issue_title(title: str) -> str:
+    from github_agent_orchestrator.server.dashboard.text_utilities import (
+        _normalize_issue_title as _impl,
+    )
+
+    return _impl(title)
+
+
+def _strip_fenced_code_blocks(markdown: str) -> str:
+    from github_agent_orchestrator.server.dashboard.text_utilities import (
+        _strip_fenced_code_blocks as _impl,
+    )
+
+    return _impl(markdown)
+
+
+def _utc_now() -> datetime:
+    from github_agent_orchestrator.server.dashboard.text_utilities import _utc_now as _impl
+
+    return _impl()
+
+
+def _list_issue_comments_raw(
+    settings: ServerSettings, *, repository: str, issue_number: int
+) -> list[dict[str, Any]]:
+    from github_agent_orchestrator.server.dashboard.github_operations import (
+        list_issue_comments_raw as _impl,
+    )
+
+    return _impl(settings, repository=repository, issue_number=issue_number)
+
+
+def _list_issue_events_raw(
+    settings: ServerSettings, *, repository: str, issue_number: int
+) -> list[dict[str, Any]]:
+    from github_agent_orchestrator.server.dashboard.github_operations import (
+        list_issue_events_raw as _impl,
+    )
+
+    return _impl(settings, repository=repository, issue_number=issue_number)
+
+
+def _github_graphql_post(
+    settings: ServerSettings, *, url: str, payload: dict[str, Any]
+) -> dict[str, Any]:
+    from github_agent_orchestrator.server.dashboard.github_api import _github_graphql_post as _impl
+
+    return _impl(settings, url=url, payload=payload)
 
 
 # Apply router decorators to imported loop action endpoints
@@ -236,6 +333,125 @@ def _review_actions_path_for_review_path(review_path: str) -> str:
     return f"{review_path}.actions.md"
 
 
+def _ensure_repo_text_file_present(
+    *,
+    settings: ServerSettings,
+    repo: str,
+    branch: str,
+    path: str,
+    content_text: str,
+    message: str,
+) -> None:
+    """Best-effort create-or-update for a text file in the target repository."""
+
+    url = _repo_api_url(settings, repository=repo, path=f"contents/{path}")
+    encoded = base64.b64encode(content_text.encode("utf-8")).decode("utf-8")
+    payload: dict[str, Any] = {
+        "message": message,
+        "content": encoded,
+        "branch": branch,
+    }
+
+    status, body = _github_put_json(settings, url=url, payload=payload)
+    if status == 201:
+        return
+    if status == 422:
+        existing = _github_get_json(settings, url=url, params={"ref": branch})
+        sha = existing.get("sha")
+        if isinstance(sha, str) and sha.strip():
+            payload["sha"] = sha
+            status2, _body2 = _github_put_json(settings, url=url, payload=payload)
+            if status2 in {200, 201}:
+                return
+
+    raise HTTPException(
+        status_code=502,
+        detail=f"Failed to write repo file (HTTP {status}) at {path}: {body}",
+    )
+
+
+def _delete_repo_file_if_present(
+    *,
+    settings: ServerSettings,
+    repo: str,
+    branch: str,
+    path: str,
+    sha: str,
+    message: str,
+) -> None:
+    url = _repo_api_url(settings, repository=repo, path=f"contents/{path}")
+    payload = {"message": message, "sha": sha, "branch": branch}
+    status, body = _github_delete_json(settings, url=url, payload=payload)
+    if status in {200, 204, 404}:
+        return
+    raise HTTPException(
+        status_code=502,
+        detail=f"Failed to delete repo file (HTTP {status}) at {path}: {body}",
+    )
+
+
+def _review_consumption_issue_has_linked_pull_requests(
+    *, timeline: list[dict[str, Any]]
+) -> bool:
+    """Conservative check: if timeline contains any cross-referenced PR, treat as linked."""
+
+    for ev in timeline:
+        if not isinstance(ev, dict):
+            continue
+        if ev.get("event") != "cross-referenced":
+            continue
+        src = ev.get("source")
+        if not isinstance(src, dict):
+            continue
+        issue = src.get("issue")
+        if not isinstance(issue, dict):
+            continue
+        if "pull_request" in issue:
+            return True
+    return False
+
+
+def _archive_review_and_actions_if_present(
+    *, settings: ServerSettings, repo: str, branch: str, review_path: str
+) -> None:
+    """Move a review artefact and its actions file (if present) into planning/reviews/completed/."""
+
+    completed_dir = "planning/reviews/completed"
+    actions_path = _review_actions_path_for_review_path(review_path)
+
+    for src_path in [review_path, actions_path]:
+        try:
+            content, sha = _get_repo_text_file(
+                settings,
+                repository=repo,
+                path=src_path,
+                ref=branch,
+            )
+        except HTTPException as e:
+            # Actions files are allowed to be missing.
+            if e.status_code == 404:
+                continue
+            raise
+
+        dest_path = f"{completed_dir}/{Path(src_path).name}"
+        _ensure_repo_text_file_present(
+            settings=settings,
+            repo=repo,
+            branch=branch,
+            path=dest_path,
+            content_text=content,
+            message=f"Archive {Path(src_path).name} (review complete)",
+        )
+        _delete_repo_file_if_present(
+            settings=settings,
+            repo=repo,
+            branch=branch,
+            path=src_path,
+            sha=sha,
+            message=f"Remove {Path(src_path).name} from active reviews (review complete)",
+        )
+
+
 def _pick_next_review_file(*, settings: ServerSettings, repo: str, branch: str) -> str | None:
     """Pick a review document to consume (stable ordering).
 
@@ -251,6 +467,10 @@ def _pick_next_review_file(*, settings: ServerSettings, repo: str, branch: str) 
     )
     candidates: list[str] = []
     for p in paths:
+        # Reviews under planning/reviews/completed/ are archived and must be ignored.
+        norm = p.replace("\\", "/")
+        if "/completed/" in norm:
+            continue
         name = Path(p).name.lower()
         if not name.startswith("review-"):
             continue
@@ -315,13 +535,46 @@ def _ensure_review_consumption_issue_exists(
             detail="ORCHESTRATOR_GITHUB_TOKEN is required to create review consumption issues",
         )
 
-    review_path = _pick_next_review_file(settings=settings, repo=repo, branch=branch)
-    if review_path is None:
-        raise HTTPException(
-            status_code=409,
-            detail="No review files found under planning/reviews (expected review-*.md)",
+    # If the next review was already processed and the last review-consumption run produced no PR
+    # (per the template's completion check), archive the review and move on.
+    review_path: str | None = None
+    actions_path: str | None = None
+    while True:
+        review_path = _pick_next_review_file(settings=settings, repo=repo, branch=branch)
+        if review_path is None:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "No uncompleted review files found under planning/reviews "
+                    "(expected review-*.md)"
+                ),
+            )
+
+        actions_path = _review_actions_path_for_review_path(review_path)
+        marker = f"{_REVIEW_CONSUMPTION_MARKER_PREFIX} {review_path}"
+        existing = _search_issue_number_by_body_marker(settings, repository=repo, marker=marker)
+        if existing is None:
+            break
+
+        issue = _github_get_json(
+            settings,
+            url=_repo_api_url(settings, repository=repo, path=f"issues/{existing}"),
         )
-    actions_path = _review_actions_path_for_review_path(review_path)
+        if not isinstance(issue, dict) or issue.get("state") != "closed":
+            break
+
+        timeline = _list_issue_timeline_raw(settings, repository=repo, issue_number=existing)
+        if _review_consumption_issue_has_linked_pull_requests(timeline=timeline):
+            break
+
+        # Closed review-consumption issue with no linked PR => completion check returned NO.
+        _archive_review_and_actions_if_present(
+            settings=settings,
+            repo=repo,
+            branch=branch,
+            review_path=review_path,
+        )
+        # Continue to the next review (if any).
 
     template_body = _load_review_consumption_template_or_raise(
         settings=settings, repo=repo, branch=branch
@@ -329,7 +582,7 @@ def _ensure_review_consumption_issue_exists(
     marker = f"{_REVIEW_CONSUMPTION_MARKER_PREFIX} {review_path}"
     body = (
         template_body.replace("{{REVIEW_PATH}}", review_path)
-        .replace("{{REVIEW_ACTIONS_PATH}}", actions_path)
+        .replace("{{REVIEW_ACTIONS_PATH}}", actions_path or "")
         .rstrip()
         + f"\n\n---\n\n<!-- {marker} -->\n"
     )

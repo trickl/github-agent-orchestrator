@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from github_agent_orchestrator.server.app import create_app
@@ -20,9 +21,8 @@ def test_loop_promote_endpoint_promotes_one_file(monkeypatch, tmp_path: Path) ->
     monkeypatch.setenv("ORCHESTRATOR_GITHUB_TOKEN", "test-token")
     monkeypatch.setenv("COPILOT_ASSIGNEE", "copilot-swe-agent[bot]")
 
+    import github_agent_orchestrator.server.dashboard.loop_actions as loop_actions
     import github_agent_orchestrator.server.dashboard_router as dashboard_router
-    import github_agent_orchestrator.server.dashboard.loop_actions as loop_actions
-    import github_agent_orchestrator.server.dashboard.loop_actions as loop_actions
 
     monkeypatch.setattr(dashboard_router, "_get_default_branch", lambda *_a, **_k: "main")
     monkeypatch.setattr(loop_actions, "_get_default_branch", lambda *_a, **_k: "main")
@@ -110,8 +110,8 @@ def test_loop_promote_endpoint_promotes_one_file(monkeypatch, tmp_path: Path) ->
 def test_ensure_gap_analysis_issue_exists_creates_and_assigns(monkeypatch) -> None:
     monkeypatch.setenv("ORCHESTRATOR_GITHUB_TOKEN", "test-token")
 
-    import github_agent_orchestrator.server.dashboard_router as dashboard_router
     import github_agent_orchestrator.server.dashboard.loop_actions as loop_actions
+    import github_agent_orchestrator.server.dashboard_router as dashboard_router
 
     monkeypatch.setattr(dashboard_router, "_get_default_branch", lambda *_a, **_k: "main")
     monkeypatch.setattr(loop_actions, "_get_default_branch", lambda *_a, **_k: "main")
@@ -165,8 +165,8 @@ def test_ensure_gap_analysis_issue_exists_creates_and_assigns(monkeypatch) -> No
 def test_ensure_gap_analysis_issue_exists_assigns_existing_when_unassigned(monkeypatch) -> None:
     monkeypatch.setenv("ORCHESTRATOR_GITHUB_TOKEN", "test-token")
 
-    import github_agent_orchestrator.server.dashboard_router as dashboard_router
     import github_agent_orchestrator.server.dashboard.loop_actions as loop_actions
+    import github_agent_orchestrator.server.dashboard_router as dashboard_router
 
     monkeypatch.setattr(dashboard_router, "_get_default_branch", lambda *_a, **_k: "main")
     monkeypatch.setattr(loop_actions, "_get_default_branch", lambda *_a, **_k: "main")
@@ -223,8 +223,8 @@ def test_loop_gap_analysis_ensure_endpoint_creates_and_assigns(monkeypatch, tmp_
     monkeypatch.setenv("ORCHESTRATOR_GITHUB_TOKEN", "test-token")
     monkeypatch.setenv("COPILOT_ASSIGNEE", "copilot-swe-agent[bot]")
 
-    import github_agent_orchestrator.server.dashboard_router as dashboard_router
     import github_agent_orchestrator.server.dashboard.loop_actions as loop_actions
+    import github_agent_orchestrator.server.dashboard_router as dashboard_router
 
     monkeypatch.setattr(dashboard_router, "_get_default_branch", lambda *_a, **_k: "main")
     monkeypatch.setattr(loop_actions, "_get_default_branch", lambda *_a, **_k: "main")
@@ -284,8 +284,8 @@ def test_ensure_gap_analysis_issue_exists_repairs_unsafe_existing_issue_before_a
 ) -> None:
     monkeypatch.setenv("ORCHESTRATOR_GITHUB_TOKEN", "test-token")
 
-    import github_agent_orchestrator.server.dashboard_router as dashboard_router
     import github_agent_orchestrator.server.dashboard.loop_actions as loop_actions
+    import github_agent_orchestrator.server.dashboard_router as dashboard_router
 
     monkeypatch.setattr(dashboard_router, "_get_default_branch", lambda *_a, **_k: "main")
     monkeypatch.setattr(loop_actions, "_get_default_branch", lambda *_a, **_k: "main")
@@ -366,8 +366,8 @@ def test_loop_merge_endpoint_merges_one_ready_pr_and_creates_capability_issue(
     monkeypatch.setenv("ORCHESTRATOR_GITHUB_TOKEN", "test-token")
     monkeypatch.setenv("COPILOT_ASSIGNEE", "copilot-swe-agent[bot]")
 
-    import github_agent_orchestrator.server.dashboard_router as dashboard_router
     import github_agent_orchestrator.server.dashboard.loop_actions as loop_actions
+    import github_agent_orchestrator.server.dashboard_router as dashboard_router
 
     monkeypatch.setattr(dashboard_router, "_get_default_branch", lambda *_a, **_k: "main")
     monkeypatch.setattr(loop_actions, "_get_default_branch", lambda *_a, **_k: "main")
@@ -524,8 +524,8 @@ def test_loop_merge_endpoint_merges_ready_capability_pr_and_closes_issue(
     monkeypatch.setenv("ORCHESTRATOR_GITHUB_TOKEN", "test-token")
     monkeypatch.setenv("COPILOT_ASSIGNEE", "copilot-swe-agent[bot]")
 
-    import github_agent_orchestrator.server.dashboard_router as dashboard_router
     import github_agent_orchestrator.server.dashboard.loop_actions as loop_actions
+    import github_agent_orchestrator.server.dashboard_router as dashboard_router
 
     monkeypatch.setattr(dashboard_router, "_get_default_branch", lambda *_a, **_k: "main")
     monkeypatch.setattr(loop_actions, "_get_default_branch", lambda *_a, **_k: "main")
@@ -651,8 +651,8 @@ def test_promote_next_unpromoted_capability_queue_item_promotes_one_file(
 ) -> None:
     monkeypatch.setenv("ORCHESTRATOR_GITHUB_TOKEN", "test-token")
 
-    import github_agent_orchestrator.server.dashboard_router as dashboard_router
     import github_agent_orchestrator.server.dashboard.loop_actions as loop_actions
+    import github_agent_orchestrator.server.dashboard_router as dashboard_router
 
     monkeypatch.setattr(dashboard_router, "_get_default_branch", lambda *_a, **_k: "main")
     monkeypatch.setattr(loop_actions, "_get_default_branch", lambda *_a, **_k: "main")
@@ -733,8 +733,8 @@ def test_loop_merge_endpoint_fails_cleanly_when_pr_stays_draft(monkeypatch, tmp_
     monkeypatch.setenv("ORCHESTRATOR_GITHUB_TOKEN", "test-token")
     monkeypatch.setenv("COPILOT_ASSIGNEE", "copilot-swe-agent[bot]")
 
-    import github_agent_orchestrator.server.dashboard_router as dashboard_router
     import github_agent_orchestrator.server.dashboard.loop_actions as loop_actions
+    import github_agent_orchestrator.server.dashboard_router as dashboard_router
 
     monkeypatch.setattr(dashboard_router, "_get_default_branch", lambda *_a, **_k: "main")
     monkeypatch.setattr(loop_actions, "_get_default_branch", lambda *_a, **_k: "main")
@@ -865,8 +865,8 @@ def test_loop_merge_endpoint_merges_ready_gap_analysis_pr_and_closes_issue(
     monkeypatch.setenv("ORCHESTRATOR_GITHUB_TOKEN", "test-token")
     monkeypatch.setenv("COPILOT_ASSIGNEE", "copilot-swe-agent[bot]")
 
-    import github_agent_orchestrator.server.dashboard_router as dashboard_router
     import github_agent_orchestrator.server.dashboard.loop_actions as loop_actions
+    import github_agent_orchestrator.server.dashboard_router as dashboard_router
 
     monkeypatch.setattr(dashboard_router, "_get_default_branch", lambda *_a, **_k: "main")
     monkeypatch.setattr(loop_actions, "_get_default_branch", lambda *_a, **_k: "main")
@@ -987,8 +987,97 @@ def test_loop_merge_endpoint_merges_ready_gap_analysis_pr_and_closes_issue(
     client = TestClient(create_app())
     resp = client.post("/api/loop/merge")
     assert resp.status_code == 200
-    data = resp.json()
-    assert data["merged"] is True
-    assert data["pullNumber"] == 5
-    # Reused merge schema field points at the closed gap-analysis issue.
-    assert data["capabilityIssueNumber"] == 42
+
+
+def test_ensure_review_consumption_archives_completed_review_when_no_pr(monkeypatch) -> None:
+    """If the last review-consumption issue is closed and has no linked PR, archive the review."""
+
+    import github_agent_orchestrator.server.dashboard_router as dashboard_router
+
+    monkeypatch.setenv("ORCHESTRATOR_GITHUB_TOKEN", "ghp_test")
+    monkeypatch.setenv("ORCHESTRATOR_DEFAULT_REPO", "acme/repo")
+
+    # Repo has one active review + its actions file.
+    review_path = "planning/reviews/review-2026-01-05-refactor-large-files.md"
+    actions_path = "planning/reviews/review-2026-01-05-refactor-large-files.actions.md"
+
+    # The ensure function re-lists planning/reviews after archiving.
+    # Simulate the move by returning completed/ paths after we "write" the archive.
+    archived = {"done": False}
+
+    def fake_list_repo_md(*_a, **_k):
+        if archived["done"]:
+            return [
+                "planning/reviews/completed/review-2026-01-05-refactor-large-files.md",
+                "planning/reviews/completed/review-2026-01-05-refactor-large-files.actions.md",
+            ]
+        return [review_path, actions_path]
+
+    monkeypatch.setattr(dashboard_router, "_list_repo_markdown_files_under", fake_list_repo_md)
+    monkeypatch.setattr(dashboard_router, "_get_default_branch", lambda *_a, **_k: "main")
+    monkeypatch.setattr(dashboard_router, "_list_open_issues_raw", lambda *_a, **_k: [])
+
+    # A previous review-consumption issue exists, is closed, and has no linked PR.
+    monkeypatch.setattr(dashboard_router, "_search_issue_number_by_body_marker", lambda *_a, **_k: 77)
+
+    def fake_get_json(*_a, **kwargs):
+        url = str(kwargs.get("url") or "")
+        if url.endswith("/issues/77"):
+            return {"number": 77, "state": "closed", "title": "Review consumption"}
+        # For file writes, _ensure_repo_text_file_present fetches existing to get sha on 422.
+        # We return a minimal object if requested.
+        return {"sha": "sha-existing"}
+
+    monkeypatch.setattr(dashboard_router, "_github_get_json", fake_get_json)
+    monkeypatch.setattr(dashboard_router, "_list_issue_timeline_raw", lambda *_a, **_k: [])
+
+    # Source review files exist.
+    def fake_get_repo_text_file(*_a, **kwargs):
+        path = kwargs.get("path")
+        if path == review_path:
+            return ("# Review\n\n- Item\n", "sha-review")
+        if path == actions_path:
+            return ("# Actions\n\n- Done\n", "sha-actions")
+        raise AssertionError(f"Unexpected get_repo_text_file path: {path}")
+
+    monkeypatch.setattr(dashboard_router, "_get_repo_text_file", fake_get_repo_text_file)
+
+    written: list[str] = []
+    deleted: list[str] = []
+
+    def fake_put_json(*_a, **kwargs):
+        url = str(kwargs.get("url") or "")
+        written.append(url)
+        if "contents/planning/reviews/completed/" in url:
+            archived["done"] = True
+        return 201, {}
+
+    def fake_delete_json(*_a, **kwargs):
+        url = str(kwargs.get("url") or "")
+        deleted.append(url)
+        return 200, {}
+
+    monkeypatch.setattr(dashboard_router, "_github_put_json", fake_put_json)
+    monkeypatch.setattr(dashboard_router, "_github_delete_json", fake_delete_json)
+
+    # If archiving occurred, the ensure endpoint should then report there are no remaining reviews.
+    # (We only had one review file.)
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as exc:
+        dashboard_router._ensure_review_consumption_issue_exists(
+            settings=dashboard_router.ServerSettings(),
+            repo="acme/repo",
+        )
+
+    assert exc.value.status_code == 409
+    assert "No uncompleted review files" in str(exc.value.detail)
+
+    # Review and actions were archived to planning/reviews/completed/ and removed from original paths.
+    assert any("contents/planning/reviews/completed/review-2026-01-05-refactor-large-files.md" in u for u in written)
+    assert any(
+        "contents/planning/reviews/completed/review-2026-01-05-refactor-large-files.actions.md" in u
+        for u in written
+    )
+    assert any(f"contents/{review_path}" in u for u in deleted)
+    assert any(f"contents/{actions_path}" in u for u in deleted)

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -14,17 +14,20 @@ from github_agent_orchestrator.server.app import create_app
 @pytest.fixture(autouse=True)
 def mock_automation(monkeypatch):
     """Auto-mock automation functions for all tests to prevent real GitHub API calls."""
-    from github_agent_orchestrator.server.dashboard import automation_auto_link, automation_auto_resume
-    
+    from github_agent_orchestrator.server.dashboard import (
+        automation_auto_link,
+        automation_auto_resume,
+    )
+
     monkeypatch.setattr(
         automation_auto_link,
         "maybe_auto_link_focused_issue_to_pr",
-        lambda *args, **kwargs: None
+        lambda *_args, **_kwargs: None,
     )
     monkeypatch.setattr(
         automation_auto_resume,
         "maybe_auto_resume_copilot_after_rate_limit",
-        lambda *args, **kwargs: None
+        lambda *_args, **_kwargs: None,
     )
 
 
@@ -112,7 +115,6 @@ def test_loop_status_review_mode_stage_1a_focus_review_issue(monkeypatch, tmp_pa
     monkeypatch.setenv("ORCHESTRATOR_DEFAULT_REPO", "acme/repo")
     monkeypatch.setenv("ORCHESTRATOR_LOOP_MODE", "review")
 
-    import github_agent_orchestrator.server.dashboard_router as dashboard_router
 
     _dual_patch(monkeypatch, "_list_repo_markdown_files_under", lambda *_a, **_k: [])
     _dual_patch(monkeypatch, "_list_open_pull_requests_raw", lambda *_a, **_k: [])
@@ -151,7 +153,6 @@ def test_loop_status_review_mode_stage_1b_focus_includes_pr(monkeypatch, tmp_pat
     monkeypatch.setenv("ORCHESTRATOR_DEFAULT_REPO", "acme/repo")
     monkeypatch.setenv("ORCHESTRATOR_LOOP_MODE", "review")
 
-    import github_agent_orchestrator.server.dashboard_router as dashboard_router
 
     _dual_patch(monkeypatch, "_list_repo_markdown_files_under", lambda *_a, **_k: [])
     _dual_patch(monkeypatch, "_list_open_pull_requests_raw", lambda *_a, **_k: [])
@@ -218,7 +219,6 @@ def test_loop_status_review_mode_stage_2a_focus_review_queue_item(
     monkeypatch.setenv("ORCHESTRATOR_DEFAULT_REPO", "acme/repo")
     monkeypatch.setenv("ORCHESTRATOR_LOOP_MODE", "review")
 
-    import github_agent_orchestrator.server.dashboard_router as dashboard_router
 
     def fake_list_repo_md(*_args, **kwargs):
         dir_path = kwargs.get("dir_path")
@@ -260,7 +260,6 @@ def test_loop_status_stage_c_when_issue_exists_but_no_pr(monkeypatch, tmp_path: 
     monkeypatch.setenv("ORCHESTRATOR_UI_DIST", str(tmp_path / "ui" / "dist"))
     monkeypatch.setenv("ORCHESTRATOR_DEFAULT_REPO", "acme/repo")
 
-    import github_agent_orchestrator.server.dashboard_router as dashboard_router
 
     def fake_list_repo_md(*_args, **kwargs):
         dir_path = kwargs.get("dir_path")
@@ -312,7 +311,6 @@ def test_loop_status_stage_d_when_processed_has_ready_pr(monkeypatch, tmp_path: 
     monkeypatch.setenv("ORCHESTRATOR_UI_DIST", str(tmp_path / "ui" / "dist"))
     monkeypatch.setenv("ORCHESTRATOR_DEFAULT_REPO", "acme/repo")
 
-    import github_agent_orchestrator.server.dashboard_router as dashboard_router
 
     def fake_list_repo_md(*_args, **kwargs):
         dir_path = kwargs.get("dir_path")
@@ -387,7 +385,6 @@ def test_loop_status_stage_d_when_processed_has_review_requested_event_even_with
     monkeypatch.setenv("ORCHESTRATOR_UI_DIST", str(tmp_path / "ui" / "dist"))
     monkeypatch.setenv("ORCHESTRATOR_DEFAULT_REPO", "acme/repo")
 
-    import github_agent_orchestrator.server.dashboard_router as dashboard_router
 
     def fake_list_repo_md(*_args, **kwargs):
         dir_path = kwargs.get("dir_path")
@@ -460,7 +457,6 @@ def test_loop_status_does_not_advance_when_pr_is_wip(monkeypatch, tmp_path: Path
     monkeypatch.setenv("ORCHESTRATOR_UI_DIST", str(tmp_path / "ui" / "dist"))
     monkeypatch.setenv("ORCHESTRATOR_DEFAULT_REPO", "acme/repo")
 
-    import github_agent_orchestrator.server.dashboard_router as dashboard_router
 
     def fake_list_repo_md(*_args, **kwargs):
         dir_path = kwargs.get("dir_path")
@@ -524,7 +520,6 @@ def test_loop_status_stage_a_exposes_gap_pr_ready_for_merge(monkeypatch, tmp_pat
     monkeypatch.setenv("ORCHESTRATOR_UI_DIST", str(tmp_path / "ui" / "dist"))
     monkeypatch.setenv("ORCHESTRATOR_DEFAULT_REPO", "acme/repo")
 
-    import github_agent_orchestrator.server.dashboard_router as dashboard_router
 
     # No queue artefacts; loop is governed by open gap-analysis issue.
     def fake_list_repo_md(*_args, **kwargs):
@@ -606,7 +601,6 @@ def test_loop_status_stage_1c_when_gap_pr_is_draft_but_review_requested(
     monkeypatch.setenv("ORCHESTRATOR_UI_DIST", str(tmp_path / "ui" / "dist"))
     monkeypatch.setenv("ORCHESTRATOR_DEFAULT_REPO", "acme/repo")
 
-    import github_agent_orchestrator.server.dashboard_router as dashboard_router
 
     # No queue artefacts; loop is governed by open gap-analysis issue.
     _dual_patch(
@@ -679,7 +673,6 @@ def test_loop_status_stage_e_when_open_update_capability_issue_exists(
     monkeypatch.setenv("ORCHESTRATOR_UI_DIST", str(tmp_path / "ui" / "dist"))
     monkeypatch.setenv("ORCHESTRATOR_DEFAULT_REPO", "acme/repo")
 
-    import github_agent_orchestrator.server.dashboard_router as dashboard_router
 
     def fake_list_repo_md(*_args, **kwargs):
         dir_path = kwargs.get("dir_path")
@@ -771,7 +764,6 @@ def test_loop_status_stage_g_when_open_update_capability_issue_has_ready_pr(
     monkeypatch.setenv("ORCHESTRATOR_UI_DIST", str(tmp_path / "ui" / "dist"))
     monkeypatch.setenv("ORCHESTRATOR_DEFAULT_REPO", "acme/repo")
 
-    import github_agent_orchestrator.server.dashboard_router as dashboard_router
 
     def fake_list_repo_md(*_args, **kwargs):
         dir_path = kwargs.get("dir_path")
