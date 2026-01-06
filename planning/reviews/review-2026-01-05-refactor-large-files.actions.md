@@ -372,7 +372,7 @@ Modified:
 
 PR #54 successfully completed the final extraction in the dashboard_router.py refactoring series, moving ~1000 lines of loop status computation and stage reporting logic into a dedicated `loop_status.py` module.
 
-**Created `server/dashboard/loop_status.py` (1042 lines)**
+**Created `src/github_agent_orchestrator/server/dashboard/loop_status.py` (1042 lines)**
 - Module docstring explaining purpose: loop status computation and stage reporting for the orchestrator dashboard
 - **Core loop status functions (2)**:
   - `loop_status()` - Public FastAPI endpoint for UI-friendly loop status summary
@@ -381,7 +381,7 @@ PR #54 successfully completed the final extraction in the dashboard_router.py re
   - `_queue_file_is_excluded_for_loop_mode()` - Determines if a queue file should be excluded based on loop mode
 - **Lazy imports pattern**: Uses lazy imports for `dashboard_router._settings()` and `_make_github_issue_url()` to avoid circular dependencies
 
-**Modified `server/dashboard_router.py`**
+**Modified `src/github_agent_orchestrator/server/dashboard_router.py`**
 - **Before**: 1834 lines
 - **After**: 896 lines (938 line reduction, 51%)
 - Imports extracted endpoint with alias: `from ...loop_status import loop_status as loop_status`
@@ -428,10 +428,10 @@ Lazily imported helpers include:
 #### Files Created/Modified
 
 Created:
-- `server/dashboard/loop_status.py` (1042 lines, 3 functions)
+- `src/github_agent_orchestrator/server/dashboard/loop_status.py` (1042 lines, 3 functions)
 
 Modified:
-- `server/dashboard_router.py` (1834 → 896 lines)
+- `src/github_agent_orchestrator/server/dashboard_router.py` (1834 → 896 lines)
 - `tests/unit/test_dashboard_api_loop_status.py` (221 line changes for dual patching and auto-mocking)
 
 #### Review Items Completed
