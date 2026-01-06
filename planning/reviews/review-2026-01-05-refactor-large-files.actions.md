@@ -198,24 +198,95 @@ This pattern:
 - **Verification**: All tests pass, no circular imports, no behavior changes
 - **Architectural blocker**: RESOLVED
 
+### Phase 3: Automation Module Extraction (COMPLETED)
+
+**Status**: Completed  
+**Addressed by**: PR #42 (merged 2026-01-05)
+
+PR #42 successfully extracted automation feature modules from `dashboard_router.py`, continuing the incremental refactoring strategy.
+
+**Created `src/github_agent_orchestrator/server/dashboard/automation_auto_link.py` (249 lines)**
+- Module docstring explaining purpose: auto-linking issues to PRs when GitHub closing keywords missing
+- Main function: `maybe_auto_link_focused_issue_to_pr()` - detects likely PRs and adds "Fixes #N"
+- Helper functions: `_issue_is_mentioned_as_closing()`, `_issue_is_mentioned_as_closing_outside_code_blocks()`, `_copilot_login_candidates()`
+- Uses lazy imports pattern: imports `dashboard_router` inside function body to maintain test mock compatibility
+- Enables tests patching `dashboard_router.*` to continue working unchanged
+
+**Created `src/github_agent_orchestrator/server/dashboard/automation_auto_resume.py` (179 lines)**
+- Module docstring explaining purpose: auto-resuming Copilot after rate limit failures
+- Main function: `maybe_auto_resume_copilot_after_rate_limit()` - posts resume nudge after failures
+- Helper function: `_copilot_login_candidates()` - identifies Copilot account logins
+- Uses lazy imports pattern: imports `dashboard_router` inside function body to maintain test mock compatibility
+- Both modules share `_copilot_login_candidates()` helper (each imports independently)
+
+**Modified `src/github_agent_orchestrator/server/dashboard_router.py`**
+- **Before**: 4038 lines
+- **After**: 3667 lines (371 line reduction, 9.2%)
+- Imports new automation modules with aliasing pattern (functions remain accessible as underscored names)
+- Deleted moved function definitions (377 lines removed, 6 lines of imports added)
+- No behavior changes (functions moved verbatim)
+
+#### Technical Approach: Lazy Imports
+
+PR #42 used a different pattern than earlier extractions to avoid circular dependencies while maintaining test compatibility:
+
+```python
+# Inside extracted modules, import dashboard_router lazily:
+def maybe_auto_link_focused_issue_to_pr(...):
+    from github_agent_orchestrator.server import dashboard_router
+    # Now uses dashboard_router._get_pull_request() etc.
+    # Tests patching dashboard_router.* continue working
+```
+
+This approach:
+- Avoids circular imports at module load time
+- Preserves test mocking compatibility (tests patch `dashboard_router._get_pull_request` etc.)
+- Functions moved verbatim with no logic changes
+- No test modifications required
+
+#### Implementation Summary
+
+- **Functions extracted**: 
+  - 5 automation functions → `automation_auto_link.py` and `automation_auto_resume.py`
+- **Line count reduction**: 371 lines (4038 → 3667)
+- **Pattern followed**: Move-first verbatim extraction with lazy imports for circular dependency resolution
+- **Verification**: All previously passing tests continue passing; one pre-existing test failure in `test_loop_status_auto_resumes_copilot_from_issue_events_fallback` remains unchanged
+
+#### Files Created/Modified
+
+Created:
+- `src/github_agent_orchestrator/server/dashboard/automation_auto_link.py` (249 lines)
+- `src/github_agent_orchestrator/server/dashboard/automation_auto_resume.py` (179 lines)
+
+Modified:
+- `src/github_agent_orchestrator/server/dashboard_router.py` (4038 → 3667 lines)
+
+#### Review Items Completed
+
+- ✅ **A.2**: `server/dashboard/automation_auto_link.py` - Auto-link helpers extracted (COMPLETED)
+- ✅ **A.3**: `server/dashboard/automation_auto_resume.py` - Auto-resume helpers extracted (COMPLETED)
+
 ### Current Status
 
 - ✅ **Phase 1 completed**: Pure utilities extracted (PR #30)
 - ✅ **Phase 2 foundation**: Architectural blockers resolved, first extraction complete (PR #36)
-- `dashboard_router.py` reduced from 4746 → 4661 → 4038 lines (14.9% total reduction)
-- New foundation modules enable remaining extractions without circular dependencies
+- ✅ **Phase 3 completed**: Automation modules extracted (PR #42)
+- `dashboard_router.py` reduced from 4746 → 4661 → 4038 → 3667 lines (22.7% total reduction)
+- Lazy imports pattern established for cases where architectural refactoring isn't feasible
+- Three of five planned extractions completed
 
 ### Remaining Work
 
-Three more extractions can now follow the established pattern (~2270 lines remain):
+Two more extractions remain to reach target (need to reduce by ~3067 lines):
 
 1. ✅ ~~`server/dashboard/github_issue_pr_helpers.py`~~ - Timeline/listing helpers and PR evaluation (COMPLETED in PR #36)
-2. `server/dashboard/automation_auto_link.py` - Auto-link helpers (~200 lines)
-3. `server/dashboard/automation_auto_resume.py` - Auto-resume helpers (~150 lines)
+2. ✅ ~~`server/dashboard/automation_auto_link.py`~~ - Auto-link helpers (COMPLETED in PR #42)
+3. ✅ ~~`server/dashboard/automation_auto_resume.py`~~ - Auto-resume helpers (COMPLETED in PR #42)
 4. `server/dashboard/loop_actions.py` - Promote/merge helpers (~1300 lines)
 5. `server/dashboard/loop_status.py` - Loop-stage computation helpers (~920 lines)
 
 Target: `dashboard_router.py` at ~600 lines (87% total reduction from original 4746 lines).
+Remaining reduction needed: ~3067 lines (currently 3667, target 600).
 
 ## Review Item C: Tackle `orchestrator/main.py` and `orchestrator/github/client.py` (COMPLETED)
 
