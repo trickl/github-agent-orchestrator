@@ -410,7 +410,8 @@ def _ensure_gap_analysis_issue_exists(*, settings: ServerSettings, repo: str) ->
         "issueUrl": _make_github_issue_url(repo, issue_num),
         "assigned": assigned,
     }
-@router.post("/loop/promote")
+
+
 def promote_next_pending_issue_queue_item(request: Request) -> dict[str, object]:
     """Step 2a action: promote one pending development queue file.
 

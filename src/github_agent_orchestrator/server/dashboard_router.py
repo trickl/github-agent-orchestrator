@@ -101,6 +101,11 @@ from github_agent_orchestrator.server.dashboard.loop_actions import (
     promote_next_pending_issue_queue_item as promote_next_pending_issue_queue_item,
     ensure_gap_analysis_issue as ensure_gap_analysis_issue,
     merge_next_ready_development_pull_request as merge_next_ready_development_pull_request,
+    _ensure_gap_analysis_issue_exists as _ensure_gap_analysis_issue_exists,
+    _load_gap_analysis_template_or_raise as _load_gap_analysis_template_or_raise,
+    _promote_next_unpromoted_capability_queue_item as _promote_next_unpromoted_capability_queue_item,
+    _promote_next_unpromoted_development_queue_item as _promote_next_unpromoted_development_queue_item,
+    _merge_next_ready_pull_request as _merge_next_ready_pull_request,
 )
 
 router = APIRouter()
