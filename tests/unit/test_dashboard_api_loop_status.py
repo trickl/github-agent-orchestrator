@@ -5,9 +5,27 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable
 
+import pytest
 from fastapi.testclient import TestClient
 
 from github_agent_orchestrator.server.app import create_app
+
+
+@pytest.fixture(autouse=True)
+def mock_automation(monkeypatch):
+    """Auto-mock automation functions for all tests to prevent real GitHub API calls."""
+    from github_agent_orchestrator.server.dashboard import automation_auto_link, automation_auto_resume
+    
+    monkeypatch.setattr(
+        automation_auto_link,
+        "maybe_auto_link_focused_issue_to_pr",
+        lambda *args, **kwargs: None
+    )
+    monkeypatch.setattr(
+        automation_auto_resume,
+        "maybe_auto_resume_copilot_after_rate_limit",
+        lambda *args, **kwargs: None
+    )
 
 
 def _dual_patch(monkeypatch: Any, attr_name: str, value: Any) -> None:
@@ -15,7 +33,7 @@ def _dual_patch(monkeypatch: Any, attr_name: str, value: Any) -> None:
 
     Since loop_status functions were extracted from dashboard_router, tests need
     to patch both modules to ensure mocks work correctly regardless of import order.
-    
+
     Some functions may only exist in loop_status now (if they were moved and not
     imported back into dashboard_router), so we check before patching dashboard_router.
     """
@@ -24,7 +42,7 @@ def _dual_patch(monkeypatch: Any, attr_name: str, value: Any) -> None:
 
     # Always patch loop_status (where the actual implementation lives)
     monkeypatch.setattr(loop_status, attr_name, value)
-    
+
     # Also patch dashboard_router if the attribute exists there
     if hasattr(dashboard_router, attr_name):
         monkeypatch.setattr(dashboard_router, attr_name, value)
@@ -101,8 +119,8 @@ def test_loop_status_review_mode_stage_1a_focus_review_issue(monkeypatch, tmp_pa
     _dual_patch(monkeypatch, "_list_issue_timeline_raw", lambda *_a, **_k: [])
     _dual_patch(monkeypatch, "_get_pull_request", lambda *_a, **_k: {})
 
-    monkeypatch.setattr(
-        dashboard_router,
+    _dual_patch(
+        monkeypatch,
         "_list_open_issues_raw",
         lambda *_a, **_k: [
             {
@@ -151,8 +169,8 @@ def test_loop_status_review_mode_stage_1b_focus_includes_pr(monkeypatch, tmp_pat
         return []
 
     _dual_patch(monkeypatch, "_list_issue_timeline_raw", fake_issue_timeline)
-    monkeypatch.setattr(
-        dashboard_router,
+    _dual_patch(
+        monkeypatch,
         "_get_pull_request",
         lambda *_a, **_k: {
             "number": 5,
@@ -166,8 +184,8 @@ def test_loop_status_review_mode_stage_1b_focus_includes_pr(monkeypatch, tmp_pat
         },
     )
 
-    monkeypatch.setattr(
-        dashboard_router,
+    _dual_patch(
+        monkeypatch,
         "_list_open_issues_raw",
         lambda *_a, **_k: [
             {
@@ -265,8 +283,8 @@ def test_loop_status_stage_c_when_issue_exists_but_no_pr(monkeypatch, tmp_path: 
     _dual_patch(monkeypatch, "_get_repo_text_file", fake_get_repo_text_file)
 
     # Open issue matches the pending file title, but no PR cross-references exist.
-    monkeypatch.setattr(
-        dashboard_router,
+    _dual_patch(
+        monkeypatch,
         "_list_open_issues_raw",
         lambda *_a, **_k: [{"number": 101, "title": "Dev: One", "state": "open"}],
     )
@@ -317,16 +335,16 @@ def test_loop_status_stage_d_when_processed_has_ready_pr(monkeypatch, tmp_path: 
     _dual_patch(monkeypatch, "_get_repo_text_file", fake_get_repo_text_file)
 
     # Open issue matches the queue file title.
-    monkeypatch.setattr(
-        dashboard_router,
+    _dual_patch(
+        monkeypatch,
         "_list_open_issues_raw",
         lambda *_a, **_k: [{"number": 101, "title": "Dev: One", "state": "open"}],
     )
     _dual_patch(monkeypatch, "_list_open_pull_requests_raw", lambda *_a, **_k: [])
 
     # Timeline cross-reference to PR #5.
-    monkeypatch.setattr(
-        dashboard_router,
+    _dual_patch(
+        monkeypatch,
         "_list_issue_timeline_raw",
         lambda *_a, **_k: [
             {
@@ -337,8 +355,8 @@ def test_loop_status_stage_d_when_processed_has_ready_pr(monkeypatch, tmp_path: 
     )
 
     # PR is open, non-draft, review requested, and conflict-free.
-    monkeypatch.setattr(
-        dashboard_router,
+    _dual_patch(
+        monkeypatch,
         "_get_pull_request",
         lambda *_a, **_k: {
             "number": 5,
@@ -388,8 +406,8 @@ def test_loop_status_stage_d_when_processed_has_review_requested_event_even_with
         lambda *_a, **_k: ("Dev: One\n\nBody\n", "sha-1"),
     )
 
-    monkeypatch.setattr(
-        dashboard_router,
+    _dual_patch(
+        monkeypatch,
         "_list_open_issues_raw",
         lambda *_a, **_k: [{"number": 101, "title": "Dev: One", "state": "open"}],
     )
@@ -412,8 +430,8 @@ def test_loop_status_stage_d_when_processed_has_review_requested_event_even_with
     _dual_patch(monkeypatch, "_list_issue_timeline_raw", fake_timeline)
 
     # PR is open and conflict-free, but requested_reviewers is empty (GitHub clears it after review).
-    monkeypatch.setattr(
-        dashboard_router,
+    _dual_patch(
+        monkeypatch,
         "_get_pull_request",
         lambda *_a, **_k: {
             "number": 5,
@@ -460,14 +478,14 @@ def test_loop_status_does_not_advance_when_pr_is_wip(monkeypatch, tmp_path: Path
         "_get_repo_text_file",
         lambda *_a, **_k: ("Dev: One\n\nBody\n", "sha-1"),
     )
-    monkeypatch.setattr(
-        dashboard_router,
+    _dual_patch(
+        monkeypatch,
         "_list_open_issues_raw",
         lambda *_a, **_k: [{"number": 101, "title": "Dev: One", "state": "open"}],
     )
     _dual_patch(monkeypatch, "_list_open_pull_requests_raw", lambda *_a, **_k: [])
-    monkeypatch.setattr(
-        dashboard_router,
+    _dual_patch(
+        monkeypatch,
         "_list_issue_timeline_raw",
         lambda *_a, **_k: [
             {
@@ -476,8 +494,8 @@ def test_loop_status_does_not_advance_when_pr_is_wip(monkeypatch, tmp_path: Path
             }
         ],
     )
-    monkeypatch.setattr(
-        dashboard_router,
+    _dual_patch(
+        monkeypatch,
         "_get_pull_request",
         lambda *_a, **_k: {
             "number": 5,
@@ -521,8 +539,8 @@ def test_loop_status_stage_a_exposes_gap_pr_ready_for_merge(monkeypatch, tmp_pat
 
     _dual_patch(monkeypatch, "_list_repo_markdown_files_under", fake_list_repo_md)
 
-    monkeypatch.setattr(
-        dashboard_router,
+    _dual_patch(
+        monkeypatch,
         "_list_open_issues_raw",
         lambda *_a, **_k: [
             {
@@ -535,8 +553,8 @@ def test_loop_status_stage_a_exposes_gap_pr_ready_for_merge(monkeypatch, tmp_pat
     _dual_patch(monkeypatch, "_list_open_pull_requests_raw", lambda *_a, **_k: [])
 
     # Gap-analysis issue timeline cross-references PR #5.
-    monkeypatch.setattr(
-        dashboard_router,
+    _dual_patch(
+        monkeypatch,
         "_list_issue_timeline_raw",
         lambda *_a, **_k: [
             {
@@ -546,8 +564,8 @@ def test_loop_status_stage_a_exposes_gap_pr_ready_for_merge(monkeypatch, tmp_pat
         ],
     )
 
-    monkeypatch.setattr(
-        dashboard_router,
+    _dual_patch(
+        monkeypatch,
         "_get_pull_request",
         lambda *_a, **_k: {
             "number": 5,
@@ -591,14 +609,14 @@ def test_loop_status_stage_1c_when_gap_pr_is_draft_but_review_requested(
     import github_agent_orchestrator.server.dashboard_router as dashboard_router
 
     # No queue artefacts; loop is governed by open gap-analysis issue.
-    monkeypatch.setattr(
-        dashboard_router,
+    _dual_patch(
+        monkeypatch,
         "_list_repo_markdown_files_under",
         lambda *_a, **_k: [],
     )
 
-    monkeypatch.setattr(
-        dashboard_router,
+    _dual_patch(
+        monkeypatch,
         "_list_open_issues_raw",
         lambda *_a, **_k: [
             {
@@ -612,8 +630,8 @@ def test_loop_status_stage_1c_when_gap_pr_is_draft_but_review_requested(
     _dual_patch(monkeypatch, "_list_open_pull_requests_raw", lambda *_a, **_k: [])
 
     # Gap-analysis issue timeline cross-references PR #5.
-    monkeypatch.setattr(
-        dashboard_router,
+    _dual_patch(
+        monkeypatch,
         "_list_issue_timeline_raw",
         lambda *_a, **_k: [
             {
@@ -625,8 +643,8 @@ def test_loop_status_stage_1c_when_gap_pr_is_draft_but_review_requested(
 
     # Draft PR with review requested should still count as "ready" for the merge step,
     # because the merge endpoint may mark it ready-for-review before merging.
-    monkeypatch.setattr(
-        dashboard_router,
+    _dual_patch(
+        monkeypatch,
         "_get_pull_request",
         lambda *_a, **_k: {
             "number": 5,
@@ -673,8 +691,8 @@ def test_loop_status_stage_e_when_open_update_capability_issue_exists(
             return []
         return []
 
-    monkeypatch.setattr(
-        dashboard_router,
+    _dual_patch(
+        monkeypatch,
         "_list_repo_markdown_files_under",
         fake_list_repo_md,
     )
@@ -686,8 +704,8 @@ def test_loop_status_stage_e_when_open_update_capability_issue_exists(
     )
 
     # Both a development issue and an Update Capability issue are open; capability should win.
-    monkeypatch.setattr(
-        dashboard_router,
+    _dual_patch(
+        monkeypatch,
         "_list_open_issues_raw",
         lambda *_a, **_k: [
             {"number": 101, "title": "Dev: One", "state": "open"},
@@ -765,16 +783,16 @@ def test_loop_status_stage_g_when_open_update_capability_issue_has_ready_pr(
             return []
         return []
 
-    monkeypatch.setattr(
-        dashboard_router,
+    _dual_patch(
+        monkeypatch,
         "_list_repo_markdown_files_under",
         fake_list_repo_md,
     )
 
     _dual_patch(monkeypatch, "_get_repo_text_file", lambda *_a, **_k: ("", "sha"))
 
-    monkeypatch.setattr(
-        dashboard_router,
+    _dual_patch(
+        monkeypatch,
         "_list_open_issues_raw",
         lambda *_a, **_k: [
             {
