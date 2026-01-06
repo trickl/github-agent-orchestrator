@@ -463,7 +463,7 @@ All planned extractions completed:
 
 **Original target**: ~600 lines (87% total reduction).
 
-**Note**: The final line count of 896 lines is slightly above the target of ~600 lines, but still represents a significant achievement in reducing complexity. The remaining 296 lines consist of:
+**Note**: The final line count of 896 lines is 296 lines above the original target of ~600 lines, but still represents a significant achievement in reducing complexity (81.1% reduction from the original 4746 lines). The remaining 296 lines consist of:
 - Route declarations and router setup
 - Request context helpers (`_settings()`, `_active_repo()`, `_make_github_issue_url()`)
 - Issue assignment logic (`_assign_issue_to_copilot()`)
