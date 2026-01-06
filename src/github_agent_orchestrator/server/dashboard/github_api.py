@@ -17,6 +17,14 @@ from fastapi import HTTPException
 from github_agent_orchestrator.server.config import ServerSettings
 
 
+TOKEN_ACCESS_HINT = (
+    "Check ORCHESTRATOR_GITHUB_TOKEN (missing/expired/insufficient scopes) and that it "
+    "has access to the repository."
+)
+ERR_UNEXPECTED_GITHUB_API_RESPONSE = "Unexpected GitHub API response"
+ERR_UNEXPECTED_GITHUB_GRAPHQL_RESPONSE = "Unexpected GitHub GraphQL response"
+
+
 def _github_headers(settings: ServerSettings) -> dict[str, str]:
     headers = {
         "Accept": "application/vnd.github+json",
@@ -80,10 +88,7 @@ def _github_graphql_post(
         status = resp.status_code
         hint = ""
         if status in {401, 403}:
-            hint = (
-                "Check ORCHESTRATOR_GITHUB_TOKEN (missing/expired/insufficient scopes) and that it "
-                "has access to the repository."
-            )
+            hint = TOKEN_ACCESS_HINT
         raise HTTPException(
             status_code=502,
             detail=f"GitHub GraphQL request failed with HTTP {status} for {url}. {hint}".strip(),
@@ -93,10 +98,10 @@ def _github_graphql_post(
     try:
         data = resp.json()
     except Exception as e:
-        raise HTTPException(status_code=502, detail="Unexpected GitHub GraphQL response") from e
+        raise HTTPException(status_code=502, detail=ERR_UNEXPECTED_GITHUB_GRAPHQL_RESPONSE) from e
 
     if not isinstance(data, dict):
-        raise HTTPException(status_code=502, detail="Unexpected GitHub GraphQL response")
+        raise HTTPException(status_code=502, detail=ERR_UNEXPECTED_GITHUB_GRAPHQL_RESPONSE)
     return data
 
 
@@ -134,10 +139,7 @@ def _github_get_json(
         status = resp.status_code
         hint = ""
         if status in {401, 403}:
-            hint = (
-                "Check ORCHESTRATOR_GITHUB_TOKEN (missing/expired/insufficient scopes) and that it "
-                "has access to the repository."
-            )
+            hint = TOKEN_ACCESS_HINT
         elif status == 404:
             hint = (
                 "Repository or path not found. If the repo is private, GitHub may return 404 when the "
@@ -151,7 +153,7 @@ def _github_get_json(
 
     data: Any = resp.json()
     if not isinstance(data, dict):
-        raise HTTPException(status_code=502, detail="Unexpected GitHub API response")
+        raise HTTPException(status_code=502, detail=ERR_UNEXPECTED_GITHUB_API_RESPONSE)
     return data
 
 
@@ -175,10 +177,7 @@ def _github_post_json(
         status = resp.status_code
         hint = ""
         if status in {401, 403}:
-            hint = (
-                "Check ORCHESTRATOR_GITHUB_TOKEN (missing/expired/insufficient scopes) and that it "
-                "has access to the repository."
-            )
+            hint = TOKEN_ACCESS_HINT
         elif status == 404:
             hint = (
                 "Repository or endpoint not found. If the repo is private, GitHub may return 404 when the "
@@ -192,7 +191,7 @@ def _github_post_json(
 
     data: Any = resp.json()
     if not isinstance(data, dict):
-        raise HTTPException(status_code=502, detail="Unexpected GitHub API response")
+        raise HTTPException(status_code=502, detail=ERR_UNEXPECTED_GITHUB_API_RESPONSE)
     return data
 
 
@@ -282,10 +281,7 @@ def _github_patch_json(
         status = resp.status_code
         hint = ""
         if status in {401, 403}:
-            hint = (
-                "Check ORCHESTRATOR_GITHUB_TOKEN (missing/expired/insufficient scopes) and that it "
-                "has access to the repository."
-            )
+            hint = TOKEN_ACCESS_HINT
         elif status == 404:
             hint = (
                 "Repository or endpoint not found. If the repo is private, GitHub may return 404 when the "
@@ -299,7 +295,7 @@ def _github_patch_json(
 
     data: Any = resp.json()
     if not isinstance(data, dict):
-        raise HTTPException(status_code=502, detail="Unexpected GitHub API response")
+        raise HTTPException(status_code=502, detail=ERR_UNEXPECTED_GITHUB_API_RESPONSE)
     return data
 
 
@@ -347,10 +343,7 @@ def _github_get_list(
         status = resp.status_code
         hint = ""
         if status in {401, 403}:
-            hint = (
-                "Check ORCHESTRATOR_GITHUB_TOKEN (missing/expired/insufficient scopes) and that it "
-                "has access to the repository."
-            )
+            hint = TOKEN_ACCESS_HINT
         elif status == 404:
             hint = (
                 "Repository or path not found. If the repo is private, GitHub may return 404 when the "
@@ -364,7 +357,7 @@ def _github_get_list(
 
     data: Any = resp.json()
     if not isinstance(data, list):
-        raise HTTPException(status_code=502, detail="Unexpected GitHub API response")
+        raise HTTPException(status_code=502, detail=ERR_UNEXPECTED_GITHUB_API_RESPONSE)
     out: list[dict[str, Any]] = []
     for item in data:
         if isinstance(item, dict):
@@ -391,10 +384,7 @@ def _github_get_list_with_headers(
         status = resp.status_code
         hint = ""
         if status in {401, 403}:
-            hint = (
-                "Check ORCHESTRATOR_GITHUB_TOKEN (missing/expired/insufficient scopes) and that it "
-                "has access to the repository."
-            )
+            hint = TOKEN_ACCESS_HINT
         elif status == 404:
             hint = (
                 "Repository or endpoint not found. If the repo is private, GitHub may return 404 when "
@@ -408,7 +398,7 @@ def _github_get_list_with_headers(
 
     data: Any = resp.json()
     if not isinstance(data, list):
-        raise HTTPException(status_code=502, detail="Unexpected GitHub API response")
+        raise HTTPException(status_code=502, detail=ERR_UNEXPECTED_GITHUB_API_RESPONSE)
     out: list[dict[str, Any]] = []
     for item in data:
         if isinstance(item, dict):

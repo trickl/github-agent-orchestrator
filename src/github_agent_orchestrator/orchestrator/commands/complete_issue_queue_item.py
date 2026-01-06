@@ -13,6 +13,53 @@ from github_agent_orchestrator.orchestrator.issue_queue_completion import plan_m
 logger = logging.getLogger(__name__)
 
 
+def _merge_pull_request_until_complete(
+    *,
+    github: GitHubClient,
+    pull_number: int,
+    merge_method: str,
+    poll_seconds: float,
+    timeout_seconds: float,
+) -> int:
+    """Attempt to merge a PR until merged or timed out.
+
+    Returns an exit code (0 success, 4 timeout).
+    """
+
+    started = time.monotonic()
+    while True:
+        pr_details = github.get_pull_request(pull_number=pull_number)
+        if pr_details.merged:
+            print(f"PR #{pull_number} already merged")
+            return 0
+
+        merge = github.merge_pull_request(
+            pull_number=pull_number,
+            merge_method=merge_method,
+        )
+        if merge.merged:
+            print(f"Merged PR #{pull_number}")
+            return 0
+
+        if timeout_seconds and (time.monotonic() - started) >= timeout_seconds:
+            print(f"Timed out merging PR #{pull_number}: {merge.message}")
+            return 4
+
+        time.sleep(poll_seconds)
+
+
+def _delete_pull_request_branch_best_effort(*, github: GitHubClient, pull_number: int) -> None:
+    try:
+        deleted = github.delete_pull_request_branch(pull_number=pull_number)
+        if deleted:
+            print(f"Deleted branch for PR #{pull_number}")
+    except Exception:
+        logger.exception(
+            "Failed to delete branch (continuing)",
+            extra={"pull_number": pull_number},
+        )
+
+
 def handle_complete_issue_queue_item(
     args: argparse.Namespace, settings: OrchestratorSettings
 ) -> int:
@@ -85,38 +132,18 @@ def handle_complete_issue_queue_item(
             print(f"Created PR #{created.number} (merge skipped)")
             return 0
 
-        started = time.monotonic()
-        while True:
-            pr_details = github.get_pull_request(pull_number=created.number)
-
-            if pr_details.merged:
-                print(f"PR #{created.number} already merged")
-                break
-
-            merge = github.merge_pull_request(
-                pull_number=created.number,
-                merge_method=args.merge_method,
-            )
-            if merge.merged:
-                print(f"Merged PR #{created.number}")
-                break
-
-            if args.timeout_seconds and (time.monotonic() - started) >= args.timeout_seconds:
-                print(f"Timed out merging PR #{created.number}: {merge.message}")
-                return 4
-
-            time.sleep(args.poll_seconds)
+        merge_exit = _merge_pull_request_until_complete(
+            github=github,
+            pull_number=created.number,
+            merge_method=args.merge_method,
+            poll_seconds=args.poll_seconds,
+            timeout_seconds=args.timeout_seconds,
+        )
+        if merge_exit != 0:
+            return merge_exit
 
         if not args.no_delete_branch:
-            try:
-                deleted = github.delete_pull_request_branch(pull_number=created.number)
-                if deleted:
-                    print(f"Deleted branch for PR #{created.number}")
-            except Exception:
-                logger.exception(
-                    "Failed to delete branch (continuing)",
-                    extra={"pull_number": created.number, "repo": args.repository},
-                )
+            _delete_pull_request_branch_best_effort(github=github, pull_number=created.number)
 
         return 0
     finally:

@@ -165,13 +165,13 @@ def _get_pull_request(
 
 
 def _search_issue_number_by_queue_marker(
-    settings: ServerSettings, *, repository: str, issue_title: str
+    settings: ServerSettings, *, repository: str, queue_id: str
 ) -> int | None:
     from github_agent_orchestrator.server.dashboard.queue_helpers import (
         _search_issue_number_by_queue_marker as _impl,
     )
 
-    return _impl(settings, repository=repository, issue_title=issue_title)
+    return _impl(settings, repository=repository, queue_id=queue_id)
 
 
 def _normalize_issue_title(title: str) -> str:
@@ -217,11 +217,14 @@ def _list_issue_events_raw(
 
 
 def _github_graphql_post(
-    settings: ServerSettings, *, url: str, payload: dict[str, Any]
+    settings: ServerSettings,
+    *,
+    query: str,
+    variables: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     from github_agent_orchestrator.server.dashboard.github_api import _github_graphql_post as _impl
 
-    return _impl(settings, url=url, payload=payload)
+    return _impl(settings, query=query, variables=variables)
 
 
 # Apply router decorators to imported loop action endpoints
@@ -480,6 +483,89 @@ def _pick_next_review_file(*, settings: ServerSettings, repo: str, branch: str) 
     return sorted(candidates)[0] if candidates else None
 
 
+def _issue_is_assigned_to_login(issue: dict[str, Any], *, login: str) -> bool:
+    assignees = issue.get("assignees")
+    if not isinstance(assignees, list):
+        return False
+    for a in assignees:
+        if isinstance(a, dict) and a.get("login") == login:
+            return True
+    return False
+
+
+def _first_open_review_consumption_issue_number(
+    raw_issues: list[object],
+    *,
+    copilot_login: str,
+) -> tuple[int | None, bool]:
+    for it in raw_issues:
+        if not isinstance(it, dict):
+            continue
+        if "pull_request" in it:
+            continue
+        if not _issue_has_label(it, label_name=LABEL_REVIEW_CONSUMPTION):
+            continue
+        num = it.get("number")
+        if not isinstance(num, int):
+            continue
+        return num, _issue_is_assigned_to_login(it, login=copilot_login)
+    return None, False
+
+
+def _review_consumption_candidate_should_be_archived(
+    *,
+    settings: ServerSettings,
+    repo: str,
+    review_path: str,
+) -> bool:
+    marker = f"{_REVIEW_CONSUMPTION_MARKER_PREFIX} {review_path}"
+    existing = _search_issue_number_by_body_marker(settings, repository=repo, marker=marker)
+    if existing is None:
+        return False
+
+    issue = _github_get_json(
+        settings,
+        url=_repo_api_url(settings, repository=repo, path=f"issues/{existing}"),
+    )
+    if not isinstance(issue, dict) or issue.get("state") != "closed":
+        return False
+
+    timeline = _list_issue_timeline_raw(settings, repository=repo, issue_number=existing)
+    return not _review_consumption_issue_has_linked_pull_requests(timeline=timeline)
+
+
+def _select_next_review_consumption_target_or_raise(
+    *,
+    settings: ServerSettings,
+    repo: str,
+    branch: str,
+) -> tuple[str, str]:
+    while True:
+        review_path = _pick_next_review_file(settings=settings, repo=repo, branch=branch)
+        if review_path is None:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "No uncompleted review files found under planning/reviews "
+                    "(expected review-*.md)"
+                ),
+            )
+
+        if not _review_consumption_candidate_should_be_archived(
+            settings=settings,
+            repo=repo,
+            review_path=review_path,
+        ):
+            return review_path, _review_actions_path_for_review_path(review_path)
+
+        _archive_review_and_actions_if_present(
+            settings=settings,
+            repo=repo,
+            branch=branch,
+            review_path=review_path,
+        )
+
+
 def _ensure_review_consumption_issue_exists(
     *, settings: ServerSettings, repo: str
 ) -> dict[str, object]:
@@ -492,40 +578,25 @@ def _ensure_review_consumption_issue_exists(
     branch = _get_default_branch(settings, repository=repo)
 
     raw_issues = _list_open_issues_raw(settings, repository=repo)
-    for it in raw_issues:
-        if not isinstance(it, dict):
-            continue
-        if "pull_request" in it:
-            continue
-        if not _issue_has_label(it, label_name=LABEL_REVIEW_CONSUMPTION):
-            continue
-        num = it.get("number")
-        if not isinstance(num, int):
-            continue
-
-        assignees = it.get("assignees")
-        already_assigned = False
-        if isinstance(assignees, list):
-            for a in assignees:
-                if isinstance(a, dict) and a.get("login") == settings.copilot_assignee:
-                    already_assigned = True
-                    break
-
+    existing_num, already_assigned = _first_open_review_consumption_issue_number(
+        raw_issues,
+        copilot_login=settings.copilot_assignee,
+    )
+    if isinstance(existing_num, int):
         assigned: list[dict[str, Any]] | list[str] = []
         if not already_assigned:
             assigned = _assign_issue_to_copilot(
                 settings,
                 repository=repo,
-                issue_number=num,
+                issue_number=existing_num,
                 target_repo=repo,
                 base_branch=branch,
                 instructions="",
             )
-
         return {
             "created": False,
-            "issueNumber": num,
-            "issueUrl": _make_github_issue_url(repo, num),
+            "issueNumber": existing_num,
+            "issueUrl": _make_github_issue_url(repo, existing_num),
             "assigned": assigned,
         }
 
@@ -537,44 +608,11 @@ def _ensure_review_consumption_issue_exists(
 
     # If the next review was already processed and the last review-consumption run produced no PR
     # (per the template's completion check), archive the review and move on.
-    review_path: str | None = None
-    actions_path: str | None = None
-    while True:
-        review_path = _pick_next_review_file(settings=settings, repo=repo, branch=branch)
-        if review_path is None:
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    "No uncompleted review files found under planning/reviews "
-                    "(expected review-*.md)"
-                ),
-            )
-
-        actions_path = _review_actions_path_for_review_path(review_path)
-        marker = f"{_REVIEW_CONSUMPTION_MARKER_PREFIX} {review_path}"
-        existing = _search_issue_number_by_body_marker(settings, repository=repo, marker=marker)
-        if existing is None:
-            break
-
-        issue = _github_get_json(
-            settings,
-            url=_repo_api_url(settings, repository=repo, path=f"issues/{existing}"),
-        )
-        if not isinstance(issue, dict) or issue.get("state") != "closed":
-            break
-
-        timeline = _list_issue_timeline_raw(settings, repository=repo, issue_number=existing)
-        if _review_consumption_issue_has_linked_pull_requests(timeline=timeline):
-            break
-
-        # Closed review-consumption issue with no linked PR => completion check returned NO.
-        _archive_review_and_actions_if_present(
-            settings=settings,
-            repo=repo,
-            branch=branch,
-            review_path=review_path,
-        )
-        # Continue to the next review (if any).
+    review_path, actions_path = _select_next_review_consumption_target_or_raise(
+        settings=settings,
+        repo=repo,
+        branch=branch,
+    )
 
     template_body = _load_review_consumption_template_or_raise(
         settings=settings, repo=repo, branch=branch
@@ -627,43 +665,12 @@ def _assign_issue_to_copilot(
     base_branch: str,
     instructions: str,
 ) -> list[str]:
-    # Safety: before assigning, repair known-unsafe gap-analysis issue bodies.
-    # This guard lives here (the single assignment choke-point) so ALL call sites benefit.
-    try:
-        issue = _github_get_json(
-            settings,
-            url=_repo_api_url(settings, repository=repository, path=f"issues/{issue_number}"),
-        )
-        title = issue.get("title")
-        body = issue.get("body")
-        if isinstance(title, str) and _is_gap_analysis_issue_title(title) and isinstance(body, str):
-            _repair_gap_analysis_issue_body_if_unsafe(
-                settings=settings,
-                repo=repository,
-                issue_number=issue_number,
-                branch=base_branch,
-                existing_body=body,
-            )
-        elif isinstance(body, str) and _gap_analysis_issue_body_looks_unsafe(body):
-            # These phrases should only appear in a gap analysis issue; refuse to assign
-            # anything else until it is corrected.
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    f"Refusing to assign issue #{issue_number}: body contains known-unsafe gap-analysis "
-                    "instructions"
-                ),
-            )
-    except HTTPException as e:
-        # Only block assignment when we are explicitly refusing due to known-unsafe instructions.
-        # Any other HTTPException here is likely from the best-effort issue fetch and should not
-        # prevent assignment.
-        if e.status_code == 409:
-            raise
-    except Exception:
-        # Best-effort: if we can't read the issue body for any reason, don't block assignment.
-        # (The GitHub assignment API can still succeed, and other safety gates exist elsewhere.)
-        pass
+    _enforce_safe_assignment_or_raise(
+        settings=settings,
+        repository=repository,
+        issue_number=issue_number,
+        base_branch=base_branch,
+    )
 
     payload: dict[str, Any] = {"assignees": [settings.copilot_assignee]}
     agent_assignment: dict[str, str] = {}
@@ -691,6 +698,55 @@ def _assign_issue_to_copilot(
             if isinstance(login, str) and login.strip():
                 returned.append(login)
     return returned
+
+
+def _enforce_safe_assignment_or_raise(
+    *,
+    settings: ServerSettings,
+    repository: str,
+    issue_number: int,
+    base_branch: str,
+) -> None:
+    """Before assigning, repair or block known-unsafe gap-analysis instructions (best-effort)."""
+
+    # This guard lives here (the single assignment choke-point) so ALL call sites benefit.
+    try:
+        issue = _github_get_json(
+            settings,
+            url=_repo_api_url(settings, repository=repository, path=f"issues/{issue_number}"),
+        )
+    except HTTPException as e:
+        # Only block assignment when we are explicitly refusing due to known-unsafe instructions.
+        # Any other HTTPException here is likely from the best-effort issue fetch.
+        if e.status_code == 409:
+            raise
+        return
+    except Exception:
+        # Best-effort: if we can't read the issue body for any reason, don't block assignment.
+        return
+
+    title = issue.get("title")
+    body = issue.get("body")
+    if isinstance(title, str) and _is_gap_analysis_issue_title(title) and isinstance(body, str):
+        _repair_gap_analysis_issue_body_if_unsafe(
+            settings=settings,
+            repo=repository,
+            issue_number=issue_number,
+            branch=base_branch,
+            existing_body=body,
+        )
+        return
+
+    if isinstance(body, str) and _gap_analysis_issue_body_looks_unsafe(body):
+        # These phrases should only appear in a gap analysis issue; refuse to assign
+        # anything else until it is corrected.
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Refusing to assign issue #{issue_number}: body contains known-unsafe gap-analysis "
+                "instructions"
+            ),
+        )
 
 
 @router.post("/loop/promote")
@@ -721,27 +777,46 @@ _REVIEW_QUEUE_ACTIONS_RE = re.compile(r"^\s*review\s+actions\s*:\s*(.+?)\s*$", r
 _REVIEW_QUEUE_ID_DATE_RE = re.compile(r"\breview-(\d{4}-\d{2}-\d{2})\b", re.IGNORECASE)
 
 
-def _extract_review_paths_from_queue_content(
-    *, queue_id: str, queue_content: str
-) -> tuple[str | None, str | None]:
-    """Best-effort extraction of the source review + actions paths from a queue artefact."""
+def _review_path_from_queue_line(line: str) -> str | None:
+    m = _REVIEW_QUEUE_SOURCE_RE.match(line)
+    if not m:
+        return None
+    return _normalize_repo_path_candidate(m.group(1) or "")
 
+
+def _review_actions_path_from_queue_line(line: str) -> str | None:
+    m = _REVIEW_QUEUE_ACTIONS_RE.match(line)
+    if not m:
+        return None
+    return _normalize_repo_path_candidate(m.group(1) or "")
+
+
+def _scan_review_paths_in_queue_lines(queue_content: str) -> tuple[str | None, str | None]:
     review_path: str | None = None
     actions_path: str | None = None
 
     for raw in (queue_content or "").splitlines():
         line = raw.strip("\n")
-        m = _REVIEW_QUEUE_SOURCE_RE.match(line)
-        if m and review_path is None:
-            candidate = _normalize_repo_path_candidate(m.group(1) or "")
+
+        if review_path is None:
+            candidate = _review_path_from_queue_line(line)
             if candidate:
                 review_path = candidate
-            continue
-        m2 = _REVIEW_QUEUE_ACTIONS_RE.match(line)
-        if m2 and actions_path is None:
-            candidate = _normalize_repo_path_candidate(m2.group(1) or "")
+
+        if actions_path is None:
+            candidate = _review_actions_path_from_queue_line(line)
             if candidate:
                 actions_path = candidate
+
+    return review_path, actions_path
+
+
+def _extract_review_paths_from_queue_content(
+    *, queue_id: str, queue_content: str
+) -> tuple[str | None, str | None]:
+    """Best-effort extraction of the source review + actions paths from a queue artefact."""
+
+    review_path, actions_path = _scan_review_paths_in_queue_lines(queue_content)
 
     # Fallback: infer from filename when it contains a canonical date.
     if review_path is None:
@@ -925,6 +1000,33 @@ def list_cognitive_tasks(request: Request) -> list[dict[str, object]]:
     return _load_repo_cognitive_task_templates(settings=settings, repository=repo, ref=ref)
 
 
+def _timeline_entry_from_commit(c: object) -> dict[str, object] | None:
+    if not isinstance(c, dict):
+        return None
+    sha = c.get("sha")
+    commit = c.get("commit")
+    if not isinstance(commit, dict):
+        return None
+    message = commit.get("message")
+    author = commit.get("author")
+    if not isinstance(author, dict):
+        return None
+    ts = author.get("date")
+    if not isinstance(ts, str):
+        return None
+
+    summary = message.splitlines()[0] if isinstance(message, str) and message else "Commit"
+    link = c.get("html_url")
+    return {
+        "id": str(sha or ""),
+        "tsIso": ts,
+        "kind": "GIT_COMMIT",
+        "summary": summary,
+        "typePath": "planning",
+        "links": ([{"label": "Commit", "url": link}] if link else None),
+    }
+
+
 @router.get("/timeline")
 def list_timeline(
     request: Request, limit: int = Query(default=200, ge=1, le=1000)
@@ -952,51 +1054,59 @@ def list_timeline(
     if not isinstance(raw, list):
         raise HTTPException(status_code=502, detail="Unexpected GitHub commits response")
 
-    out: list[dict[str, object]] = []
-    for c in raw:
-        if not isinstance(c, dict):
-            continue
-        sha = c.get("sha")
-        commit = c.get("commit")
-        if not isinstance(commit, dict):
-            continue
-        message = commit.get("message")
-        author = commit.get("author")
-        if not isinstance(author, dict):
-            continue
-        ts = author.get("date")
-        if not isinstance(ts, str):
-            continue
-        summary = message.splitlines()[0] if isinstance(message, str) and message else "Commit"
-        out.append(
-            {
-                "id": str(sha or ""),
-                "tsIso": ts,
-                "kind": "GIT_COMMIT",
-                "summary": summary,
-                "typePath": "planning",
-                "links": (
-                    [{"label": "Commit", "url": c.get("html_url")}] if c.get("html_url") else None
-                ),
-            }
-        )
+    out = [e for e in (_timeline_entry_from_commit(c) for c in raw) if e is not None]
 
     out.sort(key=lambda e: str(e.get("tsIso") or ""), reverse=True)
     return out[:limit]
+
+
+def _issue_row_from_github_item(
+    *,
+    repo: str,
+    it: object,
+    now: datetime,
+) -> dict[str, object] | None:
+    if not isinstance(it, dict):
+        return None
+    if "pull_request" in it:
+        return None
+
+    num = it.get("number")
+    title = it.get("title")
+    if not isinstance(num, int) or not isinstance(title, str):
+        return None
+
+    state = it.get("state")
+    created_at = it.get("created_at")
+    updated_at = it.get("updated_at")
+    html_url = it.get("html_url")
+
+    st = "OPEN" if state == "open" else "CLOSED"
+    created_dt = _dt_from_iso(created_at) if isinstance(created_at, str) else now
+    age_seconds = max(0, int((now - created_dt).total_seconds()))
+
+    return {
+        "id": str(num),
+        "title": title,
+        "typePath": "github/issues",
+        "status": st,
+        "ageSeconds": age_seconds,
+        "githubIssueUrl": (str(html_url) if isinstance(html_url, str) else _make_github_issue_url(repo, num)),
+        "prUrl": None,
+        "lastUpdatedIso": (str(updated_at) if isinstance(updated_at, str) else _utc_now_iso()),
+        "isActive": False,
+    }
 
 
 @router.get("/issues")
 def list_issues(request: Request, status: str = Query(default="open")) -> list[dict[str, object]]:
     settings = _settings(request)
     repo = _active_repo(request, settings)
-    ref = _active_ref(request)
+    _active_ref(request)
 
     # GitHub issues API (not local state). Note: this includes PRs; we filter those out.
     desired_state = "open" if status == "open" else "all"
     params: dict[str, str] = {"state": desired_state, "per_page": "100"}
-    if ref:
-        # Not a supported parameter for issues API; ignore.
-        pass
 
     resp = requests.get(
         _repo_api_url(settings, repository=repo, path="issues"),
@@ -1010,42 +1120,14 @@ def list_issues(request: Request, status: str = Query(default="open")) -> list[d
         raise HTTPException(status_code=502, detail="Unexpected GitHub issues response")
 
     now = datetime.now(tz=UTC)
-    mapped: list[dict[str, object]] = []
-    for it in raw:
-        if not isinstance(it, dict):
-            continue
-        if "pull_request" in it:
-            continue
-        num = it.get("number")
-        title = it.get("title")
-        state = it.get("state")
-        created_at = it.get("created_at")
-        updated_at = it.get("updated_at")
-        html_url = it.get("html_url")
-        if not isinstance(num, int) or not isinstance(title, str):
-            continue
-        st = "OPEN" if state == "open" else "CLOSED"
-        created_dt = _dt_from_iso(created_at) if isinstance(created_at, str) else now
-        age_seconds = max(0, int((now - created_dt).total_seconds()))
-        mapped.append(
-            {
-                "id": str(num),
-                "title": title,
-                "typePath": "github/issues",
-                "status": st,
-                "ageSeconds": age_seconds,
-                "githubIssueUrl": (
-                    str(html_url)
-                    if isinstance(html_url, str)
-                    else _make_github_issue_url(repo, num)
-                ),
-                "prUrl": None,
-                "lastUpdatedIso": (
-                    str(updated_at) if isinstance(updated_at, str) else _utc_now_iso()
-                ),
-                "isActive": False,
-            }
+    mapped = [
+        r
+        for r in (
+            _issue_row_from_github_item(repo=repo, it=it, now=now)
+            for it in raw
         )
+        if r is not None
+    ]
 
     open_issues = [i for i in mapped if i.get("status") == "OPEN"]
     if open_issues:

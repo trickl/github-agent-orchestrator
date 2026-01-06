@@ -33,6 +33,97 @@ from github_agent_orchestrator.server.dashboard_router import router as dashboar
 logger = logging.getLogger(__name__)
 
 
+_MERGE_STAGES = {"1c", "2c", "3c"}
+
+
+def _extract_stage_and_open_gap_issues(status: object) -> tuple[str | None, int | None]:
+    if not isinstance(status, dict):
+        return None, None
+
+    stage = status.get("stage")
+    if not isinstance(stage, str):
+        stage = None
+
+    counts = status.get("counts")
+    if not isinstance(counts, dict):
+        return stage, None
+
+    open_gap_issues = counts.get("openGapAnalysisIssues")
+    if not isinstance(open_gap_issues, int):
+        open_gap_issues = None
+    return stage, open_gap_issues
+
+
+def _ensure_loop_issue_exists_for_stage_1a(
+    *, settings: ServerSettings, repo: str, open_gap_issues: int | None
+) -> None:
+    if getattr(settings, "loop_mode", "build") == "review":
+        _ensure_review_consumption_issue_exists(settings=settings, repo=repo)
+        logger.info("Auto review consumption issue ensured", extra={"repo": repo})
+        return
+
+    _ensure_gap_analysis_issue_exists(settings=settings, repo=repo)
+    logger.info(
+        "Auto gap analysis issue ensured",
+        extra={"repo": repo, "open_gap_analysis_issues": open_gap_issues},
+    )
+
+
+def _perform_auto_action_for_stage(
+    *, settings: ServerSettings, repo: str, stage: str | None, open_gap_issues: int | None
+) -> None:
+    if stage == "1a":
+        _ensure_loop_issue_exists_for_stage_1a(
+            settings=settings, repo=repo, open_gap_issues=open_gap_issues
+        )
+        return
+    if stage == "2a":
+        _promote_next_unpromoted_development_queue_item(settings=settings, repo=repo)
+        logger.info("Auto promotion succeeded", extra={"repo": repo})
+        return
+    if stage == "3a":
+        # Legacy path: capability updates represented by queue artefacts.
+        _promote_next_unpromoted_capability_queue_item(settings=settings, repo=repo)
+        logger.info("Auto capability promotion succeeded", extra={"repo": repo})
+        return
+    if stage in _MERGE_STAGES:
+        _merge_next_ready_pull_request(settings=settings, repo=repo)
+        logger.info("Auto merge succeeded", extra={"repo": repo})
+
+
+def _auto_promotion_runner(
+    *, stop: threading.Event, interval: float, settings: ServerSettings, repo: str
+) -> None:
+    logger.info(
+        "Auto loop progression started",
+        extra={"repo": repo, "interval_seconds": interval},
+    )
+
+    while not stop.is_set():
+        try:
+            status = _loop_status_for_repo(settings=settings, active_repo=repo, ref="")
+            stage, open_gap_issues = _extract_stage_and_open_gap_issues(status)
+            _perform_auto_action_for_stage(
+                settings=settings,
+                repo=repo,
+                stage=stage,
+                open_gap_issues=open_gap_issues,
+            )
+        except Exception as e:
+            # 409 means "nothing to do"; treat as idle rather than an error.
+            if getattr(e, "status_code", None) == 409:
+                logger.debug(
+                    "Auto progression idle",
+                    extra={"repo": repo, "status_code": getattr(e, "status_code", None)},
+                )
+            else:
+                logger.exception("Auto progression attempt failed", extra={"repo": repo})
+
+        stop.wait(interval)
+
+    logger.info("Auto loop progression stopped", extra={"repo": repo})
+
+
 def create_app() -> FastAPI:
     settings = ServerSettings()
 
@@ -93,58 +184,12 @@ def _maybe_start_auto_promotion(app: FastAPI, settings: ServerSettings) -> None:
     interval = max(5.0, float(settings.auto_promote_interval_seconds))
     repo = settings.default_repo.strip()
 
-    def _runner() -> None:
-        logger.info(
-            "Auto loop progression started",
-            extra={"repo": repo, "interval_seconds": interval},
-        )
-        while not stop.is_set():
-            try:
-                status = _loop_status_for_repo(
-                    settings=settings,
-                    active_repo=repo,
-                    ref="",
-                )
-                stage = status.get("stage")
-                counts = status.get("counts") if isinstance(status, dict) else None
-                open_gap_issues = None
-                if isinstance(counts, dict):
-                    open_gap_issues = counts.get("openGapAnalysisIssues")
-
-                # New loop model: 1a–3c.
-                if stage == "1a":
-                    if getattr(settings, "loop_mode", "build") == "review":
-                        _ensure_review_consumption_issue_exists(settings=settings, repo=repo)
-                        logger.info("Auto review consumption issue ensured", extra={"repo": repo})
-                    else:
-                        # Ensure there is a live, assigned gap-analysis issue.
-                        _ensure_gap_analysis_issue_exists(settings=settings, repo=repo)
-                        logger.info(
-                            "Auto gap analysis issue ensured",
-                            extra={"repo": repo, "open_gap_analysis_issues": open_gap_issues},
-                        )
-                elif stage == "2a":
-                    _promote_next_unpromoted_development_queue_item(settings=settings, repo=repo)
-                    logger.info("Auto promotion succeeded", extra={"repo": repo})
-                elif stage == "3a":
-                    # Legacy path: capability updates represented by queue artefacts.
-                    _promote_next_unpromoted_capability_queue_item(settings=settings, repo=repo)
-                    logger.info("Auto capability promotion succeeded", extra={"repo": repo})
-                elif stage in {"1c", "2c", "3c"}:
-                    _merge_next_ready_pull_request(settings=settings, repo=repo)
-                    logger.info("Auto merge succeeded", extra={"repo": repo})
-            except Exception as e:
-                # 409 means "nothing to do"; treat as idle rather than an error.
-                if getattr(e, "status_code", None) == 409:
-                    pass
-                else:
-                    logger.exception("Auto progression attempt failed", extra={"repo": repo})
-
-            stop.wait(interval)
-
-        logger.info("Auto loop progression stopped", extra={"repo": repo})
-
-    t = threading.Thread(target=_runner, name="auto-promote-queue", daemon=True)
+    t = threading.Thread(
+        target=_auto_promotion_runner,
+        kwargs={"stop": stop, "interval": interval, "settings": settings, "repo": repo},
+        name="auto-promote-queue",
+        daemon=True,
+    )
     t.start()
 
     @app.on_event("shutdown")

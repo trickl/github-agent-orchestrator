@@ -13,7 +13,7 @@ Repository selection is passed as an argument (not read from `.env`).
 from __future__ import annotations
 
 import argparse
-from typing import Sequence
+from collections.abc import Sequence
 
 from github_agent_orchestrator.orchestrator.config import OrchestratorSettings
 from github_agent_orchestrator.orchestrator.github.client import GitHubClient
@@ -58,7 +58,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         record = service.create_issue(title=args.title, body=args.body, labels=labels)
     except IssueAlreadyExists as exc:
         print(str(exc))
-        return 0
+        return 3
 
     print(f"Created issue #{record.number}: {record.title}")
     print(f"URL: {record.url}")

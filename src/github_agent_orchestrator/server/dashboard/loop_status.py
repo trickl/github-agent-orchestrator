@@ -13,6 +13,7 @@ The loop follows stages 1a-3c:
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 from fastapi import HTTPException, Request
@@ -79,6 +80,138 @@ from github_agent_orchestrator.server.dashboard.text_utilities import (
 )
 
 
+STAGE_LABEL_DEVELOPMENT_EXECUTION = "2b — Development execution"
+
+
+@dataclass(frozen=True)
+class IssuePrIndex:
+    issue_to_open_prs: dict[int, list[dict[str, Any]]]
+    issue_to_open_ready_prs: dict[int, list[dict[str, Any]]]
+
+
+@dataclass(frozen=True)
+class QueueStageSignals:
+    work_exists: bool
+    unpromoted_exists: bool
+    ready_exists: bool
+    with_pr_exists: bool
+
+
+@dataclass(frozen=True)
+class DevelopmentFocusIndex:
+    repo: str
+    queue_issue_numbers: dict[str, int | None]
+    queue_display_titles: dict[str, str]
+    open_issue_titles_by_number: dict[int, str]
+    issue_pr_index: IssuePrIndex
+    dev_inflight_paths: list[str]
+    dev_unpromoted: list[str]
+    dev_ready_for_review: list[str]
+    dev_with_pr: list[str]
+    review_inflight_paths: list[str]
+    review_unpromoted: list[str]
+    review_ready_for_review: list[str]
+    review_with_pr: list[str]
+
+
+@dataclass(frozen=True)
+class FocusInputs:
+    repo: str
+    loop_mode: str
+    stage: str
+    gap_issue_nums: list[int]
+    cap_issue_nums: list[int]
+    review_intake_issue_nums: list[int]
+    review_update_issue_nums: list[int]
+    open_issue_titles_by_number: dict[int, str]
+    gap_index: IssuePrIndex
+    cap_index: IssuePrIndex
+    review_intake_index: IssuePrIndex
+    review_update_index: IssuePrIndex
+    dev_index: DevelopmentFocusIndex
+
+
+@dataclass(frozen=True)
+class StageInputs:
+    mode: str
+    has_open_gap_analysis_issue: bool
+    gap_issue_with_pr: bool
+    gap_issue_ready_for_review: bool
+    cap_issue_nums: list[int]
+    cap_issue_with_pr: bool
+    cap_issue_ready_for_review: bool
+    review_intake_issue_nums: list[int]
+    review_intake_with_pr: bool
+    review_intake_ready_for_review: bool
+    review_update_issue_nums: list[int]
+    review_update_with_pr: bool
+    review_update_ready_for_review: bool
+    review_work_exists: bool
+    work_unpromoted_exists: bool
+    work_ready_exists: bool
+    work_with_pr_exists: bool
+    dev_signals: QueueStageSignals
+    cap_queue_signals: QueueStageSignals
+    processed_count: int
+
+
+def _first_sorted_path(paths: list[str]) -> str | None:
+    if not paths:
+        return None
+    return sorted(paths)[0]
+
+
+def _select_preferred_pr(
+    *,
+    ready_prs: list[dict[str, Any]],
+    prs: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    if ready_prs:
+        return ready_prs[0]
+    if prs:
+        return prs[0]
+    return None
+
+
+def _pr_number_and_url(pr: dict[str, Any] | None) -> tuple[int | None, str | None]:
+    if not isinstance(pr, dict):
+        return None, None
+    pr_num: int | None = None
+    pr_url: str | None = None
+
+    raw_pr_num = pr.get("number")
+    if isinstance(raw_pr_num, int):
+        pr_num = raw_pr_num
+    raw_pr_url = pr.get("html_url")
+    if isinstance(raw_pr_url, str) and raw_pr_url.strip():
+        pr_url = raw_pr_url
+    return pr_num, pr_url
+
+
+def _queue_path_has_associated_open_pr(
+    *,
+    queue_path: str,
+    queue_issue_numbers: dict[str, int | None],
+    issue_to_open_prs: dict[int, list[dict[str, Any]]],
+) -> bool:
+    issue_num = queue_issue_numbers.get(queue_path)
+    if issue_num is None:
+        return False
+    return bool(issue_to_open_prs.get(issue_num))
+
+
+def _queue_path_has_associated_ready_pr(
+    *,
+    queue_path: str,
+    queue_issue_numbers: dict[str, int | None],
+    issue_to_open_ready_prs: dict[int, list[dict[str, Any]]],
+) -> bool:
+    issue_num = queue_issue_numbers.get(queue_path)
+    if issue_num is None:
+        return False
+    return bool(issue_to_open_ready_prs.get(issue_num))
+
+
 def _queue_file_is_excluded_for_loop_mode(*, filename: str, loop_mode: str) -> bool:
     """Return True if the queue file should be ignored by the active loop mode.
 
@@ -91,6 +224,792 @@ def _queue_file_is_excluded_for_loop_mode(*, filename: str, loop_mode: str) -> b
     if mode == "review" and lowered.startswith("review-"):
         return False
     return lowered.startswith(_QUEUE_EXCLUDED_PREFIXES)
+
+
+def _queue_display_title_from_markdown(content: str) -> str:
+    display_title = ""
+    for raw in (content or "").splitlines():
+        line = raw.strip("\n")
+        if not line.strip():
+            continue
+        if line.lstrip().startswith("#"):
+            line = line.lstrip().lstrip("#").strip()
+        display_title = line.strip()
+        break
+    return display_title
+
+
+def _get_pull_request_cached(
+    *,
+    settings: ServerSettings,
+    repo: str,
+    pr_number: int,
+    pr_cache: dict[int, dict[str, Any]],
+    debug_counters: dict[str, int],
+) -> dict[str, Any]:
+    cached = pr_cache.get(pr_number)
+    if cached is not None:
+        return cached
+    pr_data = _get_pull_request(settings, repository=repo, pr_number=pr_number)
+    pr_cache[pr_number] = pr_data
+    debug_counters["pullRequestLookups"] = debug_counters.get("pullRequestLookups", 0) + 1
+    return pr_data
+
+
+def _review_requested_cached(
+    *,
+    settings: ServerSettings,
+    repo: str,
+    pr_number: int,
+    pr_data: dict[str, Any],
+    pr_review_request_cache: dict[int, bool],
+    debug_counters: dict[str, int],
+) -> bool:
+    review_requested = _pull_request_has_review_request(pr_data)
+    if review_requested:
+        return True
+
+    cached_rr = pr_review_request_cache.get(pr_number)
+    if cached_rr is None:
+        cached_rr = _pull_request_has_review_request_history(
+            settings,
+            repository=repo,
+            pr_number=pr_number,
+        )
+        pr_review_request_cache[pr_number] = cached_rr
+        debug_counters["issueTimelineLookups"] = debug_counters.get("issueTimelineLookups", 0) + 1
+    return bool(cached_rr)
+
+
+def _issue_open_and_ready_prs(
+    *,
+    settings: ServerSettings,
+    repo: str,
+    issue_number: int,
+    pr_cache: dict[int, dict[str, Any]],
+    pr_review_request_cache: dict[int, bool],
+    debug_counters: dict[str, int],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    timeline = _list_issue_timeline_raw(settings, repository=repo, issue_number=issue_number)
+    debug_counters["issueTimelineLookups"] = debug_counters.get("issueTimelineLookups", 0) + 1
+    pr_nums = _linked_pr_numbers_from_issue_timeline(timeline)
+
+    open_prs: list[dict[str, Any]] = []
+    ready_prs: list[dict[str, Any]] = []
+    for pr_num in sorted(pr_nums):
+        pr_data = _get_pull_request_cached(
+            settings=settings,
+            repo=repo,
+            pr_number=pr_num,
+            pr_cache=pr_cache,
+            debug_counters=debug_counters,
+        )
+        if pr_data.get("state") != "open":
+            continue
+        open_prs.append(pr_data)
+
+        review_requested = _review_requested_cached(
+            settings=settings,
+            repo=repo,
+            pr_number=pr_num,
+            pr_data=pr_data,
+            pr_review_request_cache=pr_review_request_cache,
+            debug_counters=debug_counters,
+        )
+        if _pull_request_is_merge_candidate(pr_data, review_requested=review_requested):
+            ready_prs.append(pr_data)
+
+    return open_prs, ready_prs
+
+
+def _issue_pr_lists_for_issue(
+    *,
+    settings: ServerSettings,
+    repo: str,
+    issue_num: int,
+    pr_cache: dict[int, dict[str, Any]],
+    pr_review_request_cache: dict[int, bool],
+    debug_counters: dict[str, int],
+    precomputed_open_prs: dict[int, list[dict[str, Any]]] | None,
+    precomputed_ready_prs: dict[int, list[dict[str, Any]]] | None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    open_prs = precomputed_open_prs.get(issue_num) if precomputed_open_prs else None
+    ready_prs = precomputed_ready_prs.get(issue_num) if precomputed_ready_prs else None
+    if open_prs is not None and ready_prs is not None:
+        return list(open_prs), list(ready_prs)
+    return _issue_open_and_ready_prs(
+        settings=settings,
+        repo=repo,
+        issue_number=issue_num,
+        pr_cache=pr_cache,
+        pr_review_request_cache=pr_review_request_cache,
+        debug_counters=debug_counters,
+    )
+
+
+def _issue_pr_maps_and_signals(
+    *,
+    settings: ServerSettings,
+    repo: str,
+    issue_numbers: list[int],
+    pr_cache: dict[int, dict[str, Any]],
+    pr_review_request_cache: dict[int, bool],
+    debug_counters: dict[str, int],
+    precomputed_open_prs: dict[int, list[dict[str, Any]]] | None = None,
+    precomputed_ready_prs: dict[int, list[dict[str, Any]]] | None = None,
+) -> tuple[dict[int, list[dict[str, Any]]], dict[int, list[dict[str, Any]]], bool, bool]:
+    issue_to_open_prs: dict[int, list[dict[str, Any]]] = {}
+    issue_to_open_ready_prs: dict[int, list[dict[str, Any]]] = {}
+    any_with_pr = False
+    any_ready = False
+    for issue_num in issue_numbers:
+        open_prs_list, ready_prs_list = _issue_pr_lists_for_issue(
+            settings=settings,
+            repo=repo,
+            issue_num=issue_num,
+            pr_cache=pr_cache,
+            pr_review_request_cache=pr_review_request_cache,
+            debug_counters=debug_counters,
+            precomputed_open_prs=precomputed_open_prs,
+            precomputed_ready_prs=precomputed_ready_prs,
+        )
+        issue_to_open_prs[issue_num] = open_prs_list
+        issue_to_open_ready_prs[issue_num] = ready_prs_list
+        any_with_pr = any_with_pr or bool(open_prs_list)
+        any_ready = any_ready or bool(ready_prs_list)
+
+    return issue_to_open_prs, issue_to_open_ready_prs, any_with_pr, any_ready
+
+
+def _queue_issue_and_pr_linkage(
+    *,
+    settings: ServerSettings,
+    repo: str,
+    ref: str,
+    queue_paths: list[str],
+    open_issues_for_matching: list[dict[str, Any]],
+    pr_cache: dict[int, dict[str, Any]],
+    pr_review_request_cache: dict[int, bool],
+    debug_counters: dict[str, int],
+) -> tuple[
+    dict[str, int | None],
+    dict[str, str],
+    dict[int, list[dict[str, Any]]],
+    dict[int, list[dict[str, Any]]],
+]:
+    queue_issue_numbers: dict[str, int | None] = {}
+    queue_display_titles: dict[str, str] = {}
+    issue_to_open_prs: dict[int, list[dict[str, Any]]] = {}
+    issue_to_open_ready_prs: dict[int, list[dict[str, Any]]] = {}
+
+    for queue_path in queue_paths:
+        content, _sha = _get_repo_text_file(
+            settings,
+            repository=repo,
+            path=queue_path,
+            ref=ref,
+        )
+
+        display_title = _queue_display_title_from_markdown(content)
+        if display_title:
+            queue_display_titles[queue_path] = display_title
+
+        title_norm = _first_markdown_line_as_title(content)
+        issue_num = _best_match_issue_number(title_norm, open_issues_for_matching)
+        queue_issue_numbers[queue_path] = issue_num
+
+        if not isinstance(issue_num, int):
+            continue
+        if issue_num in issue_to_open_prs:
+            continue
+
+        open_prs, ready_prs = _issue_open_and_ready_prs(
+            settings=settings,
+            repo=repo,
+            issue_number=issue_num,
+            pr_cache=pr_cache,
+            pr_review_request_cache=pr_review_request_cache,
+            debug_counters=debug_counters,
+        )
+        issue_to_open_prs[issue_num] = open_prs
+        issue_to_open_ready_prs[issue_num] = ready_prs
+
+    return queue_issue_numbers, queue_display_titles, issue_to_open_prs, issue_to_open_ready_prs
+
+
+def _paths_for_filenames(paths: list[str], filenames: list[str]) -> list[str]:
+    wanted = set(filenames)
+    return [p for p in paths if _queue_filename(p) in wanted]
+
+
+def _queue_paths_with_open_pr(
+    *,
+    queue_paths: list[str],
+    queue_issue_numbers: dict[str, int | None],
+    issue_to_open_prs: dict[int, list[dict[str, Any]]],
+) -> list[str]:
+    with_pr: list[str] = []
+    for p in queue_paths:
+        if _queue_path_has_associated_open_pr(
+            queue_path=p,
+            queue_issue_numbers=queue_issue_numbers,
+            issue_to_open_prs=issue_to_open_prs,
+        ):
+            with_pr.append(p)
+    return with_pr
+
+
+def _queue_paths_with_ready_pr(
+    *,
+    queue_paths: list[str],
+    queue_issue_numbers: dict[str, int | None],
+    issue_to_open_ready_prs: dict[int, list[dict[str, Any]]],
+) -> list[str]:
+    ready: list[str] = []
+    for p in queue_paths:
+        if _queue_path_has_associated_ready_pr(
+            queue_path=p,
+            queue_issue_numbers=queue_issue_numbers,
+            issue_to_open_ready_prs=issue_to_open_ready_prs,
+        ):
+            ready.append(p)
+    return ready
+
+
+def _queue_paths_unpromoted(
+    *,
+    queue_paths: list[str],
+    queue_issue_numbers: dict[str, int | None],
+) -> list[str]:
+    return [p for p in queue_paths if queue_issue_numbers.get(p) is None]
+
+
+def _queue_paths_promoted_no_pr(
+    *,
+    queue_paths: list[str],
+    queue_issue_numbers: dict[str, int | None],
+    issue_to_open_prs: dict[int, list[dict[str, Any]]],
+) -> list[str]:
+    promoted_no_pr: list[str] = []
+    for p in queue_paths:
+        issue_num = queue_issue_numbers.get(p)
+        if issue_num is None:
+            continue
+        if not _queue_path_has_associated_open_pr(
+            queue_path=p,
+            queue_issue_numbers=queue_issue_numbers,
+            issue_to_open_prs=issue_to_open_prs,
+        ):
+            promoted_no_pr.append(p)
+    return promoted_no_pr
+
+
+def _stage_for_review_intake_issue(
+    *,
+    review_intake_issue_nums: list[int],
+    review_intake_with_pr: bool,
+    review_intake_ready_for_review: bool,
+) -> tuple[str, str, int, str] | None:
+    if not review_intake_issue_nums:
+        return None
+    if review_intake_ready_for_review:
+        return (
+            "1c",
+            "1c — Review intake PR ready for merge",
+            2,
+            "open review intake issue has an associated open PR ready for review",
+        )
+    if review_intake_with_pr:
+        return (
+            "1b",
+            "1b — Review intake execution",
+            1,
+            "open review intake issue has an associated open PR",
+        )
+    return (
+        "1a",
+        "1a — Review intake issue",
+        0,
+        "open review intake issue detected (no PR yet)",
+    )
+
+
+def _stage_for_review_update_issue(
+    *,
+    review_update_issue_nums: list[int],
+    review_update_with_pr: bool,
+    review_update_ready_for_review: bool,
+) -> tuple[str, str, int, str] | None:
+    if not review_update_issue_nums:
+        return None
+    if review_update_ready_for_review:
+        return (
+            "3c",
+            "3c — Review actions PR ready for merge",
+            8,
+            "open review update issue has an associated open PR ready for review",
+        )
+    if review_update_with_pr:
+        return (
+            "3b",
+            "3b — Review actions update execution",
+            7,
+            "open review update issue has an associated open PR",
+        )
+    return (
+        "3a",
+        "3a — Review actions update issue",
+        6,
+        "open review update issue exists (no PR yet)",
+    )
+
+
+def _stage_for_review_work_queue(
+    *,
+    work_unpromoted_exists: bool,
+    work_ready_exists: bool,
+    work_with_pr_exists: bool,
+) -> tuple[str, str, int, str]:
+    if work_unpromoted_exists:
+        return (
+            "2a",
+            "2a — Development issue creation",
+            3,
+            "pending work queue file(s) exist without an associated open issue",
+        )
+    if work_ready_exists:
+        return (
+            "2c",
+            "2c — Development PR ready for merge",
+            5,
+            "work has an open PR with review requested and no conflicts",
+        )
+    reason = "pending work queue file(s) have an associated open issue but no PR yet"
+    if work_with_pr_exists:
+        reason = "pending work queue file(s) have an associated open PR"
+    return ("2b", STAGE_LABEL_DEVELOPMENT_EXECUTION, 4, reason)
+
+
+def _stage_for_gap_analysis_issue(
+    *,
+    has_open_gap_analysis_issue: bool,
+    gap_issue_with_pr: bool,
+    gap_issue_ready_for_review: bool,
+) -> tuple[str, str, int, str] | None:
+    if not has_open_gap_analysis_issue:
+        return None
+    if gap_issue_ready_for_review:
+        return (
+            "1c",
+            "1c — Gap analysis PR ready for merge",
+            2,
+            "open gap analysis issue has an associated open PR ready for review",
+        )
+    if gap_issue_with_pr:
+        return (
+            "1b",
+            "1b — Gap analysis execution",
+            1,
+            "open gap analysis issue has an associated open PR",
+        )
+    return (
+        "1a",
+        "1a — Gap analysis issue",
+        0,
+        "open gap analysis issue detected (no PR yet)",
+    )
+
+
+def _stage_for_capability_issue(
+    *,
+    cap_issue_nums: list[int],
+    cap_issue_with_pr: bool,
+    cap_issue_ready_for_review: bool,
+) -> tuple[str, str, int, str] | None:
+    if not cap_issue_nums:
+        return None
+    if cap_issue_ready_for_review:
+        return (
+            "3c",
+            "3c — Capability PR ready for merge",
+            8,
+            "open capability update issue exists and has an associated open PR ready for review",
+        )
+    if cap_issue_with_pr:
+        return (
+            "3b",
+            "3b — Capability update execution",
+            7,
+            "open capability update issue exists and has an associated open PR",
+        )
+    return ("3a", "3a — Capability update issue", 6, "open capability update issue exists (no PR yet)")
+
+
+def _stage_for_development_queue(dev_signals: QueueStageSignals) -> tuple[str, str, int, str] | None:
+    if not dev_signals.work_exists:
+        return None
+    if dev_signals.unpromoted_exists:
+        return (
+            "2a",
+            "2a — Development issue creation",
+            3,
+            "pending development queue file(s) exist without an associated open issue",
+        )
+    if dev_signals.ready_exists:
+        return (
+            "2c",
+            "2c — Development PR ready for merge",
+            5,
+            "development work has an open PR with review requested and no conflicts",
+        )
+    reason = "pending development queue file(s) have an associated open issue but no PR yet"
+    if dev_signals.with_pr_exists:
+        reason = "pending development queue file(s) have an associated open PR"
+    return ("2b", STAGE_LABEL_DEVELOPMENT_EXECUTION, 4, reason)
+
+
+def _stage_for_capability_queue(
+    cap_queue_signals: QueueStageSignals,
+) -> tuple[str, str, int, str] | None:
+    if not cap_queue_signals.work_exists:
+        return None
+    if cap_queue_signals.unpromoted_exists:
+        return (
+            "3a",
+            "3a — Capability update queued",
+            6,
+            "pending capability update queue file(s) exist without an associated open issue",
+        )
+    if cap_queue_signals.ready_exists:
+        return (
+            "3c",
+            "3c — Capability PR ready for merge",
+            8,
+            "pending capability update queue file(s) have an associated ready PR",
+        )
+    return (
+        "3b",
+        "3b — Capability update in progress",
+        7,
+        "pending capability update queue file(s) have an associated open PR",
+    )
+
+
+def _select_review_stage(
+    *,
+    review_intake_issue_nums: list[int],
+    review_intake_with_pr: bool,
+    review_intake_ready_for_review: bool,
+    review_update_issue_nums: list[int],
+    review_update_with_pr: bool,
+    review_update_ready_for_review: bool,
+    review_work_exists: bool,
+    work_unpromoted_exists: bool,
+    work_ready_exists: bool,
+    work_with_pr_exists: bool,
+    processed_count: int,
+) -> tuple[str, str, int, str]:
+    stage = _stage_for_review_intake_issue(
+        review_intake_issue_nums=review_intake_issue_nums,
+        review_intake_with_pr=review_intake_with_pr,
+        review_intake_ready_for_review=review_intake_ready_for_review,
+    )
+    if stage is not None:
+        return stage
+
+    stage = _stage_for_review_update_issue(
+        review_update_issue_nums=review_update_issue_nums,
+        review_update_with_pr=review_update_with_pr,
+        review_update_ready_for_review=review_update_ready_for_review,
+    )
+    if stage is not None:
+        return stage
+
+    if review_work_exists:
+        return _stage_for_review_work_queue(
+            work_unpromoted_exists=work_unpromoted_exists,
+            work_ready_exists=work_ready_exists,
+            work_with_pr_exists=work_with_pr_exists,
+        )
+
+    if processed_count > 0:
+        return ("2b", STAGE_LABEL_DEVELOPMENT_EXECUTION, 4, "processed queue artefacts exist")
+
+    return ("1a", "1a — Review intake issue", 0, "no pending/processed artefacts")
+
+
+def _select_build_stage(
+    *,
+    has_open_gap_analysis_issue: bool,
+    gap_issue_with_pr: bool,
+    gap_issue_ready_for_review: bool,
+    cap_issue_nums: list[int],
+    cap_issue_with_pr: bool,
+    cap_issue_ready_for_review: bool,
+    dev_signals: QueueStageSignals,
+    cap_queue_signals: QueueStageSignals,
+    processed_count: int,
+) -> tuple[str, str, int, str]:
+    stage = _stage_for_gap_analysis_issue(
+        has_open_gap_analysis_issue=has_open_gap_analysis_issue,
+        gap_issue_with_pr=gap_issue_with_pr,
+        gap_issue_ready_for_review=gap_issue_ready_for_review,
+    )
+    if stage is not None:
+        return stage
+
+    stage = _stage_for_capability_issue(
+        cap_issue_nums=cap_issue_nums,
+        cap_issue_with_pr=cap_issue_with_pr,
+        cap_issue_ready_for_review=cap_issue_ready_for_review,
+    )
+    if stage is not None:
+        return stage
+
+    stage = _stage_for_development_queue(dev_signals)
+    if stage is not None:
+        return stage
+
+    stage = _stage_for_capability_queue(cap_queue_signals)
+    if stage is not None:
+        return stage
+
+    if processed_count > 0:
+        return ("2b", STAGE_LABEL_DEVELOPMENT_EXECUTION, 4, "processed queue artefacts exist")
+    return ("1a", "1a — Gap analysis issue", 0, "no pending/processed artefacts")
+
+
+def _base_warnings(loop_mode: str) -> list[str]:
+    warnings: list[str] = []
+    warnings.append(
+        "Loop status is derived exclusively from git-tracked files in the target repository; "
+        "no local JSON stores are consulted."
+    )
+    warnings.append(
+        "Pending queue files are associated to GitHub issues by matching the file title (first line) "
+        "against open issue titles; PR association is derived from issue cross-references in GitHub."
+    )
+    warnings.append(
+        f"Capability update issues are detected by the '{LABEL_UPDATE_CAPABILITY}' label (open issues)."
+    )
+    if loop_mode == "review":
+        warnings.append(
+            f"Review intake issues are detected by the '{LABEL_REVIEW_CONSUMPTION}' label (open issues)."
+        )
+        warnings.append(
+            f"Review update issues are detected by the '{LABEL_UPDATE_REVIEW}' label (open issues)."
+        )
+    return warnings
+
+
+def _focus_for_labeled_issue(
+    *,
+    kind: str,
+    repo: str,
+    issue_num: int,
+    title: str,
+    pr_index: IssuePrIndex,
+    make_issue_url: Any,
+) -> dict[str, object]:
+    prs = pr_index.issue_to_open_prs.get(issue_num) or []
+    ready_prs = pr_index.issue_to_open_ready_prs.get(issue_num) or []
+    selected_pr = _select_preferred_pr(ready_prs=ready_prs, prs=prs)
+    pr_num, pr_url = _pr_number_and_url(selected_pr)
+    return {
+        "kind": kind,
+        "title": title,
+        "issueNumber": issue_num,
+        "issueUrl": make_issue_url(repo, issue_num),
+        "pullNumber": pr_num,
+        "pullUrl": pr_url,
+    }
+
+
+def _focus_for_development(
+    *,
+    stage: str,
+    loop_mode: str,
+    index: DevelopmentFocusIndex,
+    make_issue_url: Any,
+) -> dict[str, object] | None:
+    if loop_mode == "review":
+        inflight_paths = index.review_inflight_paths + index.dev_inflight_paths
+        unpromoted_paths = index.review_unpromoted + index.dev_unpromoted
+        ready_paths = index.review_ready_for_review + index.dev_ready_for_review
+        with_pr_paths = index.review_with_pr + index.dev_with_pr
+    else:
+        inflight_paths = index.dev_inflight_paths
+        unpromoted_paths = index.dev_unpromoted
+        ready_paths = index.dev_ready_for_review
+        with_pr_paths = index.dev_with_pr
+
+    if stage == "2a":
+        focus_path = _first_sorted_path(unpromoted_paths)
+    elif stage == "2c":
+        focus_path = _first_sorted_path(ready_paths)
+    else:
+        focus_path = _first_sorted_path(with_pr_paths) or _first_sorted_path(inflight_paths)
+
+    if not focus_path:
+        return None
+
+    issue_num = index.queue_issue_numbers.get(focus_path)
+    focus_pr_num: int | None = None
+    focus_pr_url: str | None = None
+    if isinstance(issue_num, int):
+        prs = index.issue_pr_index.issue_to_open_prs.get(issue_num) or []
+        ready_prs = index.issue_pr_index.issue_to_open_ready_prs.get(issue_num) or []
+        selected_pr = _select_preferred_pr(ready_prs=ready_prs, prs=prs)
+        focus_pr_num, focus_pr_url = _pr_number_and_url(selected_pr)
+
+    title = index.queue_display_titles.get(focus_path) or ""
+    if isinstance(issue_num, int) and issue_num in index.open_issue_titles_by_number:
+        title = index.open_issue_titles_by_number.get(issue_num) or title
+
+    return {
+        "kind": "development",
+        "queuePath": focus_path,
+        "queueId": _queue_filename(focus_path),
+        "title": title,
+        "issueNumber": issue_num,
+        "issueUrl": make_issue_url(index.repo, int(issue_num)) if isinstance(issue_num, int) else None,
+        "pullNumber": focus_pr_num,
+        "pullUrl": focus_pr_url,
+    }
+
+
+def _focus_for_capability(
+    *,
+    settings: ServerSettings,
+    repo: str,
+    issue_num: int,
+    title: str,
+    cap_issue_to_open_prs: dict[int, list[dict[str, Any]]],
+    cap_issue_to_open_ready_prs: dict[int, list[dict[str, Any]]],
+    make_issue_url: Any,
+) -> dict[str, object]:
+    issue_body = ""
+    issue_title_for_parse = title
+    try:
+        issue_data = _github_get_json(
+            settings,
+            url=_repo_api_url(settings, repository=repo, path=f"issues/{issue_num}"),
+        )
+        raw_body = issue_data.get("body")
+        raw_title = issue_data.get("title")
+        if isinstance(raw_body, str):
+            issue_body = raw_body
+        if isinstance(raw_title, str) and raw_title.strip():
+            issue_title_for_parse = raw_title
+    except HTTPException:
+        issue_body = ""
+
+    source_pr_number = _extract_source_pr_number_from_capability_issue(
+        repository=repo,
+        issue_title=issue_title_for_parse,
+        issue_body=issue_body,
+    )
+    source_pr_title: str | None = None
+    source_pr_url: str | None = None
+    if isinstance(source_pr_number, int):
+        try:
+            source_pr = _get_pull_request(
+                settings,
+                repository=repo,
+                pr_number=source_pr_number,
+            )
+            raw_title = source_pr.get("title")
+            if isinstance(raw_title, str) and raw_title.strip():
+                source_pr_title = raw_title
+            raw_url = source_pr.get("html_url")
+            if isinstance(raw_url, str) and raw_url.strip():
+                source_pr_url = raw_url
+        except HTTPException:
+            source_pr_title = None
+            source_pr_url = None
+
+    prs = cap_issue_to_open_prs.get(issue_num) or []
+    ready_prs = cap_issue_to_open_ready_prs.get(issue_num) or []
+    selected_pr = _select_preferred_pr(ready_prs=ready_prs, prs=prs)
+    pr_num, pr_url = _pr_number_and_url(selected_pr)
+
+    return {
+        "kind": "capability",
+        "title": title,
+        "issueNumber": issue_num,
+        "issueUrl": make_issue_url(repo, issue_num),
+        "pullNumber": pr_num,
+        "pullUrl": pr_url,
+        "sourceTitle": source_pr_title,
+        "sourcePullNumber": source_pr_number,
+        "sourcePullUrl": source_pr_url,
+    }
+
+
+def _select_focus(
+    *,
+    settings: ServerSettings,
+    inputs: FocusInputs,
+    make_issue_url: Any,
+) -> dict[str, object] | None:
+    if inputs.loop_mode == "review" and inputs.stage in {"1a", "1b", "1c"} and inputs.review_intake_issue_nums:
+        issue_num = sorted(inputs.review_intake_issue_nums)[0]
+        title = inputs.open_issue_titles_by_number.get(issue_num) or ""
+        return _focus_for_labeled_issue(
+            kind="review",
+            repo=inputs.repo,
+            issue_num=issue_num,
+            title=title,
+            pr_index=inputs.review_intake_index,
+            make_issue_url=make_issue_url,
+        )
+
+    if inputs.loop_mode == "review" and inputs.stage in {"3a", "3b", "3c"} and inputs.review_update_issue_nums:
+        issue_num = sorted(inputs.review_update_issue_nums)[0]
+        title = inputs.open_issue_titles_by_number.get(issue_num) or ""
+        return _focus_for_labeled_issue(
+            kind="reviewUpdate",
+            repo=inputs.repo,
+            issue_num=issue_num,
+            title=title,
+            pr_index=inputs.review_update_index,
+            make_issue_url=make_issue_url,
+        )
+
+    if inputs.stage in {"1a", "1b", "1c"} and inputs.gap_issue_nums:
+        issue_num = inputs.gap_issue_nums[0]
+        title = inputs.open_issue_titles_by_number.get(issue_num) or ""
+        return _focus_for_labeled_issue(
+            kind="gap",
+            repo=inputs.repo,
+            issue_num=issue_num,
+            title=title,
+            pr_index=inputs.gap_index,
+            make_issue_url=make_issue_url,
+        )
+
+    if inputs.stage in {"2a", "2b", "2c"}:
+        return _focus_for_development(
+            stage=inputs.stage,
+            loop_mode=inputs.loop_mode,
+            index=inputs.dev_index,
+            make_issue_url=make_issue_url,
+        )
+
+    if inputs.stage in {"3a", "3b", "3c"} and inputs.cap_issue_nums:
+        issue_num = sorted(inputs.cap_issue_nums)[0]
+        title = inputs.open_issue_titles_by_number.get(issue_num) or ""
+        return _focus_for_capability(
+            settings=settings,
+            repo=inputs.repo,
+            issue_num=issue_num,
+            title=title,
+            cap_issue_to_open_prs=inputs.cap_index.issue_to_open_prs,
+            cap_issue_to_open_ready_prs=inputs.cap_index.issue_to_open_ready_prs,
+            make_issue_url=make_issue_url,
+        )
+
+    return None
 
 
 def loop_status(request: Request) -> dict[str, object]:
@@ -114,6 +1033,129 @@ def loop_status(request: Request) -> dict[str, object]:
 
     ref = request.query_params.get("ref", "").strip()
     return _loop_status_for_repo(settings=settings, active_repo=active_repo, ref=ref)
+
+
+def _queue_filenames(paths: list[str]) -> list[str]:
+    return [_queue_filename(p) for p in paths]
+
+
+def _queue_files_by_category(filenames: list[str]) -> dict[str, list[str]]:
+    by_category: dict[str, list[str]] = {}
+    for filename in filenames:
+        by_category.setdefault(_queue_category_for_filename(filename), []).append(filename)
+    return by_category
+
+
+def _excluded_queue_filenames(*, filenames: list[str], loop_mode: str) -> list[str]:
+    return [
+        f for f in filenames if _queue_file_is_excluded_for_loop_mode(filename=f, loop_mode=loop_mode)
+    ]
+
+
+def _non_pr_issue_dicts(raw_issues: list[dict[str, Any]] | list[Any]) -> list[dict[str, Any]]:
+    return [it for it in raw_issues if isinstance(it, dict) and "pull_request" not in it]
+
+
+def _issue_titles_and_map(issues: list[dict[str, Any]]) -> tuple[list[str], dict[int, str]]:
+    titles: list[str] = []
+    titles_by_number: dict[int, str] = {}
+    for it in issues:
+        num = it.get("number")
+        title = it.get("title")
+        if isinstance(title, str):
+            titles.append(title)
+            if isinstance(num, int):
+                titles_by_number[num] = title
+    return titles, titles_by_number
+
+
+def _issue_numbers_with_label(issues: list[dict[str, Any]], *, label_name: str) -> list[int]:
+    return [
+        int(it["number"])
+        for it in issues
+        if isinstance(it.get("number"), int) and _issue_has_label(it, label_name=label_name)
+    ]
+
+
+def _gap_analysis_issue_numbers(issues: list[dict[str, Any]]) -> list[int]:
+    return [
+        int(it["number"])
+        for it in issues
+        if isinstance(it.get("number"), int)
+        and isinstance(it.get("title"), str)
+        and _is_gap_analysis_issue_title(str(it.get("title")))
+    ]
+
+
+def _select_stage_for_mode(*, inputs: StageInputs) -> tuple[str, str, int, str]:
+    if inputs.mode == "review":
+        return _select_review_stage(
+            review_intake_issue_nums=inputs.review_intake_issue_nums,
+            review_intake_with_pr=inputs.review_intake_with_pr,
+            review_intake_ready_for_review=inputs.review_intake_ready_for_review,
+            review_update_issue_nums=inputs.review_update_issue_nums,
+            review_update_with_pr=inputs.review_update_with_pr,
+            review_update_ready_for_review=inputs.review_update_ready_for_review,
+            review_work_exists=inputs.review_work_exists,
+            work_unpromoted_exists=inputs.work_unpromoted_exists,
+            work_ready_exists=inputs.work_ready_exists,
+            work_with_pr_exists=inputs.work_with_pr_exists,
+            processed_count=inputs.processed_count,
+        )
+    return _select_build_stage(
+        has_open_gap_analysis_issue=inputs.has_open_gap_analysis_issue,
+        gap_issue_with_pr=inputs.gap_issue_with_pr,
+        gap_issue_ready_for_review=inputs.gap_issue_ready_for_review,
+        cap_issue_nums=inputs.cap_issue_nums,
+        cap_issue_with_pr=inputs.cap_issue_with_pr,
+        cap_issue_ready_for_review=inputs.cap_issue_ready_for_review,
+        dev_signals=inputs.dev_signals,
+        cap_queue_signals=inputs.cap_queue_signals,
+        processed_count=inputs.processed_count,
+    )
+
+
+def _apply_best_effort_automations(
+    *,
+    settings: ServerSettings,
+    active_repo: str,
+    focus: dict[str, object] | None,
+    raw_open_prs: list[dict[str, Any]],
+    warnings: list[str],
+) -> None:
+    if not isinstance(focus, dict):
+        return
+
+    from github_agent_orchestrator.server.dashboard.automation_auto_link import (
+        maybe_auto_link_focused_issue_to_pr as _maybe_auto_link_focused_issue_to_pr,
+    )
+
+    link_msg = _maybe_auto_link_focused_issue_to_pr(
+        settings=settings,
+        repository=active_repo,
+        focus=focus,
+        raw_open_prs=raw_open_prs,
+    )
+    if isinstance(link_msg, str) and link_msg.strip():
+        warnings.append(link_msg)
+
+    if not settings.auto_resume_copilot_on_rate_limit:
+        return
+    focus_pull_number = focus.get("pullNumber")
+    if not (isinstance(focus_pull_number, int) and focus_pull_number > 0):
+        return
+
+    from github_agent_orchestrator.server.dashboard.automation_auto_resume import (
+        maybe_auto_resume_copilot_after_rate_limit as _maybe_auto_resume_copilot_after_rate_limit,
+    )
+
+    msg = _maybe_auto_resume_copilot_after_rate_limit(
+        settings=settings,
+        repository=active_repo,
+        pr_number=focus_pull_number,
+    )
+    if isinstance(msg, str) and msg.strip():
+        warnings.append(msg)
 
 
 def _loop_status_for_repo(
@@ -147,63 +1189,33 @@ def _loop_status_for_repo(
 
     # --- GitHub repo-derived signals (no local checkout/state) ---
     raw_issues = _list_open_issues_raw(settings, repository=active_repo)
-    open_issue_titles: list[str] = []
-    open_capability_issue_numbers: list[int] = []
-    open_review_update_issue_numbers: list[int] = []
-    open_review_consumption_issue_numbers: list[int] = []
-    open_issue_titles_by_number: dict[int, str] = {}
-    for it in raw_issues:
-        if "pull_request" in it:
-            continue
-        num = it.get("number")
-        title = it.get("title")
-        if isinstance(title, str):
-            open_issue_titles.append(title)
-            if isinstance(num, int):
-                open_issue_titles_by_number[num] = title
-        if isinstance(num, int) and _issue_has_label(it, label_name=LABEL_UPDATE_CAPABILITY):
-            open_capability_issue_numbers.append(num)
-        if isinstance(num, int) and _issue_has_label(it, label_name=LABEL_UPDATE_REVIEW):
-            open_review_update_issue_numbers.append(num)
-        if isinstance(num, int) and _issue_has_label(it, label_name=LABEL_REVIEW_CONSUMPTION):
-            open_review_consumption_issue_numbers.append(num)
-
-    gap_issue_nums: list[int] = []
-    for it in raw_issues:
-        if not isinstance(it, dict):
-            continue
-        if "pull_request" in it:
-            continue
-        num = it.get("number")
-        title = it.get("title")
-        if isinstance(num, int) and isinstance(title, str) and _is_gap_analysis_issue_title(title):
-            gap_issue_nums.append(num)
-
+    open_issue_dicts = _non_pr_issue_dicts(raw_issues)
+    open_issue_titles, open_issue_titles_by_number = _issue_titles_and_map(open_issue_dicts)
+    open_capability_issue_numbers = _issue_numbers_with_label(
+        open_issue_dicts, label_name=LABEL_UPDATE_CAPABILITY
+    )
+    open_review_update_issue_numbers = _issue_numbers_with_label(
+        open_issue_dicts, label_name=LABEL_UPDATE_REVIEW
+    )
+    open_review_consumption_issue_numbers = _issue_numbers_with_label(
+        open_issue_dicts, label_name=LABEL_REVIEW_CONSUMPTION
+    )
+    gap_issue_nums = sorted(set(_gap_analysis_issue_numbers(open_issue_dicts)))
     has_open_gap_analysis_issue = bool(gap_issue_nums)
 
     raw_open_prs = _list_open_pull_requests_raw(settings, repository=active_repo, limit=100)
     open_pr_count = len(raw_open_prs)
 
-    pending_files = [_queue_filename(p) for p in pending_paths]
-    pending_by_category: dict[str, list[str]] = {}
-    for filename in pending_files:
-        pending_by_category.setdefault(_queue_category_for_filename(filename), []).append(filename)
+    pending_files = _queue_filenames(pending_paths)
+    pending_by_category = _queue_files_by_category(pending_files)
 
     dev_pending = pending_by_category.get("development", [])
     review_pending = pending_by_category.get("review", [])
     cap_pending = pending_by_category.get("capability", [])
-    excluded_pending = [
-        f
-        for f in pending_files
-        if _queue_file_is_excluded_for_loop_mode(filename=f, loop_mode=mode)
-    ]
+    excluded_pending = _excluded_queue_filenames(filenames=pending_files, loop_mode=mode)
 
-    processed_files = [_queue_filename(p) for p in processed_paths]
-    processed_by_category: dict[str, list[str]] = {}
-    for filename in processed_files:
-        processed_by_category.setdefault(_queue_category_for_filename(filename), []).append(
-            filename
-        )
+    processed_files = _queue_filenames(processed_paths)
+    processed_by_category = _queue_files_by_category(processed_files)
 
     dev_processed = processed_by_category.get("development", [])
     review_processed = processed_by_category.get("review", [])
@@ -211,774 +1223,270 @@ def _loop_status_for_repo(
 
     # Associate queue files (pending + processed) -> GitHub issues by matching the file title
     # (first line) to open issue titles. Then associate issues -> PRs via issue timeline events.
-    queue_issue_numbers: dict[str, int | None] = {}
-    queue_display_titles: dict[str, str] = {}
-    issue_to_open_prs: dict[int, list[dict[str, Any]]] = {}
-    issue_to_open_ready_prs: dict[int, list[dict[str, Any]]] = {}
-    pr_lookups = 0
-    timeline_lookups = 0
-
-    open_issues_for_matching = [it for it in raw_issues if isinstance(it, dict)]
+    open_issues_for_matching = list(open_issue_dicts)
     pr_cache: dict[int, dict[str, Any]] = {}
     pr_review_request_cache: dict[int, bool] = {}
+    debug_counters: dict[str, int] = {"issueTimelineLookups": 0, "pullRequestLookups": 0}
 
     queue_paths_for_linkage = list(pending_paths) + list(processed_paths)
-    for queue_path in queue_paths_for_linkage:
-        content, _sha = _get_repo_text_file(
-            settings,
-            repository=active_repo,
-            path=queue_path,
-            ref=ref,
-        )
-
-        # Display title keeps original casing for UI; matching uses normalized title.
-        display_title = ""
-        for raw in content.splitlines():
-            line = raw.strip("\n")
-            if not line.strip():
-                continue
-            if line.lstrip().startswith("#"):
-                line = line.lstrip().lstrip("#").strip()
-            display_title = line.strip()
-            break
-        if display_title:
-            queue_display_titles[queue_path] = display_title
-
-        title_norm = _first_markdown_line_as_title(content)
-        issue_num = _best_match_issue_number(title_norm, open_issues_for_matching)
-        queue_issue_numbers[queue_path] = issue_num
-
-        if issue_num is None:
-            continue
-
-        if issue_num not in issue_to_open_prs:
-            timeline = _list_issue_timeline_raw(
-                settings, repository=active_repo, issue_number=issue_num
-            )
-            timeline_lookups += 1
-            pr_nums = _linked_pr_numbers_from_issue_timeline(timeline)
-
-            open_prs: list[dict[str, Any]] = []
-            ready_prs: list[dict[str, Any]] = []
-            for pr_num in sorted(pr_nums):
-                pr_data = pr_cache.get(pr_num)
-                if pr_data is None:
-                    pr_data = _get_pull_request(settings, repository=active_repo, pr_number=pr_num)
-                    pr_cache[pr_num] = pr_data
-                    pr_lookups += 1
-
-                if pr_data.get("state") != "open":
-                    continue
-                open_prs.append(pr_data)
-
-                review_requested = _pull_request_has_review_request(pr_data)
-                if not review_requested:
-                    cached_rr = pr_review_request_cache.get(pr_num)
-                    if cached_rr is None:
-                        cached_rr = _pull_request_has_review_request_history(
-                            settings,
-                            repository=active_repo,
-                            pr_number=pr_num,
-                        )
-                        pr_review_request_cache[pr_num] = cached_rr
-                        timeline_lookups += 1
-                    review_requested = cached_rr
-
-                if _pull_request_is_merge_candidate(pr_data, review_requested=review_requested):
-                    ready_prs.append(pr_data)
-
-            issue_to_open_prs[issue_num] = open_prs
-            issue_to_open_ready_prs[issue_num] = ready_prs
+    (
+        queue_issue_numbers,
+        queue_display_titles,
+        issue_to_open_prs,
+        issue_to_open_ready_prs,
+    ) = _queue_issue_and_pr_linkage(
+        settings=settings,
+        repo=active_repo,
+        ref=ref,
+        queue_paths=queue_paths_for_linkage,
+        open_issues_for_matching=open_issues_for_matching,
+        pr_cache=pr_cache,
+        pr_review_request_cache=pr_review_request_cache,
+        debug_counters=debug_counters,
+    )
 
     # Capability update issues (Step E/F/G) are derived from labels, not queue files.
     cap_issue_nums = sorted(set(open_capability_issue_numbers))
-    cap_issue_with_pr = False
-    cap_issue_ready_for_review = False
-    cap_issue_to_open_prs: dict[int, list[dict[str, Any]]] = {}
-    cap_issue_to_open_ready_prs: dict[int, list[dict[str, Any]]] = {}
-    for issue_num in cap_issue_nums:
-        if issue_num in issue_to_open_prs:
-            cap_open_prs_existing = list(issue_to_open_prs.get(issue_num) or [])
-            cap_ready_prs_existing = list(issue_to_open_ready_prs.get(issue_num) or [])
-            cap_issue_to_open_prs[issue_num] = cap_open_prs_existing
-            cap_issue_to_open_ready_prs[issue_num] = cap_ready_prs_existing
-            cap_issue_with_pr = cap_issue_with_pr or bool(cap_open_prs_existing)
-            cap_issue_ready_for_review = cap_issue_ready_for_review or bool(cap_ready_prs_existing)
-            continue
-
-        timeline = _list_issue_timeline_raw(
-            settings, repository=active_repo, issue_number=issue_num
-        )
-        timeline_lookups += 1
-        pr_nums = _linked_pr_numbers_from_issue_timeline(timeline)
-
-        cap_open_prs_list: list[dict[str, Any]] = []
-        cap_ready_prs_list: list[dict[str, Any]] = []
-        for linked_pr_num in sorted(pr_nums):
-            pr_data = pr_cache.get(linked_pr_num)
-            if pr_data is None:
-                pr_data = _get_pull_request(
-                    settings, repository=active_repo, pr_number=linked_pr_num
-                )
-                pr_cache[linked_pr_num] = pr_data
-                pr_lookups += 1
-            if pr_data.get("state") != "open":
-                continue
-            cap_issue_with_pr = True
-            cap_open_prs_list.append(pr_data)
-
-            review_requested = _pull_request_has_review_request(pr_data)
-            if not review_requested:
-                cached_rr = pr_review_request_cache.get(linked_pr_num)
-                if cached_rr is None:
-                    cached_rr = _pull_request_has_review_request_history(
-                        settings,
-                        repository=active_repo,
-                        pr_number=linked_pr_num,
-                    )
-                    pr_review_request_cache[linked_pr_num] = cached_rr
-                    timeline_lookups += 1
-                review_requested = cached_rr
-
-            if _pull_request_is_merge_candidate(pr_data, review_requested=review_requested):
-                cap_issue_ready_for_review = True
-                cap_ready_prs_list.append(pr_data)
-
-        cap_issue_to_open_prs[issue_num] = cap_open_prs_list
-        cap_issue_to_open_ready_prs[issue_num] = cap_ready_prs_list
+    (
+        cap_issue_to_open_prs,
+        cap_issue_to_open_ready_prs,
+        cap_issue_with_pr,
+        cap_issue_ready_for_review,
+    ) = _issue_pr_maps_and_signals(
+        settings=settings,
+        repo=active_repo,
+        issue_numbers=cap_issue_nums,
+        pr_cache=pr_cache,
+        pr_review_request_cache=pr_review_request_cache,
+        debug_counters=debug_counters,
+        precomputed_open_prs=issue_to_open_prs,
+        precomputed_ready_prs=issue_to_open_ready_prs,
+    )
 
     # Gap-analysis issues (Step A) are derived from titles, not queue artefacts.
-    gap_issue_nums = sorted(set(gap_issue_nums))
-    gap_issue_with_pr = False
-    gap_issue_ready_for_review = False
-    gap_issue_to_open_prs: dict[int, list[dict[str, Any]]] = {}
-    gap_issue_to_open_ready_prs: dict[int, list[dict[str, Any]]] = {}
-    for issue_num in gap_issue_nums:
-        if issue_num in issue_to_open_prs:
-            gap_open_prs_existing = list(issue_to_open_prs.get(issue_num) or [])
-            gap_ready_prs_existing = list(issue_to_open_ready_prs.get(issue_num) or [])
-            gap_issue_to_open_prs[issue_num] = gap_open_prs_existing
-            gap_issue_to_open_ready_prs[issue_num] = gap_ready_prs_existing
-            gap_issue_with_pr = gap_issue_with_pr or bool(gap_open_prs_existing)
-            gap_issue_ready_for_review = gap_issue_ready_for_review or bool(gap_ready_prs_existing)
-            continue
-
-        timeline = _list_issue_timeline_raw(
-            settings, repository=active_repo, issue_number=issue_num
-        )
-        timeline_lookups += 1
-        pr_nums = _linked_pr_numbers_from_issue_timeline(timeline)
-
-        gap_open_prs_list: list[dict[str, Any]] = []
-        gap_ready_prs_list: list[dict[str, Any]] = []
-        for linked_pr_num in sorted(pr_nums):
-            pr_data = pr_cache.get(linked_pr_num)
-            if pr_data is None:
-                pr_data = _get_pull_request(
-                    settings, repository=active_repo, pr_number=linked_pr_num
-                )
-                pr_cache[linked_pr_num] = pr_data
-                pr_lookups += 1
-            if pr_data.get("state") != "open":
-                continue
-            gap_issue_with_pr = True
-            gap_open_prs_list.append(pr_data)
-
-            review_requested = _pull_request_has_review_request(pr_data)
-            if not review_requested:
-                cached_rr = pr_review_request_cache.get(linked_pr_num)
-                if cached_rr is None:
-                    cached_rr = _pull_request_has_review_request_history(
-                        settings,
-                        repository=active_repo,
-                        pr_number=linked_pr_num,
-                    )
-                    pr_review_request_cache[linked_pr_num] = cached_rr
-                    timeline_lookups += 1
-                review_requested = cached_rr
-
-            if _pull_request_is_merge_candidate(pr_data, review_requested=review_requested):
-                gap_issue_ready_for_review = True
-                gap_ready_prs_list.append(pr_data)
-
-        gap_issue_to_open_prs[issue_num] = gap_open_prs_list
-        gap_issue_to_open_ready_prs[issue_num] = gap_ready_prs_list
+    (
+        gap_issue_to_open_prs,
+        gap_issue_to_open_ready_prs,
+        gap_issue_with_pr,
+        gap_issue_ready_for_review,
+    ) = _issue_pr_maps_and_signals(
+        settings=settings,
+        repo=active_repo,
+        issue_numbers=gap_issue_nums,
+        pr_cache=pr_cache,
+        pr_review_request_cache=pr_review_request_cache,
+        debug_counters=debug_counters,
+        precomputed_open_prs=issue_to_open_prs,
+        precomputed_ready_prs=issue_to_open_ready_prs,
+    )
 
     # Review-mode issues are derived from labels.
     review_intake_issue_nums = sorted(set(open_review_consumption_issue_numbers))
     review_update_issue_nums = sorted(set(open_review_update_issue_numbers))
 
-    review_intake_with_pr = False
-    review_intake_ready_for_review = False
-    review_intake_issue_to_open_prs: dict[int, list[dict[str, Any]]] = {}
-    review_intake_issue_to_open_ready_prs: dict[int, list[dict[str, Any]]] = {}
-    for issue_num in review_intake_issue_nums:
-        timeline = _list_issue_timeline_raw(
-            settings, repository=active_repo, issue_number=issue_num
-        )
-        timeline_lookups += 1
-        pr_nums = _linked_pr_numbers_from_issue_timeline(timeline)
+    (
+        review_intake_issue_to_open_prs,
+        review_intake_issue_to_open_ready_prs,
+        review_intake_with_pr,
+        review_intake_ready_for_review,
+    ) = _issue_pr_maps_and_signals(
+        settings=settings,
+        repo=active_repo,
+        issue_numbers=review_intake_issue_nums,
+        pr_cache=pr_cache,
+        pr_review_request_cache=pr_review_request_cache,
+        debug_counters=debug_counters,
+        precomputed_open_prs=issue_to_open_prs,
+        precomputed_ready_prs=issue_to_open_ready_prs,
+    )
 
-        intake_open_prs: list[dict[str, Any]] = []
-        intake_ready_prs: list[dict[str, Any]] = []
-        for linked_pr_num in sorted(pr_nums):
-            pr_data = pr_cache.get(linked_pr_num)
-            if pr_data is None:
-                pr_data = _get_pull_request(
-                    settings, repository=active_repo, pr_number=linked_pr_num
-                )
-                pr_cache[linked_pr_num] = pr_data
-                pr_lookups += 1
-            if pr_data.get("state") != "open":
-                continue
-            review_intake_with_pr = True
-            intake_open_prs.append(pr_data)
+    (
+        review_update_issue_to_open_prs,
+        review_update_issue_to_open_ready_prs,
+        review_update_with_pr,
+        review_update_ready_for_review,
+    ) = _issue_pr_maps_and_signals(
+        settings=settings,
+        repo=active_repo,
+        issue_numbers=review_update_issue_nums,
+        pr_cache=pr_cache,
+        pr_review_request_cache=pr_review_request_cache,
+        debug_counters=debug_counters,
+        precomputed_open_prs=issue_to_open_prs,
+        precomputed_ready_prs=issue_to_open_ready_prs,
+    )
 
-            review_requested = _pull_request_has_review_request(pr_data)
-            if not review_requested:
-                cached_rr = pr_review_request_cache.get(linked_pr_num)
-                if cached_rr is None:
-                    cached_rr = _pull_request_has_review_request_history(
-                        settings,
-                        repository=active_repo,
-                        pr_number=linked_pr_num,
-                    )
-                    pr_review_request_cache[linked_pr_num] = cached_rr
-                    timeline_lookups += 1
-                review_requested = cached_rr
-
-            if _pull_request_is_merge_candidate(pr_data, review_requested=review_requested):
-                review_intake_ready_for_review = True
-                intake_ready_prs.append(pr_data)
-
-        review_intake_issue_to_open_prs[issue_num] = intake_open_prs
-        review_intake_issue_to_open_ready_prs[issue_num] = intake_ready_prs
-
-    review_update_with_pr = False
-    review_update_ready_for_review = False
-    review_update_issue_to_open_prs: dict[int, list[dict[str, Any]]] = {}
-    review_update_issue_to_open_ready_prs: dict[int, list[dict[str, Any]]] = {}
-    for issue_num in review_update_issue_nums:
-        timeline = _list_issue_timeline_raw(
-            settings, repository=active_repo, issue_number=issue_num
-        )
-        timeline_lookups += 1
-        pr_nums = _linked_pr_numbers_from_issue_timeline(timeline)
-
-        upd_open_prs: list[dict[str, Any]] = []
-        upd_ready_prs: list[dict[str, Any]] = []
-        for linked_pr_num in sorted(pr_nums):
-            pr_data = pr_cache.get(linked_pr_num)
-            if pr_data is None:
-                pr_data = _get_pull_request(
-                    settings, repository=active_repo, pr_number=linked_pr_num
-                )
-                pr_cache[linked_pr_num] = pr_data
-                pr_lookups += 1
-            if pr_data.get("state") != "open":
-                continue
-            review_update_with_pr = True
-            upd_open_prs.append(pr_data)
-
-            review_requested = _pull_request_has_review_request(pr_data)
-            if not review_requested:
-                cached_rr = pr_review_request_cache.get(linked_pr_num)
-                if cached_rr is None:
-                    cached_rr = _pull_request_has_review_request_history(
-                        settings,
-                        repository=active_repo,
-                        pr_number=linked_pr_num,
-                    )
-                    pr_review_request_cache[linked_pr_num] = cached_rr
-                    timeline_lookups += 1
-                review_requested = cached_rr
-
-            if _pull_request_is_merge_candidate(pr_data, review_requested=review_requested):
-                review_update_ready_for_review = True
-                upd_ready_prs.append(pr_data)
-
-        review_update_issue_to_open_prs[issue_num] = upd_open_prs
-        review_update_issue_to_open_ready_prs[issue_num] = upd_ready_prs
-
-    dev_pending_paths = [p for p in pending_paths if _queue_filename(p) in set(dev_pending)]
-    review_pending_paths = [p for p in pending_paths if _queue_filename(p) in set(review_pending)]
-    cap_pending_paths = [p for p in pending_paths if _queue_filename(p) in set(cap_pending)]
-    dev_processed_paths = [p for p in processed_paths if _queue_filename(p) in set(dev_processed)]
-    review_processed_paths = [
-        p for p in processed_paths if _queue_filename(p) in set(review_processed)
-    ]
-    cap_processed_paths = [p for p in processed_paths if _queue_filename(p) in set(cap_processed)]
+    dev_pending_paths = _paths_for_filenames(pending_paths, dev_pending)
+    review_pending_paths = _paths_for_filenames(pending_paths, review_pending)
+    cap_pending_paths = _paths_for_filenames(pending_paths, cap_pending)
+    dev_processed_paths = _paths_for_filenames(processed_paths, dev_processed)
+    review_processed_paths = _paths_for_filenames(processed_paths, review_processed)
+    cap_processed_paths = _paths_for_filenames(processed_paths, cap_processed)
 
     dev_inflight_paths = dev_pending_paths + dev_processed_paths
     review_inflight_paths = review_pending_paths + review_processed_paths
     cap_inflight_paths = cap_pending_paths + cap_processed_paths
 
-    def _has_associated_open_pr(queue_path: str) -> bool:
-        issue_num = queue_issue_numbers.get(queue_path)
-        if issue_num is None:
-            return False
-        return bool(issue_to_open_prs.get(issue_num))
+    dev_with_pr = _queue_paths_with_open_pr(
+        queue_paths=dev_inflight_paths,
+        queue_issue_numbers=queue_issue_numbers,
+        issue_to_open_prs=issue_to_open_prs,
+    )
+    dev_ready_for_review = _queue_paths_with_ready_pr(
+        queue_paths=dev_inflight_paths,
+        queue_issue_numbers=queue_issue_numbers,
+        issue_to_open_ready_prs=issue_to_open_ready_prs,
+    )
+    review_with_pr = _queue_paths_with_open_pr(
+        queue_paths=review_inflight_paths,
+        queue_issue_numbers=queue_issue_numbers,
+        issue_to_open_prs=issue_to_open_prs,
+    )
+    review_ready_for_review = _queue_paths_with_ready_pr(
+        queue_paths=review_inflight_paths,
+        queue_issue_numbers=queue_issue_numbers,
+        issue_to_open_ready_prs=issue_to_open_ready_prs,
+    )
 
-    def _has_associated_ready_pr(queue_path: str) -> bool:
-        issue_num = queue_issue_numbers.get(queue_path)
-        if issue_num is None:
-            return False
-        return bool(issue_to_open_ready_prs.get(issue_num))
+    cap_with_pr = _queue_paths_with_open_pr(
+        queue_paths=cap_inflight_paths,
+        queue_issue_numbers=queue_issue_numbers,
+        issue_to_open_prs=issue_to_open_prs,
+    )
+    cap_ready_for_review = _queue_paths_with_ready_pr(
+        queue_paths=cap_inflight_paths,
+        queue_issue_numbers=queue_issue_numbers,
+        issue_to_open_ready_prs=issue_to_open_ready_prs,
+    )
 
-    dev_with_pr = [p for p in dev_inflight_paths if _has_associated_open_pr(p)]
-    dev_ready_for_review = [p for p in dev_inflight_paths if _has_associated_ready_pr(p)]
-    review_with_pr = [p for p in review_inflight_paths if _has_associated_open_pr(p)]
-    review_ready_for_review = [p for p in review_inflight_paths if _has_associated_ready_pr(p)]
-
-    cap_with_pr = [p for p in cap_inflight_paths if _has_associated_open_pr(p)]
-    cap_ready_for_review = [p for p in cap_inflight_paths if _has_associated_ready_pr(p)]
-
-    dev_unpromoted = [p for p in dev_pending_paths if queue_issue_numbers.get(p) is None]
-    review_unpromoted = [p for p in review_pending_paths if queue_issue_numbers.get(p) is None]
-    dev_promoted_no_pr = [
-        p
-        for p in dev_pending_paths
-        if queue_issue_numbers.get(p) is not None and not _has_associated_open_pr(p)
-    ]
-    review_promoted_no_pr = [
-        p
-        for p in review_pending_paths
-        if queue_issue_numbers.get(p) is not None and not _has_associated_open_pr(p)
-    ]
-    cap_unpromoted = [p for p in cap_pending_paths if queue_issue_numbers.get(p) is None]
-    cap_promoted_no_pr = [
-        p
-        for p in cap_pending_paths
-        if queue_issue_numbers.get(p) is not None and not _has_associated_open_pr(p)
-    ]
+    dev_unpromoted = _queue_paths_unpromoted(
+        queue_paths=dev_pending_paths,
+        queue_issue_numbers=queue_issue_numbers,
+    )
+    review_unpromoted = _queue_paths_unpromoted(
+        queue_paths=review_pending_paths,
+        queue_issue_numbers=queue_issue_numbers,
+    )
+    dev_promoted_no_pr = _queue_paths_promoted_no_pr(
+        queue_paths=dev_pending_paths,
+        queue_issue_numbers=queue_issue_numbers,
+        issue_to_open_prs=issue_to_open_prs,
+    )
+    review_promoted_no_pr = _queue_paths_promoted_no_pr(
+        queue_paths=review_pending_paths,
+        queue_issue_numbers=queue_issue_numbers,
+        issue_to_open_prs=issue_to_open_prs,
+    )
+    cap_unpromoted = _queue_paths_unpromoted(
+        queue_paths=cap_pending_paths,
+        queue_issue_numbers=queue_issue_numbers,
+    )
+    cap_promoted_no_pr = _queue_paths_promoted_no_pr(
+        queue_paths=cap_pending_paths,
+        queue_issue_numbers=queue_issue_numbers,
+        issue_to_open_prs=issue_to_open_prs,
+    )
 
     # --- Stage selection (priority is loop order) ---
-    # Stages are stable 1a–3c; labels vary by loop mode.
-    if mode == "review":
-        # Review intake (Step 1)
-        if review_intake_issue_nums:
-            if review_intake_ready_for_review:
-                stage = "1c"
-                stage_label = "1c — Review intake PR ready for merge"
-                active_step = 2
-                stage_reason = "open review intake issue has an associated open PR ready for review"
-            elif review_intake_with_pr:
-                stage = "1b"
-                stage_label = "1b — Review intake execution"
-                active_step = 1
-                stage_reason = "open review intake issue has an associated open PR"
-            else:
-                stage = "1a"
-                stage_label = "1a — Review intake issue"
-                active_step = 0
-                stage_reason = "open review intake issue detected (no PR yet)"
-        # Review actions update (Step 3)
-        elif review_update_issue_nums:
-            # We intentionally reuse the E/F/G step numbers for the update phase.
-            if review_update_ready_for_review:
-                stage = "3c"
-                stage_label = "3c — Review actions PR ready for merge"
-                active_step = 8
-                stage_reason = "open review update issue has an associated open PR ready for review"
-            elif review_update_with_pr:
-                stage = "3b"
-                stage_label = "3b — Review actions update execution"
-                active_step = 7
-                stage_reason = "open review update issue has an associated open PR"
-            else:
-                stage = "3a"
-                stage_label = "3a — Review actions update issue"
-                active_step = 6
-                stage_reason = "open review update issue exists (no PR yet)"
-        # Development (Step 2) from review queue artefacts
-        elif review_pending or review_processed or dev_pending or dev_processed:
-            work_unpromoted = review_unpromoted + dev_unpromoted
-            work_ready = review_ready_for_review + dev_ready_for_review
-            work_with_pr = review_with_pr + dev_with_pr
-
-            if work_unpromoted:
-                stage = "2a"
-                stage_label = "2a — Development issue creation"
-                active_step = 3
-                stage_reason = "pending work queue file(s) exist without an associated open issue"
-            elif work_ready:
-                stage = "2c"
-                stage_label = "2c — Development PR ready for merge"
-                active_step = 5
-                stage_reason = "work has an open PR with review requested and no conflicts"
-            else:
-                stage = "2b"
-                stage_label = "2b — Development execution"
-                active_step = 4
-                if work_with_pr:
-                    stage_reason = "pending work queue file(s) have an associated open PR"
-                else:
-                    stage_reason = (
-                        "pending work queue file(s) have an associated open issue but no PR yet"
-                    )
-        elif processed_count > 0:
-            stage = "2b"
-            stage_label = "2b — Development execution"
-            active_step = 4
-            stage_reason = "processed queue artefacts exist"
-        else:
-            stage = "1a"
-            stage_label = "1a — Review intake issue"
-            active_step = 0
-            stage_reason = "no pending/processed artefacts"
-
-    # Build mode (existing semantics)
-    elif has_open_gap_analysis_issue:
-        if gap_issue_ready_for_review:
-            stage = "1c"
-            stage_label = "1c — Gap analysis PR ready for merge"
-            active_step = 2
-            stage_reason = "open gap analysis issue has an associated open PR ready for review"
-        elif gap_issue_with_pr:
-            stage = "1b"
-            stage_label = "1b — Gap analysis execution"
-            active_step = 1
-            stage_reason = "open gap analysis issue has an associated open PR"
-        else:
-            stage = "1a"
-            stage_label = "1a — Gap analysis issue"
-            active_step = 0
-            stage_reason = "open gap analysis issue detected (no PR yet)"
-    elif cap_issue_nums:
-        if cap_issue_ready_for_review:
-            stage = "3c"
-            stage_label = "3c — Capability PR ready for merge"
-            active_step = 8
-            stage_reason = (
-                "open capability update issue exists and has an associated open PR ready for review"
-            )
-        elif cap_issue_with_pr:
-            stage = "3b"
-            stage_label = "3b — Capability update execution"
-            active_step = 7
-            stage_reason = "open capability update issue exists and has an associated open PR"
-        else:
-            stage = "3a"
-            stage_label = "3a — Capability update issue"
-            active_step = 6
-            stage_reason = "open capability update issue exists (no PR yet)"
-    elif dev_pending or dev_processed:
-        if dev_unpromoted:
-            stage = "2a"
-            stage_label = "2a — Development issue creation"
-            active_step = 3
-            stage_reason = (
-                "pending development queue file(s) exist without an associated open issue"
-            )
-        elif dev_ready_for_review:
-            stage = "2c"
-            stage_label = "2c — Development PR ready for merge"
-            active_step = 5
-            stage_reason = "development work has an open PR with review requested and no conflicts"
-        else:
-            stage = "2b"
-            stage_label = "2b — Development execution"
-            active_step = 4
-            if dev_with_pr:
-                stage_reason = "pending development queue file(s) have an associated open PR"
-            else:
-                stage_reason = (
-                    "pending development queue file(s) have an associated open issue but no PR yet"
-                )
-    elif cap_pending or cap_processed:
-        # Legacy path: capability update represented by queue artefacts.
-        if cap_unpromoted:
-            stage = "3a"
-            stage_label = "3a — Capability update queued"
-            active_step = 6
-            stage_reason = (
-                "pending capability update queue file(s) exist without an associated open issue"
-            )
-        elif cap_ready_for_review:
-            stage = "3c"
-            stage_label = "3c — Capability PR ready for merge"
-            active_step = 8
-            stage_reason = "pending capability update queue file(s) have an associated ready PR"
-        else:
-            stage = "3b"
-            stage_label = "3b — Capability update in progress"
-            active_step = 7
-            stage_reason = "pending capability update queue file(s) have an associated open PR"
-    elif processed_count > 0:
-        stage = "2b"
-        stage_label = "2b — Development execution"
-        active_step = 4
-        stage_reason = "processed queue artefacts exist"
-    else:
-        stage = "1a"
-        stage_label = "1a — Gap analysis issue"
-        active_step = 0
-        stage_reason = "no pending/processed artefacts"
-
-    warnings: list[str] = []
-    warnings.append(
-        "Loop status is derived exclusively from git-tracked files in the target repository; "
-        "no local JSON stores are consulted."
+    review_work_exists = bool(review_pending or review_processed or dev_pending or dev_processed)
+    dev_signals = QueueStageSignals(
+        work_exists=bool(dev_pending or dev_processed),
+        unpromoted_exists=bool(dev_unpromoted),
+        ready_exists=bool(dev_ready_for_review),
+        with_pr_exists=bool(dev_with_pr),
     )
-    warnings.append(
-        "Pending queue files are associated to GitHub issues by matching the file title (first line) "
-        "against open issue titles; PR association is derived from issue cross-references in GitHub."
+    cap_queue_signals = QueueStageSignals(
+        work_exists=bool(cap_pending or cap_processed),
+        unpromoted_exists=bool(cap_unpromoted),
+        ready_exists=bool(cap_ready_for_review),
+        with_pr_exists=bool(cap_with_pr),
     )
-    warnings.append(
-        f"Capability update issues are detected by the '{LABEL_UPDATE_CAPABILITY}' label (open issues)."
+    stage_inputs = StageInputs(
+        mode=mode,
+        has_open_gap_analysis_issue=has_open_gap_analysis_issue,
+        gap_issue_with_pr=gap_issue_with_pr,
+        gap_issue_ready_for_review=gap_issue_ready_for_review,
+        cap_issue_nums=cap_issue_nums,
+        cap_issue_with_pr=cap_issue_with_pr,
+        cap_issue_ready_for_review=cap_issue_ready_for_review,
+        review_intake_issue_nums=review_intake_issue_nums,
+        review_intake_with_pr=review_intake_with_pr,
+        review_intake_ready_for_review=review_intake_ready_for_review,
+        review_update_issue_nums=review_update_issue_nums,
+        review_update_with_pr=review_update_with_pr,
+        review_update_ready_for_review=review_update_ready_for_review,
+        review_work_exists=review_work_exists,
+        work_unpromoted_exists=bool(review_unpromoted or dev_unpromoted),
+        work_ready_exists=bool(review_ready_for_review or dev_ready_for_review),
+        work_with_pr_exists=bool(review_with_pr or dev_with_pr),
+        dev_signals=dev_signals,
+        cap_queue_signals=cap_queue_signals,
+        processed_count=processed_count,
     )
-    if mode == "review":
-        warnings.append(
-            f"Review intake issues are detected by the '{LABEL_REVIEW_CONSUMPTION}' label (open issues)."
-        )
-        warnings.append(
-            f"Review update issues are detected by the '{LABEL_UPDATE_REVIEW}' label (open issues)."
-        )
+    stage, stage_label, active_step, stage_reason = _select_stage_for_mode(inputs=stage_inputs)
 
-    def _first_path(paths: list[str]) -> str | None:
-        if not paths:
-            return None
-        return sorted(paths)[0]
+    warnings = _base_warnings(mode)
 
-    focus: dict[str, object] | None = None
-    if mode == "review" and stage in {"1a", "1b", "1c"} and review_intake_issue_nums:
-        issue_num = sorted(review_intake_issue_nums)[0]
-        title = open_issue_titles_by_number.get(issue_num) or ""
+    dev_index = DevelopmentFocusIndex(
+        repo=active_repo,
+        queue_issue_numbers=queue_issue_numbers,
+        queue_display_titles=queue_display_titles,
+        open_issue_titles_by_number=open_issue_titles_by_number,
+        issue_pr_index=IssuePrIndex(
+            issue_to_open_prs=issue_to_open_prs,
+            issue_to_open_ready_prs=issue_to_open_ready_prs,
+        ),
+        dev_inflight_paths=dev_inflight_paths,
+        dev_unpromoted=dev_unpromoted,
+        dev_ready_for_review=dev_ready_for_review,
+        dev_with_pr=dev_with_pr,
+        review_inflight_paths=review_inflight_paths,
+        review_unpromoted=review_unpromoted,
+        review_ready_for_review=review_ready_for_review,
+        review_with_pr=review_with_pr,
+    )
 
-        prs = review_intake_issue_to_open_prs.get(issue_num) or []
-        ready_prs = review_intake_issue_to_open_ready_prs.get(issue_num) or []
-        selected_pr = ready_prs[0] if ready_prs else (prs[0] if prs else None)
+    focus_inputs = FocusInputs(
+        repo=active_repo,
+        loop_mode=mode,
+        stage=stage,
+        gap_issue_nums=gap_issue_nums,
+        cap_issue_nums=cap_issue_nums,
+        review_intake_issue_nums=review_intake_issue_nums,
+        review_update_issue_nums=review_update_issue_nums,
+        open_issue_titles_by_number=open_issue_titles_by_number,
+        gap_index=IssuePrIndex(
+            issue_to_open_prs=gap_issue_to_open_prs,
+            issue_to_open_ready_prs=gap_issue_to_open_ready_prs,
+        ),
+        cap_index=IssuePrIndex(
+            issue_to_open_prs=cap_issue_to_open_prs,
+            issue_to_open_ready_prs=cap_issue_to_open_ready_prs,
+        ),
+        review_intake_index=IssuePrIndex(
+            issue_to_open_prs=review_intake_issue_to_open_prs,
+            issue_to_open_ready_prs=review_intake_issue_to_open_ready_prs,
+        ),
+        review_update_index=IssuePrIndex(
+            issue_to_open_prs=review_update_issue_to_open_prs,
+            issue_to_open_ready_prs=review_update_issue_to_open_ready_prs,
+        ),
+        dev_index=dev_index,
+    )
 
-        focus_pr_num: int | None = None
-        focus_pr_url: str | None = None
-        if isinstance(selected_pr, dict):
-            raw_pr_num = selected_pr.get("number")
-            if isinstance(raw_pr_num, int):
-                focus_pr_num = raw_pr_num
-            raw_pr_url = selected_pr.get("html_url")
-            if isinstance(raw_pr_url, str) and raw_pr_url.strip():
-                focus_pr_url = raw_pr_url
+    focus = _select_focus(
+        settings=settings,
+        inputs=focus_inputs,
+        make_issue_url=dashboard_router._make_github_issue_url,
+    )
 
-        focus = {
-            "kind": "review",
-            "title": title,
-            "issueNumber": issue_num,
-            "issueUrl": dashboard_router._make_github_issue_url(active_repo, issue_num),
-            "pullNumber": focus_pr_num,
-            "pullUrl": focus_pr_url,
-        }
-    elif mode == "review" and stage in {"3a", "3b", "3c"} and review_update_issue_nums:
-        issue_num = sorted(review_update_issue_nums)[0]
-        title = open_issue_titles_by_number.get(issue_num) or ""
-
-        prs = review_update_issue_to_open_prs.get(issue_num) or []
-        ready_prs = review_update_issue_to_open_ready_prs.get(issue_num) or []
-        selected_pr = ready_prs[0] if ready_prs else (prs[0] if prs else None)
-
-        upd_focus_pr_num: int | None = None
-        upd_focus_pr_url: str | None = None
-        if isinstance(selected_pr, dict):
-            raw_pr_num = selected_pr.get("number")
-            if isinstance(raw_pr_num, int):
-                upd_focus_pr_num = raw_pr_num
-            raw_pr_url = selected_pr.get("html_url")
-            if isinstance(raw_pr_url, str) and raw_pr_url.strip():
-                upd_focus_pr_url = raw_pr_url
-
-        focus = {
-            "kind": "reviewUpdate",
-            "title": title,
-            "issueNumber": issue_num,
-            "issueUrl": dashboard_router._make_github_issue_url(active_repo, issue_num),
-            "pullNumber": upd_focus_pr_num,
-            "pullUrl": upd_focus_pr_url,
-        }
-    elif stage in {"1a", "1b", "1c"} and gap_issue_nums:
-        issue_num = gap_issue_nums[0]
-        title = open_issue_titles_by_number.get(issue_num) or ""
-
-        prs = gap_issue_to_open_prs.get(issue_num) or []
-        ready_prs = gap_issue_to_open_ready_prs.get(issue_num) or []
-        selected_pr = ready_prs[0] if ready_prs else (prs[0] if prs else None)
-
-        gap_focus_pr_num: int | None = None
-        gap_focus_pr_url: str | None = None
-        if isinstance(selected_pr, dict):
-            raw_pr_num = selected_pr.get("number")
-            if isinstance(raw_pr_num, int):
-                gap_focus_pr_num = raw_pr_num
-            raw_pr_url = selected_pr.get("html_url")
-            if isinstance(raw_pr_url, str) and raw_pr_url.strip():
-                gap_focus_pr_url = raw_pr_url
-
-        focus = {
-            "kind": "gap",
-            "title": title,
-            "issueNumber": issue_num,
-            "issueUrl": dashboard_router._make_github_issue_url(active_repo, issue_num),
-            "pullNumber": gap_focus_pr_num,
-            "pullUrl": gap_focus_pr_url,
-        }
-    elif stage in {"2a", "2b", "2c"}:
-        # In review mode, Step 2 spans both review queue artefacts and development queue artefacts.
-        if mode == "review":
-            inflight_paths = review_inflight_paths + dev_inflight_paths
-            unpromoted_paths = review_unpromoted + dev_unpromoted
-            ready_paths = review_ready_for_review + dev_ready_for_review
-            with_pr_paths = review_with_pr + dev_with_pr
-        else:
-            inflight_paths = dev_inflight_paths
-            unpromoted_paths = dev_unpromoted
-            ready_paths = dev_ready_for_review
-            with_pr_paths = dev_with_pr
-
-        if stage == "2a":
-            focus_path = _first_path(unpromoted_paths)
-        elif stage == "2c":
-            focus_path = _first_path(ready_paths)
-        else:
-            # Prefer items that already have PRs, then fall back to any inflight item.
-            focus_path = _first_path(with_pr_paths) or _first_path(inflight_paths)
-
-        if focus_path:
-            issue_num = queue_issue_numbers.get(focus_path)
-            focus_pr_num: int | None = None
-            focus_pr_url: str | None = None
-            if isinstance(issue_num, int):
-                prs = issue_to_open_prs.get(issue_num) or []
-                ready_prs = issue_to_open_ready_prs.get(issue_num) or []
-                selected_pr = ready_prs[0] if ready_prs else (prs[0] if prs else None)
-                if isinstance(selected_pr, dict):
-                    raw_pr_num = selected_pr.get("number")
-                    if isinstance(raw_pr_num, int):
-                        focus_pr_num = raw_pr_num
-                    raw_pr_url = selected_pr.get("html_url")
-                    if isinstance(raw_pr_url, str) and raw_pr_url.strip():
-                        focus_pr_url = raw_pr_url
-
-            title = queue_display_titles.get(focus_path) or ""
-            if isinstance(issue_num, int) and issue_num in open_issue_titles_by_number:
-                # If we have a clean match, prefer the canonical issue title.
-                title = open_issue_titles_by_number.get(issue_num) or title
-
-            focus = {
-                "kind": "development",
-                "queuePath": focus_path,
-                "queueId": _queue_filename(focus_path),
-                "title": title,
-                "issueNumber": issue_num,
-                "issueUrl": (
-                    dashboard_router._make_github_issue_url(active_repo, int(issue_num))
-                    if isinstance(issue_num, int)
-                    else None
-                ),
-                "pullNumber": focus_pr_num,
-                "pullUrl": focus_pr_url,
-            }
-    elif stage in {"3a", "3b", "3c"} and cap_issue_nums:
-        issue_num = sorted(cap_issue_nums)[0]
-        title = open_issue_titles_by_number.get(issue_num) or ""
-
-        # Attempt to recover the original (merged) PR that triggered this capability-update issue.
-        # This is more useful for operator context than the templated capability issue title.
-        issue_body = ""
-        issue_title_for_parse = title
-        try:
-            issue_data = _github_get_json(
-                settings,
-                url=_repo_api_url(settings, repository=active_repo, path=f"issues/{issue_num}"),
-            )
-            raw_body = issue_data.get("body")
-            raw_title = issue_data.get("title")
-            if isinstance(raw_body, str):
-                issue_body = raw_body
-            if isinstance(raw_title, str) and raw_title.strip():
-                issue_title_for_parse = raw_title
-        except HTTPException:
-            # Best-effort only: lack of issue body shouldn't break loop display.
-            issue_body = ""
-
-        source_pr_number = _extract_source_pr_number_from_capability_issue(
-            repository=active_repo,
-            issue_title=issue_title_for_parse,
-            issue_body=issue_body,
-        )
-        source_pr_title: str | None = None
-        source_pr_url: str | None = None
-        if isinstance(source_pr_number, int):
-            try:
-                source_pr = _get_pull_request(
-                    settings,
-                    repository=active_repo,
-                    pr_number=source_pr_number,
-                )
-                raw_title = source_pr.get("title")
-                if isinstance(raw_title, str) and raw_title.strip():
-                    source_pr_title = raw_title
-                raw_url = source_pr.get("html_url")
-                if isinstance(raw_url, str) and raw_url.strip():
-                    source_pr_url = raw_url
-            except HTTPException:
-                source_pr_title = None
-                source_pr_url = None
-        prs = cap_issue_to_open_prs.get(issue_num) or []
-        ready_prs = cap_issue_to_open_ready_prs.get(issue_num) or []
-        selected_pr = ready_prs[0] if ready_prs else (prs[0] if prs else None)
-
-        cap_focus_pr_num: int | None = None
-        cap_focus_pr_url: str | None = None
-        if isinstance(selected_pr, dict):
-            raw_pr_num = selected_pr.get("number")
-            if isinstance(raw_pr_num, int):
-                cap_focus_pr_num = raw_pr_num
-            raw_pr_url = selected_pr.get("html_url")
-            if isinstance(raw_pr_url, str) and raw_pr_url.strip():
-                cap_focus_pr_url = raw_pr_url
-
-        focus = {
-            "kind": "capability",
-            "title": title,
-            "issueNumber": issue_num,
-            "issueUrl": dashboard_router._make_github_issue_url(active_repo, issue_num),
-            "pullNumber": cap_focus_pr_num,
-            "pullUrl": cap_focus_pr_url,
-            "sourceTitle": source_pr_title,
-            "sourcePullNumber": source_pr_number,
-            "sourcePullUrl": source_pr_url,
-        }
-
-    # Best-effort automation: if configured, auto-link the focused issue to a likely PR.
-    # This addresses cases where Copilot opened a PR without adding `Fixes #<issue>`.
-    if isinstance(focus, dict):
-        from github_agent_orchestrator.server.dashboard.automation_auto_link import (
-            maybe_auto_link_focused_issue_to_pr as _maybe_auto_link_focused_issue_to_pr,
-        )
-
-        link_msg = _maybe_auto_link_focused_issue_to_pr(
-            settings=settings,
-            repository=active_repo,
-            focus=focus,
-            raw_open_prs=raw_open_prs,
-        )
-        if isinstance(link_msg, str) and link_msg.strip():
-            warnings.append(link_msg)
-
-    # Best-effort automation: if configured, auto-nudge Copilot to resume after a rate limit stop.
-    # This is intentionally scoped to the focused PR only to avoid scanning the entire repo.
-    if settings.auto_resume_copilot_on_rate_limit and isinstance(focus, dict):
-        focus_pull_number = focus.get("pullNumber")
-        if isinstance(focus_pull_number, int) and focus_pull_number > 0:
-            from github_agent_orchestrator.server.dashboard.automation_auto_resume import (
-                maybe_auto_resume_copilot_after_rate_limit as _maybe_auto_resume_copilot_after_rate_limit,
-            )
-
-            msg = _maybe_auto_resume_copilot_after_rate_limit(
-                settings=settings,
-                repository=active_repo,
-                pr_number=focus_pull_number,
-            )
-            if isinstance(msg, str) and msg.strip():
-                warnings.append(msg)
+    _apply_best_effort_automations(
+        settings=settings,
+        active_repo=active_repo,
+        focus=focus if isinstance(focus, dict) else None,
+        raw_open_prs=raw_open_prs,
+        warnings=warnings,
+    )
 
     return {
         "nowIso": _utc_now_iso(),
@@ -1004,7 +1512,7 @@ def _loop_status_for_repo(
             "openReviewConsumptionIssues": len(set(open_review_consumption_issue_numbers)),
             "openReviewUpdateIssues": len(set(open_review_update_issue_numbers)),
             "unpromotedPending": len(
-                [p for p in pending_paths if queue_issue_numbers.get(p) is None]
+                _queue_paths_unpromoted(queue_paths=pending_paths, queue_issue_numbers=queue_issue_numbers)
             ),
             "pendingDevelopment": len(dev_pending),
             "pendingReview": len(review_pending),
@@ -1030,8 +1538,8 @@ def _loop_status_for_repo(
             "completeQueueFilesSample": complete_paths[:20],
             "pendingExcludedPrefixes": list(_QUEUE_EXCLUDED_PREFIXES),
             "gapAnalysisIssueTitles": list(_GAP_ANALYSIS_TITLES),
-            "issueTimelineLookups": timeline_lookups,
-            "pullRequestLookups": pr_lookups,
+            "issueTimelineLookups": debug_counters.get("issueTimelineLookups", 0),
+            "pullRequestLookups": debug_counters.get("pullRequestLookups", 0),
         },
         "warnings": warnings,
         "focus": focus,

@@ -10,6 +10,48 @@ from fastapi.testclient import TestClient
 from github_agent_orchestrator.server.app import create_app
 
 
+def _merge_endpoint_list_repo_md(*_a, **kwargs):
+    dir_path = kwargs.get("dir_path")
+    if dir_path == "planning/issue_queue/pending":
+        return []
+    if dir_path == "planning/issue_queue/processed":
+        return ["planning/issue_queue/processed/dev-1.md"]
+    if dir_path == "planning/issue_queue/complete":
+        return []
+    return []
+
+
+def _merge_endpoint_get_repo_text_file(*_a, **kwargs):
+    path = kwargs.get("path")
+    if path == "planning/issue_queue/processed/dev-1.md":
+        return "Dev: One\n\nBody\n", "sha-queue"
+    raise FileNotFoundError(str(path))
+
+
+def _merge_endpoint_put_json(*_a, **kwargs):
+    url = str(kwargs.get("url") or "")
+    if url.endswith("/pulls/5/merge"):
+        return 200, {"merged": True, "sha": "abc123"}
+    if "/contents/planning/issue_queue/complete/" in url:
+        return 201, {}
+    return 500, {"message": "unexpected"}
+
+
+def _merge_endpoint_delete_json(*_a, **_k):
+    return 204, None
+
+
+def _merge_endpoint_post_json(*_a, **kwargs):
+    url = str(kwargs.get("url") or "")
+    if url.endswith("/pulls/5/reviews"):
+        return {"id": 1}
+    if url.endswith("/issues"):
+        return {"number": 456}
+    if url.endswith("/issues/456/assignees"):
+        return {"assignees": [{"login": "copilot-swe-agent[bot]"}]}
+    raise AssertionError(f"Unexpected POST url: {url}")
+
+
 def test_loop_promote_endpoint_promotes_one_file(monkeypatch, tmp_path: Path) -> None:
     planning = tmp_path / "planning"
     agent_state = tmp_path / "agent_state"
@@ -382,27 +424,15 @@ def test_loop_merge_endpoint_merges_one_ready_pr_and_creates_capability_issue(
     monkeypatch.setattr(dashboard_router, "_github_get_list", lambda *_a, **_k: [])
     monkeypatch.setattr(loop_actions, "_github_get_list", lambda *_a, **_k: [])
 
-    def fake_list_repo_md(*_a, **kwargs):
-        dir_path = kwargs.get("dir_path")
-        if dir_path == "planning/issue_queue/pending":
-            return []
-        if dir_path == "planning/issue_queue/processed":
-            return ["planning/issue_queue/processed/dev-1.md"]
-        if dir_path == "planning/issue_queue/complete":
-            return []
-        return []
+    monkeypatch.setattr(
+        dashboard_router, "_list_repo_markdown_files_under", _merge_endpoint_list_repo_md
+    )
+    monkeypatch.setattr(
+        loop_actions, "_list_repo_markdown_files_under", _merge_endpoint_list_repo_md
+    )
 
-    monkeypatch.setattr(dashboard_router, "_list_repo_markdown_files_under", fake_list_repo_md)
-    monkeypatch.setattr(loop_actions, "_list_repo_markdown_files_under", fake_list_repo_md)
-
-    def fake_get_repo_text_file(*_a, **kwargs):
-        path = kwargs.get("path")
-        if path == "planning/issue_queue/processed/dev-1.md":
-            return "Dev: One\n\nBody\n", "sha-queue"
-        raise FileNotFoundError(str(path))
-
-    monkeypatch.setattr(dashboard_router, "_get_repo_text_file", fake_get_repo_text_file)
-    monkeypatch.setattr(loop_actions, "_get_repo_text_file", fake_get_repo_text_file)
+    monkeypatch.setattr(dashboard_router, "_get_repo_text_file", _merge_endpoint_get_repo_text_file)
+    monkeypatch.setattr(loop_actions, "_get_repo_text_file", _merge_endpoint_get_repo_text_file)
 
     monkeypatch.setattr(
         dashboard_router,
@@ -467,35 +497,14 @@ def test_loop_merge_endpoint_merges_one_ready_pr_and_creates_capability_issue(
         },
     )
 
-    def fake_put_json(*_a, **kwargs):
-        url = str(kwargs.get("url") or "")
-        if url.endswith("/pulls/5/merge"):
-            return 200, {"merged": True, "sha": "abc123"}
-        if "/contents/planning/issue_queue/complete/" in url:
-            return 201, {}
-        return 500, {"message": "unexpected"}
+    monkeypatch.setattr(dashboard_router, "_github_put_json", _merge_endpoint_put_json)
+    monkeypatch.setattr(loop_actions, "_github_put_json", _merge_endpoint_put_json)
 
-    monkeypatch.setattr(dashboard_router, "_github_put_json", fake_put_json)
-    monkeypatch.setattr(loop_actions, "_github_put_json", fake_put_json)
+    monkeypatch.setattr(dashboard_router, "_github_delete_json", _merge_endpoint_delete_json)
+    monkeypatch.setattr(loop_actions, "_github_delete_json", _merge_endpoint_delete_json)
 
-    def fake_delete_json(*_a, **_k):
-        return 204, None
-
-    monkeypatch.setattr(dashboard_router, "_github_delete_json", fake_delete_json)
-    monkeypatch.setattr(loop_actions, "_github_delete_json", fake_delete_json)
-
-    def fake_post_json(*_a, **kwargs):
-        url = str(kwargs.get("url") or "")
-        if url.endswith("/pulls/5/reviews"):
-            return {"id": 1}
-        if url.endswith("/issues"):
-            return {"number": 456}
-        if url.endswith("/issues/456/assignees"):
-            return {"assignees": [{"login": "copilot-swe-agent[bot]"}]}
-        raise AssertionError(f"Unexpected POST url: {url}")
-
-    monkeypatch.setattr(dashboard_router, "_github_post_json", fake_post_json)
-    monkeypatch.setattr(loop_actions, "_github_post_json", fake_post_json)
+    monkeypatch.setattr(dashboard_router, "_github_post_json", _merge_endpoint_post_json)
+    monkeypatch.setattr(loop_actions, "_github_post_json", _merge_endpoint_post_json)
 
     # Merge completion moves the processed queue file to complete/ and deletes the processed file.
     # These helpers are implemented in github_operations and imported into loop_actions.

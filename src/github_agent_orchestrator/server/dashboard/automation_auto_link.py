@@ -21,6 +21,11 @@ _ISSUE_CLOSING_KEYWORD_RE = re.compile(
 )
 
 
+def _debug_append(debug: list[str] | None, message: str) -> None:
+    if debug is not None:
+        debug.append(message)
+
+
 def _issue_is_mentioned_as_closing(body: str, issue_number: int) -> bool:
     if not isinstance(body, str) or not body.strip():
         return False
@@ -55,6 +60,141 @@ def _copilot_login_candidates(settings: ServerSettings) -> set[str]:
     return {c for c in out if c}
 
 
+def _focus_issue_number(focus: dict[str, object]) -> int | None:
+    issue_number = focus.get("issueNumber")
+    if isinstance(issue_number, int) and issue_number > 0:
+        return issue_number
+    return None
+
+
+def _focus_has_pull_number(focus: dict[str, object]) -> bool:
+    return focus.get("pullNumber") is not None
+
+
+def _normalized_focus_title(focus: dict[str, object], normalize_title: Any) -> str:
+    focus_title = focus.get("title")
+    return normalize_title(focus_title) if isinstance(focus_title, str) else ""
+
+
+def _pr_number(pr: dict[str, Any]) -> int | None:
+    num = pr.get("number")
+    if isinstance(num, int) and num > 0:
+        return num
+    return None
+
+
+def _pr_looks_copilot_like(pr: dict[str, Any], copilot_logins: set[str]) -> tuple[bool, bool, bool]:
+    user = pr.get("user")
+    login = user.get("login") if isinstance(user, dict) else None
+    login_norm = login.strip().lower() if isinstance(login, str) and login.strip() else ""
+
+    head = pr.get("head")
+    head_ref = head.get("ref") if isinstance(head, dict) else None
+    head_ref_norm = head_ref.strip() if isinstance(head_ref, str) and head_ref.strip() else ""
+
+    looks_copilot_authored = bool(login_norm) and login_norm in copilot_logins
+    looks_copilot_branched = head_ref_norm.lower().startswith("copilot/")
+    return (looks_copilot_authored or looks_copilot_branched), looks_copilot_authored, looks_copilot_branched
+
+
+def _pr_title(pr: dict[str, Any]) -> str | None:
+    title = pr.get("title")
+    if isinstance(title, str) and title.strip():
+        return title
+    return None
+
+
+def _pr_title_matches_focus(
+    *,
+    pr_title: str,
+    normalized_focus_title: str,
+    normalize_title: Any,
+) -> bool:
+    if not normalized_focus_title:
+        return False
+    return normalize_title(pr_title) == normalized_focus_title
+
+
+def _scan_pr_candidates(
+    *,
+    raw_open_prs: list[dict[str, Any]],
+    normalized_focus_title: str,
+    copilot_logins: set[str],
+    normalize_title: Any,
+    debug: list[str] | None,
+) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+
+    scanned = 0
+    skipped_not_copilot_like = 0
+    skipped_missing_title = 0
+    title_matched = 0
+    accepted_via_author = 0
+    accepted_via_branch = 0
+
+    for pr in raw_open_prs:
+        if not isinstance(pr, dict):
+            continue
+
+        if _pr_number(pr) is None:
+            continue
+
+        scanned += 1
+        looks_like, via_author, via_branch = _pr_looks_copilot_like(pr, copilot_logins)
+        if not looks_like:
+            skipped_not_copilot_like += 1
+            continue
+
+        accepted_via_author += 1 if via_author else 0
+        accepted_via_branch += 1 if via_branch else 0
+
+        title = _pr_title(pr)
+        if title is None:
+            skipped_missing_title += 1
+            continue
+
+        if _pr_title_matches_focus(
+            pr_title=title,
+            normalized_focus_title=normalized_focus_title,
+            normalize_title=normalize_title,
+        ):
+            title_matched += 1
+            candidates.append(pr)
+
+    _debug_append(debug, f"Open PRs observed: {len(raw_open_prs)}")
+    _debug_append(debug, f"Copilot login candidates: {sorted(copilot_logins)}")
+    _debug_append(
+        debug,
+        "PR scan summary: "
+        f"scanned={scanned}, skipped_not_copilot_like={skipped_not_copilot_like}, "
+        f"accepted_via_author={accepted_via_author}, accepted_via_branch={accepted_via_branch}, "
+        f"skipped_missing_title={skipped_missing_title}, title_matched={title_matched}.",
+    )
+    return candidates
+
+
+def _single_open_pr_fallback_candidate(
+    *,
+    raw_open_prs: list[dict[str, Any]],
+    copilot_logins: set[str],
+) -> dict[str, Any] | None:
+    if len(raw_open_prs) != 1 or not isinstance(raw_open_prs[0], dict):
+        return None
+    pr = raw_open_prs[0]
+    looks_like, _via_author, _via_branch = _pr_looks_copilot_like(pr, copilot_logins)
+    return pr if looks_like else None
+
+
+def _auto_link_notice_comment_exists(comments: list[object], is_notice: Any) -> bool:
+    for it in comments:
+        if not isinstance(it, dict):
+            continue
+        body = it.get("body")
+        if isinstance(body, str) and is_notice(body):
+            return True
+    return False
+
+
 def maybe_auto_link_focused_issue_to_pr(
     *,
     settings: ServerSettings,
@@ -78,115 +218,44 @@ def maybe_auto_link_focused_issue_to_pr(
     from github_agent_orchestrator.server import dashboard_router
 
     if not getattr(settings, "auto_link_focused_issue_pr", False):
-        if debug is not None:
-            debug.append("Auto-link disabled (ORCHESTRATOR_AUTO_LINK_FOCUSED_ISSUE_PR is false).")
+        _debug_append(debug, "Auto-link disabled (ORCHESTRATOR_AUTO_LINK_FOCUSED_ISSUE_PR is false).")
         return None
     if not settings.github_token.strip():
-        if debug is not None:
-            debug.append("No GitHub token configured (ORCHESTRATOR_GITHUB_TOKEN is empty).")
+        _debug_append(debug, "No GitHub token configured (ORCHESTRATOR_GITHUB_TOKEN is empty).")
         return None
 
-    issue_number = focus.get("issueNumber")
-    pull_number = focus.get("pullNumber")
-    if not isinstance(issue_number, int) or issue_number <= 0:
-        if debug is not None:
-            debug.append("Focus has no valid issueNumber; nothing to link.")
+    issue_number = _focus_issue_number(focus)
+    if issue_number is None:
+        _debug_append(debug, "Focus has no valid issueNumber; nothing to link.")
         return None
-    if pull_number is not None:
-        if debug is not None:
-            debug.append("Focus already has a pullNumber; auto-link not applicable.")
+    if _focus_has_pull_number(focus):
+        _debug_append(debug, "Focus already has a pullNumber; auto-link not applicable.")
         return None
 
-    focus_title = focus.get("title")
-    normalized_focus_title = (
-        dashboard_router._normalize_issue_title(focus_title) if isinstance(focus_title, str) else ""
-    )
-
-    candidates: list[dict[str, Any]] = []
+    normalized_focus_title = _normalized_focus_title(focus, dashboard_router._normalize_issue_title)
     copilot_logins = _copilot_login_candidates(settings)
-
-    if debug is not None:
-        debug.append(f"Open PRs observed: {len(raw_open_prs)}")
-        debug.append(f"Copilot login candidates: {sorted(copilot_logins)}")
-
-    scanned = 0
-    skipped_not_copilot_like = 0
-    skipped_missing_title = 0
-    title_matched = 0
-    accepted_via_author = 0
-    accepted_via_branch = 0
-
-    for pr in raw_open_prs:
-        if not isinstance(pr, dict):
-            continue
-        pr_num = pr.get("number")
-        if not isinstance(pr_num, int) or pr_num <= 0:
-            continue
-
-        scanned += 1
-
-        user = pr.get("user")
-        login = user.get("login") if isinstance(user, dict) else None
-        login_norm = login.strip().lower() if isinstance(login, str) and login.strip() else ""
-
-        head = pr.get("head")
-        head_ref = head.get("ref") if isinstance(head, dict) else None
-        head_ref_norm = head_ref.strip() if isinstance(head_ref, str) and head_ref.strip() else ""
-
-        looks_copilot_authored = bool(login_norm) and login_norm in copilot_logins
-        looks_copilot_branched = head_ref_norm.lower().startswith("copilot/")
-
-        if not (looks_copilot_authored or looks_copilot_branched):
-            skipped_not_copilot_like += 1
-            continue
-        if looks_copilot_authored:
-            accepted_via_author += 1
-        if looks_copilot_branched:
-            accepted_via_branch += 1
-
-        title = pr.get("title")
-        if not isinstance(title, str) or not title.strip():
-            skipped_missing_title += 1
-            continue
-        if (
-            normalized_focus_title
-            and dashboard_router._normalize_issue_title(title) == normalized_focus_title
-        ):
-            title_matched += 1
-            candidates.append(pr)
-
-    if debug is not None:
-        debug.append(
-            "PR scan summary: "
-            f"scanned={scanned}, skipped_not_copilot_like={skipped_not_copilot_like}, "
-            f"accepted_via_author={accepted_via_author}, accepted_via_branch={accepted_via_branch}, "
-            f"skipped_missing_title={skipped_missing_title}, title_matched={title_matched}."
-        )
+    candidates = _scan_pr_candidates(
+        raw_open_prs=raw_open_prs,
+        normalized_focus_title=normalized_focus_title,
+        copilot_logins=copilot_logins,
+        normalize_title=dashboard_router._normalize_issue_title,
+        debug=debug,
+    )
 
     # If we didn't get an exact title match, fall back to a very conservative heuristic:
     # only one open PR total AND it appears Copilot-authored.
-    if not candidates and len(raw_open_prs) == 1 and isinstance(raw_open_prs[0], dict):
-        pr = raw_open_prs[0]
-        user = pr.get("user")
-        login = user.get("login") if isinstance(user, dict) else None
-        login_norm = login.strip().lower() if isinstance(login, str) and login.strip() else ""
-        head = pr.get("head")
-        head_ref = head.get("ref") if isinstance(head, dict) else None
-        head_ref_norm = head_ref.strip() if isinstance(head_ref, str) and head_ref.strip() else ""
-        if login_norm in copilot_logins or head_ref_norm.lower().startswith("copilot/"):
-            if debug is not None:
-                debug.append("No exact title match; using single-open-PR fallback.")
-            candidates = [pr]
+    fallback = _single_open_pr_fallback_candidate(raw_open_prs=raw_open_prs, copilot_logins=copilot_logins)
+    if not candidates and fallback is not None:
+        _debug_append(debug, "No exact title match; using single-open-PR fallback.")
+        candidates = [fallback]
 
     if len(candidates) != 1:
-        if debug is not None:
-            debug.append(f"Candidate count is {len(candidates)} (expected 1); not linking.")
+        _debug_append(debug, f"Candidate count is {len(candidates)} (expected 1); not linking.")
         return None
 
-    pr_num = candidates[0].get("number")
-    if not isinstance(pr_num, int) or pr_num <= 0:
-        if debug is not None:
-            debug.append("Candidate PR had no valid number; not linking.")
+    pr_num = _pr_number(candidates[0])
+    if pr_num is None:
+        _debug_append(debug, "Candidate PR had no valid number; not linking.")
         return None
 
     pr_data = dashboard_router._get_pull_request(settings, repository=repository, pr_number=pr_num)
@@ -195,10 +264,10 @@ def maybe_auto_link_focused_issue_to_pr(
         pr_body = ""
 
     if _issue_is_mentioned_as_closing_outside_code_blocks(pr_body, issue_number):
-        if debug is not None:
-            debug.append(
-                f"PR #{pr_num} body already contains a closing keyword for issue #{issue_number}; no-op."
-            )
+        _debug_append(
+            debug,
+            f"PR #{pr_num} body already contains a closing keyword for issue #{issue_number}; no-op.",
+        )
         return None
 
     # Put the closing keyword at the top-level of the PR body to avoid being swallowed by
@@ -219,15 +288,10 @@ def maybe_auto_link_focused_issue_to_pr(
         comments = dashboard_router._list_issue_comments_raw(
             settings, repository=repository, issue_number=pr_num
         )
-        already_noted = False
-        for it in comments:
-            if not isinstance(it, dict):
-                continue
-            body = it.get("body")
-            if isinstance(body, str) and dashboard_router._comment_body_is_auto_link_notice(body):
-                already_noted = True
-                break
-        if not already_noted:
+        if not _auto_link_notice_comment_exists(
+            comments,
+            dashboard_router._comment_body_is_auto_link_notice,
+        ):
             notice = (
                 f"<!-- {dashboard_router._AUTO_LINK_NOTICE_MARKER} -->\n"
                 f"Orchestrator auto-linked this PR to issue #{issue_number} by adding "
@@ -241,8 +305,7 @@ def maybe_auto_link_focused_issue_to_pr(
                 payload={"body": notice},
             )
 
-    if debug is not None:
-        debug.append(f"Patched PR #{pr_num} body with 'Fixes #{issue_number}' (prepended).")
+    _debug_append(debug, f"Patched PR #{pr_num} body with 'Fixes #{issue_number}' (prepended).")
     return (
         f"Auto-linked PR #{pr_num} to issue #{issue_number} by prepending 'Fixes #{issue_number}' "
         "to the PR body."

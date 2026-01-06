@@ -22,6 +22,68 @@ from github_agent_orchestrator.server.dashboard.text_utilities import (
 _WIP_TITLE_RE = re.compile(r"^\s*(?:\[\s*)?wip\b", re.IGNORECASE)
 
 
+def _extract_pr_number_from_timeline_event(ev: dict[str, Any]) -> int | None:
+    source = ev.get("source")
+    if isinstance(source, dict):
+        issue = source.get("issue")
+        if isinstance(issue, dict) and "pull_request" in issue:
+            num = issue.get("number")
+            if isinstance(num, int):
+                return num
+
+    subject = ev.get("subject")
+    if isinstance(subject, dict) and "pull_request" in subject:
+        num = subject.get("number")
+        if isinstance(num, int):
+            return num
+
+    return None
+
+
+def _normalized_review_entry(raw: object) -> tuple[str, str, str] | None:
+    if not isinstance(raw, dict):
+        return None
+
+    state = raw.get("state")
+    submitted_at = raw.get("submitted_at")
+    user = raw.get("user")
+    login = user.get("login") if isinstance(user, dict) else None
+
+    if not isinstance(login, str) or not login.strip():
+        return None
+    if not isinstance(state, str) or not state.strip():
+        return None
+    if not isinstance(submitted_at, str) or not submitted_at.strip():
+        return None
+
+    key = login.strip().lower()
+    return key, submitted_at, state.strip().upper()
+
+
+def _discussion_items(kind: str, raw: list[dict[str, Any]]) -> list[dict[str, str]]:
+    out: list[dict[str, str]] = []
+    for it in raw:
+        if not isinstance(it, dict):
+            continue
+        created_at = it.get("created_at")
+        user = it.get("user")
+        author = user.get("login") if isinstance(user, dict) else None
+        body = it.get("body")
+        url = it.get("html_url") or it.get("url")
+        if not isinstance(created_at, str):
+            continue
+        out.append(
+            {
+                "created_at": created_at,
+                "kind": kind,
+                "author": author if isinstance(author, str) else "unknown",
+                "body": body if isinstance(body, str) else "",
+                "url": url if isinstance(url, str) else "",
+            }
+        )
+    return out
+
+
 def issue_has_label(issue: dict[str, Any], *, label_name: str) -> bool:
     """Check if an issue has a specific label."""
     labels = issue.get("labels")
@@ -43,23 +105,6 @@ def linked_pr_numbers_from_issue_timeline(timeline: list[dict[str, Any]]) -> set
     we see in the REST timeline API.
     """
 
-    def _extract_pr_number(ev: dict[str, Any]) -> int | None:
-        source = ev.get("source")
-        if isinstance(source, dict):
-            issue = source.get("issue")
-            if isinstance(issue, dict) and "pull_request" in issue:
-                num = issue.get("number")
-                if isinstance(num, int):
-                    return num
-
-        subject = ev.get("subject")
-        if isinstance(subject, dict) and "pull_request" in subject:
-            num = subject.get("number")
-            if isinstance(num, int):
-                return num
-
-        return None
-
     out: set[int] = set()
     for raw in timeline:
         if not isinstance(raw, dict):
@@ -67,7 +112,7 @@ def linked_pr_numbers_from_issue_timeline(timeline: list[dict[str, Any]]) -> set
         event = raw.get("event")
         if event not in {"cross-referenced", "connected"}:
             continue
-        pr_num = _extract_pr_number(raw)
+        pr_num = _extract_pr_number_from_timeline_event(raw)
         if pr_num is not None:
             out.add(pr_num)
     return out
@@ -128,25 +173,13 @@ def pull_request_is_approved_from_reviews(reviews: list[dict[str, Any]]) -> bool
 
     latest_by_user: dict[str, tuple[str, str]] = {}
     for raw in reviews:
-        if not isinstance(raw, dict):
+        entry = _normalized_review_entry(raw)
+        if entry is None:
             continue
-
-        state = raw.get("state")
-        submitted_at = raw.get("submitted_at")
-        user = raw.get("user")
-        login = user.get("login") if isinstance(user, dict) else None
-
-        if not isinstance(login, str) or not login.strip():
-            continue
-        if not isinstance(state, str) or not state.strip():
-            continue
-        if not isinstance(submitted_at, str) or not submitted_at.strip():
-            continue
-
-        key = login.strip().lower()
+        key, submitted_at, state = entry
         prev = latest_by_user.get(key)
         if prev is None or submitted_at > prev[0]:
-            latest_by_user[key] = (submitted_at, state.strip().upper())
+            latest_by_user[key] = (submitted_at, state)
 
     if not latest_by_user:
         return False
@@ -262,29 +295,6 @@ def get_pull_request_discussion_markdown(
     # Tests patch dashboard_router._github_get_list to prevent accidental real GitHub calls.
     from github_agent_orchestrator.server import dashboard_router
 
-    def _as_items(kind: str, raw: list[dict[str, Any]]) -> list[dict[str, str]]:
-        out: list[dict[str, str]] = []
-        for it in raw:
-            if not isinstance(it, dict):
-                continue
-            created_at = it.get("created_at")
-            user = it.get("user")
-            author = user.get("login") if isinstance(user, dict) else None
-            body = it.get("body")
-            url = it.get("html_url") or it.get("url")
-            if not isinstance(created_at, str):
-                continue
-            out.append(
-                {
-                    "created_at": created_at,
-                    "kind": kind,
-                    "author": author if isinstance(author, str) else "unknown",
-                    "body": body if isinstance(body, str) else "",
-                    "url": url if isinstance(url, str) else "",
-                }
-            )
-        return out
-
     issue_comments = dashboard_router._github_get_list(
         settings,
         url=_repo_api_url(settings, repository=repository, path=f"issues/{pr_number}/comments"),
@@ -302,9 +312,9 @@ def get_pull_request_discussion_markdown(
     )
 
     items = (
-        _as_items("issue_comment", issue_comments)
-        + _as_items("review", reviews)
-        + _as_items("review_comment", review_comments)
+        _discussion_items("issue_comment", issue_comments)
+        + _discussion_items("review", reviews)
+        + _discussion_items("review_comment", review_comments)
     )
 
     if not items:

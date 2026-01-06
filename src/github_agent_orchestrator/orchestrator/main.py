@@ -22,6 +22,19 @@ from github_agent_orchestrator.orchestrator.utils import parse_labels
 logger = logging.getLogger(__name__)
 
 
+HELP_REPOSITORY = "Target repository in the form 'owner/repo'"
+HELP_TARGET_REPOSITORY = (
+    "Repository where Copilot will work (defaults to the same repo as the issue), "
+    "in the form 'owner/repo'"
+)
+HELP_BASE_BRANCH = "Base branch for Copilot work (defaults to repository default branch)"
+HELP_INSTRUCTIONS = "Optional additional instructions for Copilot"
+HELP_REASSIGN = "Unassign Copilot (if present) then assign again to retrigger the agent"
+HELP_POLL_SECONDS = "Polling interval in seconds"
+HELP_TIMEOUT_SECONDS = "Timeout in seconds (0 means no timeout)"
+HELP_MERGE_METHOD = "Merge method: merge | squash | rebase"
+
+
 def _parse_labels(value: str | None) -> list[str] | None:
     """Parse comma-separated labels string.
 
@@ -48,7 +61,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--repository",
         dest="repository",
         required=True,
-        help="Target repository in the form 'owner/repo'",
+        help=HELP_REPOSITORY,
     )
     create_issue.add_argument("--title", required=True, help="Issue title")
     create_issue.add_argument("--body", default=None, help="Issue body")
@@ -67,7 +80,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--repository",
         dest="repository",
         required=True,
-        help="Target repository in the form 'owner/repo'",
+        help=HELP_REPOSITORY,
     )
     assign_copilot.add_argument(
         "--issue-number",
@@ -78,20 +91,17 @@ def build_parser() -> argparse.ArgumentParser:
     assign_copilot.add_argument(
         "--target-repo",
         default=None,
-        help=(
-            "Repository where Copilot will work (defaults to the same repo as the issue), "
-            "in the form 'owner/repo'"
-        ),
+        help=HELP_TARGET_REPOSITORY,
     )
     assign_copilot.add_argument(
         "--base-branch",
         default="",
-        help="Base branch for Copilot work (defaults to repository default branch)",
+        help=HELP_BASE_BRANCH,
     )
     assign_copilot.add_argument(
         "--instructions",
         default="",
-        help="Optional additional instructions for Copilot",
+        help=HELP_INSTRUCTIONS,
     )
     assign_copilot.add_argument(
         "--custom-agent",
@@ -106,7 +116,7 @@ def build_parser() -> argparse.ArgumentParser:
     assign_copilot.add_argument(
         "--reassign",
         action="store_true",
-        help="Unassign Copilot (if present) then assign again to retrigger the agent",
+        help=HELP_REASSIGN,
     )
 
     monitor_prs = subparsers.add_parser(
@@ -118,7 +128,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--repository",
         dest="repository",
         required=True,
-        help="Target repository in the form 'owner/repo'",
+        help=HELP_REPOSITORY,
     )
     monitor_prs.add_argument(
         "--issue-number",
@@ -130,13 +140,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--poll-seconds",
         type=float,
         default=10.0,
-        help="Polling interval in seconds",
+        help=HELP_POLL_SECONDS,
     )
     monitor_prs.add_argument(
         "--timeout-seconds",
         type=float,
         default=1800.0,
-        help="Timeout in seconds (0 means no timeout)",
+        help=HELP_TIMEOUT_SECONDS,
     )
     monitor_prs.add_argument(
         "--no-require-pr",
@@ -156,7 +166,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--repository",
         dest="repository",
         required=True,
-        help="Target repository in the form 'owner/repo'",
+        help=HELP_REPOSITORY,
     )
     merge_linked_prs.add_argument(
         "--issue-number",
@@ -168,18 +178,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--poll-seconds",
         type=float,
         default=10.0,
-        help="Polling interval in seconds",
+        help=HELP_POLL_SECONDS,
     )
     merge_linked_prs.add_argument(
         "--timeout-seconds",
         type=float,
         default=1800.0,
-        help="Timeout in seconds (0 means no timeout)",
+        help=HELP_TIMEOUT_SECONDS,
     )
     merge_linked_prs.add_argument(
         "--merge-method",
         default="squash",
-        help="Merge method: merge | squash | rebase",
+        help=HELP_MERGE_METHOD,
     )
     merge_linked_prs.add_argument(
         "--no-mark-ready",
@@ -204,7 +214,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--repository",
         dest="repository",
         required=True,
-        help="Target repository in the form 'owner/repo'",
+        help=HELP_REPOSITORY,
     )
     gap_cycle.add_argument(
         "--template",
@@ -219,42 +229,39 @@ def build_parser() -> argparse.ArgumentParser:
     gap_cycle.add_argument(
         "--target-repo",
         default=None,
-        help=(
-            "Repository where Copilot will work (defaults to the same repo as the issue), "
-            "in the form 'owner/repo'"
-        ),
+        help=HELP_TARGET_REPOSITORY,
     )
     gap_cycle.add_argument(
         "--base-branch",
         default="",
-        help="Base branch for Copilot work (defaults to repository default branch)",
+        help=HELP_BASE_BRANCH,
     )
     gap_cycle.add_argument(
         "--instructions",
         default="",
-        help="Optional additional instructions for Copilot",
+        help=HELP_INSTRUCTIONS,
     )
     gap_cycle.add_argument(
         "--reassign",
         action="store_true",
-        help="Unassign Copilot (if present) then assign again to retrigger the agent",
+        help=HELP_REASSIGN,
     )
     gap_cycle.add_argument(
         "--poll-seconds",
         type=float,
         default=10.0,
-        help="Polling interval in seconds",
+        help=HELP_POLL_SECONDS,
     )
     gap_cycle.add_argument(
         "--timeout-seconds",
         type=float,
         default=1800.0,
-        help="Timeout in seconds (0 means no timeout)",
+        help=HELP_TIMEOUT_SECONDS,
     )
     gap_cycle.add_argument(
         "--merge-method",
         default="squash",
-        help="Merge method: merge | squash | rebase",
+        help=HELP_MERGE_METHOD,
     )
     gap_cycle.add_argument(
         "--no-mark-ready",
@@ -279,7 +286,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--repository",
         dest="repository",
         required=True,
-        help="Target repository in the form 'owner/repo'",
+        help=HELP_REPOSITORY,
     )
     promote_queue.add_argument(
         "--pending-dir",
@@ -299,25 +306,22 @@ def build_parser() -> argparse.ArgumentParser:
     promote_queue.add_argument(
         "--target-repo",
         default=None,
-        help=(
-            "Repository where Copilot will work (defaults to the same repo as the issue), "
-            "in the form 'owner/repo'"
-        ),
+        help=HELP_TARGET_REPOSITORY,
     )
     promote_queue.add_argument(
         "--base-branch",
         default="",
-        help="Base branch for Copilot work (defaults to repository default branch)",
+        help=HELP_BASE_BRANCH,
     )
     promote_queue.add_argument(
         "--instructions",
         default="",
-        help="Optional additional instructions for Copilot",
+        help=HELP_INSTRUCTIONS,
     )
     promote_queue.add_argument(
         "--reassign",
         action="store_true",
-        help="Unassign Copilot (if present) then assign again to retrigger the agent",
+        help=HELP_REASSIGN,
     )
 
     sys_caps_after_merge = subparsers.add_parser(
@@ -332,7 +336,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--repository",
         dest="repository",
         required=True,
-        help="Target repository in the form 'owner/repo'",
+        help=HELP_REPOSITORY,
     )
     sys_caps_after_merge.add_argument(
         "--pr-number",
@@ -353,20 +357,17 @@ def build_parser() -> argparse.ArgumentParser:
     sys_caps_after_merge.add_argument(
         "--target-repo",
         default=None,
-        help=(
-            "Repository where Copilot will work (defaults to the same repo as the issue), "
-            "in the form 'owner/repo'"
-        ),
+        help=HELP_TARGET_REPOSITORY,
     )
     sys_caps_after_merge.add_argument(
         "--base-branch",
         default="",
-        help="Base branch for Copilot work (defaults to repository default branch)",
+        help=HELP_BASE_BRANCH,
     )
     sys_caps_after_merge.add_argument(
         "--instructions",
         default="",
-        help="Optional additional instructions for Copilot",
+        help=HELP_INSTRUCTIONS,
     )
     sys_caps_after_merge.add_argument(
         "--custom-agent",
@@ -381,7 +382,7 @@ def build_parser() -> argparse.ArgumentParser:
     sys_caps_after_merge.add_argument(
         "--reassign",
         action="store_true",
-        help="Unassign Copilot (if present) then assign again to retrigger the agent",
+        help=HELP_REASSIGN,
     )
     sys_caps_after_merge.add_argument(
         "--allow-unmerged",
@@ -401,7 +402,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--repository",
         dest="repository",
         required=True,
-        help="Target repository in the form 'owner/repo'",
+        help=HELP_REPOSITORY,
     )
     complete_queue_item.add_argument(
         "--queue-path",
@@ -424,7 +425,7 @@ def build_parser() -> argparse.ArgumentParser:
     complete_queue_item.add_argument(
         "--merge-method",
         default="squash",
-        help="Merge method: merge | squash | rebase",
+        help=HELP_MERGE_METHOD,
     )
     complete_queue_item.add_argument(
         "--no-merge",
@@ -461,7 +462,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--repository",
         dest="repository",
         required=True,
-        help="Target repository in the form 'owner/repo'",
+        help=HELP_REPOSITORY,
     )
     auto_resume_copilot.add_argument(
         "--pr-number",
@@ -499,7 +500,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--repository",
         dest="repository",
         required=True,
-        help="Target repository in the form 'owner/repo'",
+        help=HELP_REPOSITORY,
     )
     auto_link_issue_pr.add_argument(
         "--issue-number",

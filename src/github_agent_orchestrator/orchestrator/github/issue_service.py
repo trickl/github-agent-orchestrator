@@ -28,6 +28,12 @@ from github_agent_orchestrator.orchestrator.github.client import (
 
 logger = logging.getLogger(__name__)
 
+UTC_TIMESTAMP_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
+
+
+def _utc_now_timestamp() -> str:
+    return time.strftime(UTC_TIMESTAMP_FORMAT, time.gmtime())
+
 
 class IssueRecord(BaseModel):
     """Minimal persisted representation of a created GitHub issue."""
@@ -420,7 +426,7 @@ class IssueService:
             )
             return None
 
-        now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        now = _utc_now_timestamp()
         updated = existing.model_copy(
             update={
                 "linked_pull_requests": [_linked_pr_to_json(p) for p in prs],
@@ -436,6 +442,20 @@ class IssueService:
             },
         )
         return updated
+
+    def _persist_pr_completion(
+        self, *, updated: IssueRecord | None, completion: str
+    ) -> IssueRecord | None:
+        if updated is None:
+            return None
+        stamped = updated.model_copy(
+            update={
+                "pr_completion": completion,
+                "pr_last_checked_at": _utc_now_timestamp(),
+            }
+        )
+        self._store.upsert(stamped)
+        return stamped
 
     def wait_for_linked_pull_requests_complete(
         self,
@@ -483,18 +503,8 @@ class IssueService:
                 issue_number=issue_number,
                 pull_requests=prs,
             )
-
-            if updated is not None and terminal_status is not None:
-                now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-                updated = updated.model_copy(
-                    update={
-                        "pr_completion": terminal_status,
-                        "pr_last_checked_at": now,
-                    }
-                )
-                self._store.upsert(updated)
-
             if terminal_status is not None:
+                updated = self._persist_pr_completion(updated=updated, completion=terminal_status)
                 logger.info(
                     "Linked pull requests complete",
                     extra={
@@ -515,12 +525,7 @@ class IssueService:
                     "Timed out waiting for linked pull requests",
                     extra={"issue_number": issue_number, "timeout_seconds": timeout_seconds},
                 )
-                if updated is not None:
-                    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-                    updated = updated.model_copy(
-                        update={"pr_completion": "timeout", "pr_last_checked_at": now}
-                    )
-                    self._store.upsert(updated)
+                updated = self._persist_pr_completion(updated=updated, completion="timeout")
                 return LinkedPullRequestMonitorResult(
                     issue_number=issue_number,
                     completion="timeout",
@@ -603,116 +608,226 @@ class IssueService:
             return []
 
         started = time.monotonic()
-        outcomes: list[PullRequestMergeOutcome] = []
+        return [
+            self._merge_one_linked_pull_request(
+                issue_number=issue_number,
+                pull_number=pr.number,
+                started=started,
+                poll_interval_seconds=poll_interval_seconds,
+                timeout_seconds=timeout_seconds,
+                merge_method=merge_method,
+                mark_ready_for_review=mark_ready_for_review,
+                delete_branch=delete_branch,
+            )
+            for pr in open_prs
+        ]
 
-        for pr in open_prs:
-            # Avoid hammering the ready-for-review endpoint. We'll attempt it once per PR
-            # if the PR remains a draft.
-            ready_attempted = False
+    def _delete_branch_best_effort(self, *, issue_number: int, pull_number: int) -> bool:
+        try:
+            return self._github.delete_pull_request_branch(pull_number=pull_number)
+        except Exception:
+            logger.exception(
+                "Branch deletion failed (continuing)",
+                extra={"issue_number": issue_number, "pull_number": pull_number},
+            )
+            return False
 
-            while True:
-                pr_details = self._github.get_pull_request(pull_number=pr.number)
+    @staticmethod
+    def _timed_out(*, started: float, timeout_seconds: float) -> bool:
+        return bool(timeout_seconds) and (time.monotonic() - started) >= timeout_seconds
 
-                if pr_details.merged:
-                    branch_deleted = False
-                    if delete_branch:
-                        try:
-                            branch_deleted = self._github.delete_pull_request_branch(
-                                pull_number=pr.number
-                            )
-                        except Exception:
-                            logger.exception(
-                                "Branch deletion failed (continuing)",
-                                extra={"issue_number": issue_number, "pull_number": pr.number},
-                            )
-                    outcomes.append(
-                        PullRequestMergeOutcome(
-                            pull_number=pr.number,
-                            merged=True,
-                            message="already merged",
-                            branch_deleted=branch_deleted,
-                        )
-                    )
-                    break
+    def _outcome_already_merged(
+        self,
+        *,
+        issue_number: int,
+        pull_number: int,
+        delete_branch: bool,
+    ) -> PullRequestMergeOutcome:
+        deleted = (
+            self._delete_branch_best_effort(issue_number=issue_number, pull_number=pull_number)
+            if delete_branch
+            else False
+        )
+        return PullRequestMergeOutcome(
+            pull_number=pull_number,
+            merged=True,
+            message="already merged",
+            branch_deleted=deleted,
+        )
 
-                if pr_details.state.lower() != "open":
-                    outcomes.append(
-                        PullRequestMergeOutcome(
-                            pull_number=pr.number,
-                            merged=False,
-                            message=f"pull request is not open (state={pr_details.state})",
-                            branch_deleted=False,
-                        )
-                    )
-                    break
+    @staticmethod
+    def _outcome_not_open(*, pull_number: int, state: str) -> PullRequestMergeOutcome:
+        return PullRequestMergeOutcome(
+            pull_number=pull_number,
+            merged=False,
+            message=f"pull request is not open (state={state})",
+            branch_deleted=False,
+        )
 
-                if pr_details.draft:
-                    if mark_ready_for_review and not ready_attempted:
-                        ready_attempted = True
-                        try:
-                            self._github.mark_pull_request_ready_for_review(pull_number=pr.number)
-                        except Exception:
-                            logger.exception(
-                                "Failed to mark PR ready for review (continuing)",
-                                extra={"issue_number": issue_number, "pull_number": pr.number},
-                            )
+    @staticmethod
+    def _outcome_timeout_draft(*, pull_number: int) -> PullRequestMergeOutcome:
+        return PullRequestMergeOutcome(
+            pull_number=pull_number,
+            merged=False,
+            message="timeout: pull request is still a draft",
+            branch_deleted=False,
+        )
 
-                    # Draft PRs cannot be merged; wait and retry.
-                    if timeout_seconds and (time.monotonic() - started) >= timeout_seconds:
-                        outcomes.append(
-                            PullRequestMergeOutcome(
-                                pull_number=pr.number,
-                                merged=False,
-                                message="timeout: pull request is still a draft",
-                                branch_deleted=False,
-                            )
-                        )
-                        break
+    @staticmethod
+    def _outcome_timeout_merge(*, pull_number: int, message: str) -> PullRequestMergeOutcome:
+        return PullRequestMergeOutcome(
+            pull_number=pull_number,
+            merged=False,
+            message=f"timeout: {message}",
+            branch_deleted=False,
+        )
 
-                    time.sleep(poll_interval_seconds)
-                    continue
+    def _outcome_merged(
+        self,
+        *,
+        issue_number: int,
+        pull_number: int,
+        message: str,
+        delete_branch: bool,
+    ) -> PullRequestMergeOutcome:
+        deleted = (
+            self._delete_branch_best_effort(issue_number=issue_number, pull_number=pull_number)
+            if delete_branch
+            else False
+        )
+        return PullRequestMergeOutcome(
+            pull_number=pull_number,
+            merged=True,
+            message=message,
+            branch_deleted=deleted,
+        )
 
-                merge = self._github.merge_pull_request(
-                    pull_number=pr.number,
-                    merge_method=merge_method,
+    def _terminal_outcome_from_pr_details(
+        self,
+        *,
+        issue_number: int,
+        pull_number: int,
+        pr_details: object,
+        delete_branch: bool,
+    ) -> PullRequestMergeOutcome | None:
+        if not hasattr(pr_details, "merged") or not hasattr(pr_details, "state"):
+            return None
+        if bool(getattr(pr_details, "merged")):
+            return self._outcome_already_merged(
+                issue_number=issue_number,
+                pull_number=pull_number,
+                delete_branch=delete_branch,
+            )
+        state = getattr(pr_details, "state")
+        if isinstance(state, str) and state.lower() != "open":
+            return self._outcome_not_open(pull_number=pull_number, state=state)
+        return None
+
+    def _handle_draft_pull_request(
+        self,
+        *,
+        issue_number: int,
+        pull_number: int,
+        started: float,
+        timeout_seconds: float,
+        mark_ready_for_review: bool,
+        ready_attempted: bool,
+    ) -> tuple[PullRequestMergeOutcome | None, bool]:
+        if mark_ready_for_review and not ready_attempted:
+            ready_attempted = True
+            try:
+                self._github.mark_pull_request_ready_for_review(pull_number=pull_number)
+            except Exception:
+                logger.exception(
+                    "Failed to mark PR ready for review (continuing)",
+                    extra={"issue_number": issue_number, "pull_number": pull_number},
                 )
-                if merge.merged:
-                    branch_deleted = False
-                    if delete_branch:
-                        try:
-                            branch_deleted = self._github.delete_pull_request_branch(
-                                pull_number=pr.number
-                            )
-                        except Exception:
-                            logger.exception(
-                                "Branch deletion failed (continuing)",
-                                extra={"issue_number": issue_number, "pull_number": pr.number},
-                            )
-                    outcomes.append(
-                        PullRequestMergeOutcome(
-                            pull_number=pr.number,
-                            merged=True,
-                            message=merge.message,
-                            branch_deleted=branch_deleted,
-                        )
-                    )
-                    break
 
-                # Not merged yet; decide whether to keep waiting.
-                if timeout_seconds and (time.monotonic() - started) >= timeout_seconds:
-                    outcomes.append(
-                        PullRequestMergeOutcome(
-                            pull_number=pr.number,
-                            merged=False,
-                            message=f"timeout: {merge.message}",
-                            branch_deleted=False,
-                        )
-                    )
-                    break
+        if self._timed_out(started=started, timeout_seconds=timeout_seconds):
+            return self._outcome_timeout_draft(pull_number=pull_number), ready_attempted
 
+        return None, ready_attempted
+
+    def _attempt_merge_open_pull_request(
+        self,
+        *,
+        issue_number: int,
+        pull_number: int,
+        merge_method: str,
+        delete_branch: bool,
+    ) -> tuple[PullRequestMergeOutcome | None, str]:
+        merge = self._github.merge_pull_request(
+            pull_number=pull_number,
+            merge_method=merge_method,
+        )
+        if not merge.merged:
+            return None, merge.message
+        return (
+            self._outcome_merged(
+                issue_number=issue_number,
+                pull_number=pull_number,
+                message=merge.message,
+                delete_branch=delete_branch,
+            ),
+            merge.message,
+        )
+
+    def _merge_one_linked_pull_request(
+        self,
+        *,
+        issue_number: int,
+        pull_number: int,
+        started: float,
+        poll_interval_seconds: float,
+        timeout_seconds: float,
+        merge_method: str,
+        mark_ready_for_review: bool,
+        delete_branch: bool,
+    ) -> PullRequestMergeOutcome:
+        ready_attempted = False
+        last_merge_message = ""
+        while True:
+            pr_details = self._github.get_pull_request(pull_number=pull_number)
+
+            terminal = self._terminal_outcome_from_pr_details(
+                issue_number=issue_number,
+                pull_number=pull_number,
+                pr_details=pr_details,
+                delete_branch=delete_branch,
+            )
+            if terminal is not None:
+                return terminal
+
+            if getattr(pr_details, "draft", False):
+                outcome, ready_attempted = self._handle_draft_pull_request(
+                    issue_number=issue_number,
+                    pull_number=pull_number,
+                    started=started,
+                    timeout_seconds=timeout_seconds,
+                    mark_ready_for_review=mark_ready_for_review,
+                    ready_attempted=ready_attempted,
+                )
+                if outcome is not None:
+                    return outcome
                 time.sleep(poll_interval_seconds)
+                continue
 
-        return outcomes
+            merged_outcome, last_merge_message = self._attempt_merge_open_pull_request(
+                issue_number=issue_number,
+                pull_number=pull_number,
+                merge_method=merge_method,
+                delete_branch=delete_branch,
+            )
+            if merged_outcome is not None:
+                return merged_outcome
+
+            if self._timed_out(started=started, timeout_seconds=timeout_seconds):
+                return self._outcome_timeout_merge(
+                    pull_number=pull_number,
+                    message=last_merge_message,
+                )
+
+            time.sleep(poll_interval_seconds)
 
 
 def _infer_repository_from_record(record: IssueRecord) -> str:

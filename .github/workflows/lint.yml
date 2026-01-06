@@ -6,6 +6,7 @@ on:
 jobs:
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
     - uses: actions/checkout@v4
@@ -29,6 +30,14 @@ jobs:
         pip install ruff black isort mypy
         pip install -e .
         pip install types-requests types-PyYAML
+    
+    - name: Print tool versions
+      run: |
+        python --version
+        ruff --version
+        black --version
+        isort --version
+        mypy --version
     
     - name: Run ruff
       run: |

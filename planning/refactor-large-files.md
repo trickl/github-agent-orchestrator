@@ -324,3 +324,38 @@ need to keep any shared fixtures/helpers accessible (either duplicated, or moved
 - All tests pass (`./scripts/verify-ci.sh`).
 - Imports remain clear (no circular dependencies).
 - No behavioral changes: the refactor should be mechanically equivalent.
+
+## Radarlint-python remediation plan (operational order)
+
+This plan targets the current `radarlint-python` buckets in a way that preserves the
+“move-first, patch-second” constraint and avoids turning lint cleanup into large rewrites.
+
+### Order of operations (lowest risk → highest leverage)
+
+1) **Fix S930 incorrect keyword arguments first**
+   - These are likely real defects or at least misleading call sites.
+   - Scope: fix call sites only; do not change function signatures unless required.
+
+2) **Fix “small but real” one-liners**
+   - Examples already observed:
+     - `S108` empty block: remove dead blocks or replace with explicit `pass` + comment only when needed.
+     - `S3457` unnecessary f-string: replace with plain string / `str.format` only if needed.
+     - `S3516` “always returns same value”: remove the function or make it compute real output (prefer deletion if unused).
+
+3) **Address S1192 duplicated string literals via constants**
+   - Prefer **small, local constants modules** near the domain (e.g. `server/dashboard/constants.py`)
+     rather than a single global constants file.
+   - Do not refactor logic: only replace duplicated literals with named constants.
+
+4) **Decide policy for S3776 cognitive complexity**
+   Choose one path explicitly (mixing tends to stall PRs):
+   - **Refactor path (preferred long-term)**: extract helpers using the existing slicing plan below;
+     prove equivalence with tests after each slice.
+   - **Threshold/config path (short-term noise reduction)**: raise thresholds or exclude specific
+     files/functions *temporarily*, but track the exception list explicitly and burn it down over time.
+
+### Working agreement for complexity refactors (S3776)
+
+- Do not “optimize” logic while extracting; move code verbatim where possible.
+- Each PR should reduce complexity by extracting one coherent helper cluster (timeline parsing,
+  auto-link, loop actions, etc.), matching the existing file-by-file plan.

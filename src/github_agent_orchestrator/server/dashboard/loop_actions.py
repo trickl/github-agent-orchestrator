@@ -101,6 +101,22 @@ from github_agent_orchestrator.server.dashboard.text_utilities import (
     _first_markdown_line_as_title,
 )
 
+ERR_UNEXPECTED_GITHUB_CREATE_ISSUE_RESPONSE = "Unexpected GitHub create issue response"
+ERR_UNEXPECTED_PULL_REQUEST_RESPONSE_NUMBER = "Unexpected pull request response (number)"
+ERR_MISSING_GITHUB_TOKEN_FOR_MERGE = "ORCHESTRATOR_GITHUB_TOKEN is required to merge pull requests"
+ERR_DRAFT_PR_MISSING_NODE_ID = "Pull request is draft but is missing node_id; cannot mark ready"
+ERR_MERGE_DID_NOT_COMPLETE = "Merge did not complete (merged=false)"
+APPROVAL_REVIEW_BODY = "Approved by orchestrator automation."
+DEVELOPMENT_QUEUE_PENDING_DIR = "planning/issue_queue/pending"
+
+MARK_READY_FOR_REVIEW_MUTATION = (
+    "mutation($pullRequestId: ID!) {"
+    "  markPullRequestReadyForReview(input: { pullRequestId: $pullRequestId }) {"
+    "    pullRequest { id isDraft }"
+    "  }"
+    "}"
+)
+
 # --- Compatibility shims (tests + monkeypatching) ---
 #
 # Unit tests patch these names on `loop_actions` to prevent real GitHub API calls.
@@ -322,8 +338,8 @@ def _gap_analysis_issue_body_looks_unsafe(body: str) -> bool:
     lowered = body.lower()
     forbidden = (
         "open a pr that adds exactly one new file",
-        "open a pr that adds exactly one new file under /planning/issue_queue/pending/",
-        "create one development task in planning/issue_queue/pending/",
+        f"open a pr that adds exactly one new file under /{DEVELOPMENT_QUEUE_PENDING_DIR}/",
+        f"create one development task in {DEVELOPMENT_QUEUE_PENDING_DIR}/",
     )
     return any(tok in lowered for tok in forbidden)
 
@@ -370,6 +386,66 @@ def _repair_gap_analysis_issue_body_if_unsafe(
     return True
 
 
+def _find_open_gap_analysis_issue(raw_issues: list[object]) -> dict[str, Any] | None:
+    for it in raw_issues:
+        if not isinstance(it, dict):
+            continue
+        if "pull_request" in it:
+            continue
+        title = it.get("title")
+        if isinstance(title, str) and _is_gap_analysis_issue_title(title):
+            return it
+    return None
+
+
+def _issue_is_assigned_to_login(issue: dict[str, Any], *, login: str) -> bool:
+    assignees = issue.get("assignees")
+    if not isinstance(assignees, list):
+        return False
+    for a in assignees:
+        if isinstance(a, dict) and a.get("login") == login:
+            return True
+    return False
+
+
+def _gap_analysis_issue_result_from_existing(
+    *, settings: ServerSettings, repo: str, branch: str, issue: dict[str, Any]
+) -> dict[str, object] | None:
+    num = issue.get("number")
+    if not isinstance(num, int):
+        return None
+
+    # If an unsafe gap-analysis issue already exists, repair it before assigning.
+    # This avoids costly self-referential instructions.
+    body = issue.get("body")
+    if isinstance(body, str):
+        _repair_gap_analysis_issue_body_if_unsafe(
+            settings=settings,
+            repo=repo,
+            issue_number=num,
+            branch=branch,
+            existing_body=body,
+        )
+
+    assigned: list[dict[str, Any]] | list[str] = []
+    if not _issue_is_assigned_to_login(issue, login=settings.copilot_assignee):
+        assigned = _assign_issue_to_copilot(
+            settings,
+            repository=repo,
+            issue_number=num,
+            target_repo=repo,
+            base_branch=branch,
+            instructions="",
+        )
+
+    return {
+        "created": False,
+        "issueNumber": num,
+        "issueUrl": _make_github_issue_url(repo, num),
+        "assigned": assigned,
+    }
+
+
 def _ensure_gap_analysis_issue_exists(*, settings: ServerSettings, repo: str) -> dict[str, object]:
     """Ensure there is exactly one open gap analysis issue (best-effort).
 
@@ -383,53 +459,16 @@ def _ensure_gap_analysis_issue_exists(*, settings: ServerSettings, repo: str) ->
     branch = _get_default_branch(settings, repository=repo)
 
     raw_issues = _list_open_issues_raw(settings, repository=repo)
-    for it in raw_issues:
-        if not isinstance(it, dict):
-            continue
-        if "pull_request" in it:
-            continue
-        title = it.get("title")
-        if isinstance(title, str) and _is_gap_analysis_issue_title(title):
-            num = it.get("number")
-            if isinstance(num, int):
-                # If an unsafe gap-analysis issue already exists, repair it before assigning.
-                # This avoids costly self-referential instructions.
-                body = it.get("body")
-                if isinstance(body, str):
-                    _repair_gap_analysis_issue_body_if_unsafe(
-                        settings=settings,
-                        repo=repo,
-                        issue_number=num,
-                        branch=branch,
-                        existing_body=body,
-                    )
-
-                # Best-effort: ensure assignment to Copilot so Step A can actually start.
-                assignees = it.get("assignees")
-                already_assigned = False
-                if isinstance(assignees, list):
-                    for a in assignees:
-                        if isinstance(a, dict) and a.get("login") == settings.copilot_assignee:
-                            already_assigned = True
-                            break
-
-                assigned: list[dict[str, Any]] | list[str] = []
-                if not already_assigned:
-                    assigned = _assign_issue_to_copilot(
-                        settings,
-                        repository=repo,
-                        issue_number=num,
-                        target_repo=repo,
-                        base_branch=branch,
-                        instructions="",
-                    )
-
-                return {
-                    "created": False,
-                    "issueNumber": num,
-                    "issueUrl": _make_github_issue_url(repo, num),
-                    "assigned": assigned,
-                }
+    existing = _find_open_gap_analysis_issue(raw_issues)
+    if existing is not None:
+        result = _gap_analysis_issue_result_from_existing(
+            settings=settings,
+            repo=repo,
+            branch=branch,
+            issue=existing,
+        )
+        if result is not None:
+            return result
 
     if not settings.github_token.strip():
         raise HTTPException(
@@ -455,7 +494,7 @@ def _ensure_gap_analysis_issue_exists(*, settings: ServerSettings, repo: str) ->
     )
     issue_num = issue.get("number")
     if not isinstance(issue_num, int):
-        raise HTTPException(status_code=502, detail="Unexpected GitHub create issue response")
+        raise HTTPException(status_code=502, detail=ERR_UNEXPECTED_GITHUB_CREATE_ISSUE_RESPONSE)
 
     assigned = _assign_issue_to_copilot(
         settings,
@@ -571,24 +610,12 @@ def _merge_next_ready_pull_request(*, settings: ServerSettings, repo: str) -> di
     return _merge_next_ready_development_pull_request(settings=settings, repo=repo)
 
 
-def _try_merge_next_ready_labeled_issue_pull_request(
-    *,
-    settings: ServerSettings,
-    repo: str,
-    label_name: str,
-    issue_kind_for_summary: str,
-) -> dict[str, object] | None:
-    """Merge a ready PR linked to an open issue with a specific label, then close the issue."""
-
+def _require_github_token_for_merge(settings: ServerSettings) -> None:
     if not settings.github_token.strip():
-        raise HTTPException(
-            status_code=409,
-            detail="ORCHESTRATOR_GITHUB_TOKEN is required to merge pull requests",
-        )
+        raise HTTPException(status_code=409, detail=ERR_MISSING_GITHUB_TOKEN_FOR_MERGE)
 
-    branch = _get_default_branch(settings, repository=repo)
 
-    raw_issues = _list_open_issues_raw(settings, repository=repo)
+def _issue_numbers_with_label(raw_issues: list[object], *, label_name: str) -> list[int]:
     issue_nums: list[int] = []
     for it in raw_issues:
         if not isinstance(it, dict):
@@ -598,165 +625,288 @@ def _try_merge_next_ready_labeled_issue_pull_request(
         num = it.get("number")
         if isinstance(num, int) and _issue_has_label(it, label_name=label_name):
             issue_nums.append(num)
+    return issue_nums
 
-    if not issue_nums:
-        return None
 
+def _gap_analysis_issue_numbers(raw_issues: list[object]) -> list[int]:
+    gap_issue_nums: list[int] = []
+    for it in raw_issues:
+        if not isinstance(it, dict):
+            continue
+        if "pull_request" in it:
+            continue
+        num = it.get("number")
+        title = it.get("title")
+        if isinstance(num, int) and isinstance(title, str) and _is_gap_analysis_issue_title(title):
+            gap_issue_nums.append(num)
+    return gap_issue_nums
+
+
+def _open_pull_request_or_none(
+    *, settings: ServerSettings, repo: str, pr_number: int
+) -> dict[str, Any] | None:
+    pr_data = _get_pull_request(settings, repository=repo, pr_number=pr_number)
+    return pr_data if pr_data.get("state") == "open" else None
+
+
+def _review_requested_for_pr_cached(
+    *,
+    settings: ServerSettings,
+    repo: str,
+    pr_number: int,
+    pr_data: dict[str, Any],
+    cache: dict[int, bool],
+) -> bool:
+    review_requested = _pull_request_has_review_request(pr_data)
+    if review_requested:
+        return True
+    cached_rr = cache.get(pr_number)
+    if cached_rr is None:
+        cached_rr = _pull_request_has_review_request_history(
+            settings,
+            repository=repo,
+            pr_number=pr_number,
+        )
+        cache[pr_number] = cached_rr
+    return bool(cached_rr)
+
+
+def _select_first_ready_pr_linked_to_issues(
+    *,
+    settings: ServerSettings,
+    repo: str,
+    issue_nums: list[int],
+    require_review_requested: bool,
+) -> tuple[int, dict[str, Any], bool] | None:
     pr_review_request_cache: dict[int, bool] = {}
-    selected_issue_num: int | None = None
-    selected_pr_data: dict[str, Any] | None = None
-
     for issue_num in sorted(set(issue_nums)):
         timeline = _list_issue_timeline_raw(settings, repository=repo, issue_number=issue_num)
         pr_nums = _linked_pr_numbers_from_issue_timeline(timeline)
         for pr_num in sorted(pr_nums):
-            pr_data = _get_pull_request(settings, repository=repo, pr_number=pr_num)
-            if pr_data.get("state") != "open":
+            pr_data = _open_pull_request_or_none(settings=settings, repo=repo, pr_number=pr_num)
+            if pr_data is None:
                 continue
-
-            review_requested = _pull_request_has_review_request(pr_data)
-            if not review_requested:
-                cached_rr = pr_review_request_cache.get(pr_num)
-                if cached_rr is None:
-                    cached_rr = _pull_request_has_review_request_history(
-                        settings,
-                        repository=repo,
-                        pr_number=pr_num,
-                    )
-                    pr_review_request_cache[pr_num] = cached_rr
-                review_requested = cached_rr
-
+            review_requested = _review_requested_for_pr_cached(
+                settings=settings,
+                repo=repo,
+                pr_number=pr_num,
+                pr_data=pr_data,
+                cache=pr_review_request_cache,
+            )
+            if require_review_requested and not review_requested:
+                continue
             if not _pull_request_is_merge_candidate(pr_data, review_requested=review_requested):
                 continue
+            return issue_num, pr_data, bool(review_requested)
+    return None
 
-            selected_issue_num = issue_num
-            selected_pr_data = pr_data
-            break
-        if selected_pr_data is not None:
-            break
 
-    if selected_issue_num is None or selected_pr_data is None:
-        return None
-
-    pr_number = selected_pr_data.get("number")
+def _pr_number_or_502(pr_data: dict[str, Any]) -> int:
+    pr_number = pr_data.get("number")
     if not isinstance(pr_number, int):
-        raise HTTPException(status_code=502, detail="Unexpected pull request response (number)")
+        raise HTTPException(status_code=502, detail=ERR_UNEXPECTED_PULL_REQUEST_RESPONSE_NUMBER)
+    return pr_number
 
-    # Safety gate: never flip draft->ready or merge while a PR is WIP.
-    pr_title = selected_pr_data.get("title")
+
+def _raise_if_pr_wip(*, pr_number: int, pr_data: dict[str, Any]) -> None:
+    pr_title = pr_data.get("title")
     if isinstance(pr_title, str) and _pull_request_title_is_wip(pr_title):
         raise HTTPException(
             status_code=409,
             detail=f"Pull request #{pr_number} is still WIP; refusing to mark ready or merge.",
         )
 
-    # Draft PRs cannot be merged; best-effort flip to ready-for-review.
+
+def _require_review_requested_or_409(*, pr_number: int, review_requested: bool) -> None:
+    if not review_requested:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Pull request #{pr_number} has no review-request signal; refusing to mark ready "
+                "or merge."
+            ),
+        )
+
+
+def _try_mark_pull_request_ready_for_review(
+    *, settings: ServerSettings, pr_node_id: str
+) -> str | None:
+    graphql_url = _graphql_api_url(settings)
+    mutation = MARK_READY_FOR_REVIEW_MUTATION
+    try:
+        payload = _github_graphql_post(
+            settings,
+            query=mutation,
+            variables={"pullRequestId": pr_node_id},
+        )
+    except HTTPException as e:
+        return str(e.detail)
+
+    gql_errors = _graphql_errors_as_message(payload)
+    if gql_errors:
+        return f"markPullRequestReadyForReview refused for {graphql_url}: {gql_errors}"
+    return None
+
+
+def _ensure_pr_not_draft_or_409(
+    *, settings: ServerSettings, repo: str, pr_number: int, pr_data: dict[str, Any]
+) -> dict[str, Any]:
+    if pr_data.get("draft") is not True:
+        return pr_data
+
     ready_for_review_error: str | None = None
-    if selected_pr_data.get("draft") is True:
-        pr_node_id = selected_pr_data.get("node_id")
-        graphql_url = _graphql_api_url(settings)
-        if not isinstance(pr_node_id, str) or not pr_node_id.strip():
-            ready_for_review_error = (
-                "Pull request is draft but is missing node_id; cannot mark ready"
-            )
-        else:
-            mutation = (
-                "mutation($pullRequestId: ID!) {"
-                "  markPullRequestReadyForReview(input: { pullRequestId: $pullRequestId }) {"
-                "    pullRequest { id isDraft }"
-                "  }"
-                "}"
-            )
-            try:
-                payload = _github_graphql_post(
-                    settings,
-                    query=mutation,
-                    variables={"pullRequestId": pr_node_id},
-                )
-                gql_errors = _graphql_errors_as_message(payload)
-                if gql_errors:
-                    ready_for_review_error = (
-                        f"markPullRequestReadyForReview refused for {graphql_url}: {gql_errors}"
-                    )
-            except HTTPException as e:
-                ready_for_review_error = str(e.detail)
+    pr_node_id = pr_data.get("node_id")
+    if not isinstance(pr_node_id, str) or not pr_node_id.strip():
+        ready_for_review_error = ERR_DRAFT_PR_MISSING_NODE_ID
+    else:
+        ready_for_review_error = _try_mark_pull_request_ready_for_review(
+            settings=settings,
+            pr_node_id=pr_node_id,
+        )
 
-        selected_pr_data = _get_pull_request(settings, repository=repo, pr_number=pr_number)
-        if selected_pr_data.get("draft") is True:
-            detail = f"Pull request #{pr_number} is still a draft; cannot merge."
-            if ready_for_review_error:
-                detail = f"{detail} {ready_for_review_error}"
-            raise HTTPException(status_code=409, detail=detail)
+    pr_data = _get_pull_request(settings, repository=repo, pr_number=pr_number)
+    if pr_data.get("draft") is True:
+        detail = f"Pull request #{pr_number} is still a draft; cannot merge."
+        if ready_for_review_error:
+            detail = f"{detail} {ready_for_review_error}"
+        raise HTTPException(status_code=409, detail=detail)
 
-    # Best-effort approve.
-    approved = False
-    approval_error: str | None = None
+    return pr_data
+
+
+def _try_approve_pull_request(
+    *,
+    settings: ServerSettings,
+    repo: str,
+    pr_number: int,
+) -> tuple[bool, str | None]:
     try:
         _github_post_json(
             settings,
             url=_repo_api_url(settings, repository=repo, path=f"pulls/{pr_number}/reviews"),
-            payload={
-                "event": "APPROVE",
-                "body": "Approved by orchestrator automation.",
-            },
+            payload={"event": "APPROVE", "body": APPROVAL_REVIEW_BODY},
         )
-        approved = True
+        return True, None
     except HTTPException as e:
-        approval_error = str(e.detail)
+        return False, str(e.detail)
 
+
+def _merge_pull_request_squash_or_409(
+    *,
+    settings: ServerSettings,
+    repo: str,
+    pr_number: int,
+) -> str | None:
     merge_url = _repo_api_url(settings, repository=repo, path=f"pulls/{pr_number}/merge")
-    status, body = _github_put_json(
-        settings,
-        url=merge_url,
-        payload={"merge_method": "squash"},
-    )
+    status, body = _github_put_json(settings, url=merge_url, payload={"merge_method": "squash"})
     if status not in {200, 201}:
         raise HTTPException(status_code=409, detail=f"Merge refused (HTTP {status}): {body}")
 
-    merged = False
-    merge_sha: str | None = None
-    if isinstance(body, dict):
-        merged = bool(body.get("merged"))
-        raw_sha = body.get("sha")
-        merge_sha = raw_sha if isinstance(raw_sha, str) else None
-    if not merged:
-        raise HTTPException(status_code=409, detail="Merge did not complete (merged=false)")
+    if not isinstance(body, dict) or not bool(body.get("merged")):
+        raise HTTPException(status_code=409, detail=ERR_MERGE_DID_NOT_COMPLETE)
+    raw_sha = body.get("sha")
+    return raw_sha if isinstance(raw_sha, str) else None
 
-    # Best-effort: delete head branch when safe (same-repo only).
-    branch_deleted = False
+
+def _delete_head_branch_best_effort(
+    *,
+    settings: ServerSettings,
+    repo: str,
+    pr_data: dict[str, Any],
+) -> bool:
     try:
-        head = selected_pr_data.get("head")
-        head_ref: str | None = None
-        head_repo: str | None = None
-        if isinstance(head, dict):
-            head_ref = head.get("ref")
-            repo_obj = head.get("repo")
-            if isinstance(repo_obj, dict):
-                head_repo = repo_obj.get("full_name")
-        if (
-            isinstance(head_ref, str)
-            and head_ref.strip()
-            and head_ref not in {"main", "master"}
-            and head_repo == repo
-        ):
-            del_url = _repo_api_url(settings, repository=repo, path=f"git/refs/heads/{head_ref}")
-            status_del, _body_del = _github_delete_json(settings, url=del_url)
-            branch_deleted = status_del in {200, 204, 404}
-    except Exception:
-        branch_deleted = False
+        head = pr_data.get("head")
+        if not isinstance(head, dict):
+            return False
+        head_ref = head.get("ref")
+        repo_obj = head.get("repo")
+        head_repo = repo_obj.get("full_name") if isinstance(repo_obj, dict) else None
 
-    # Close issue (best-effort).
-    issue_closed = False
-    issue_close_error: str | None = None
+        if not (isinstance(head_ref, str) and head_ref.strip()):
+            return False
+        if head_ref in {"main", "master"}:
+            return False
+        if head_repo != repo:
+            return False
+
+        del_url = _repo_api_url(settings, repository=repo, path=f"git/refs/heads/{head_ref}")
+        status_del, _body_del = _github_delete_json(settings, url=del_url)
+        return status_del in {200, 204, 404}
+    except Exception:
+        return False
+
+
+def _close_issue_best_effort(
+    *,
+    settings: ServerSettings,
+    repo: str,
+    issue_number: int,
+) -> tuple[bool, str | None]:
     try:
         _github_patch_json(
             settings,
-            url=_repo_api_url(settings, repository=repo, path=f"issues/{selected_issue_num}"),
+            url=_repo_api_url(settings, repository=repo, path=f"issues/{issue_number}"),
             payload={"state": "closed"},
         )
-        issue_closed = True
+        return True, None
     except HTTPException as e:
-        issue_close_error = str(e.detail)
+        return False, str(e.detail)
+
+
+def _try_merge_next_ready_labeled_issue_pull_request(
+    *,
+    settings: ServerSettings,
+    repo: str,
+    label_name: str,
+    issue_kind_for_summary: str,
+) -> dict[str, object] | None:
+    """Merge a ready PR linked to an open issue with a specific label, then close the issue."""
+
+    _require_github_token_for_merge(settings)
+    branch = _get_default_branch(settings, repository=repo)
+
+    raw_issues = _list_open_issues_raw(settings, repository=repo)
+    issue_nums = _issue_numbers_with_label(raw_issues, label_name=label_name)
+    if not issue_nums:
+        return None
+
+    selected = _select_first_ready_pr_linked_to_issues(
+        settings=settings,
+        repo=repo,
+        issue_nums=issue_nums,
+        require_review_requested=False,
+    )
+    if selected is None:
+        return None
+
+    selected_issue_num, selected_pr_data, _review_requested = selected
+
+    pr_number = _pr_number_or_502(selected_pr_data)
+    _raise_if_pr_wip(pr_number=pr_number, pr_data=selected_pr_data)
+    selected_pr_data = _ensure_pr_not_draft_or_409(
+        settings=settings,
+        repo=repo,
+        pr_number=pr_number,
+        pr_data=selected_pr_data,
+    )
+
+    approved, approval_error = _try_approve_pull_request(
+        settings=settings,
+        repo=repo,
+        pr_number=pr_number,
+    )
+    merge_sha = _merge_pull_request_squash_or_409(
+        settings=settings,
+        repo=repo,
+        pr_number=pr_number,
+    )
+    branch_deleted = _delete_head_branch_best_effort(settings=settings, repo=repo, pr_data=selected_pr_data)
+
+    issue_closed, issue_close_error = _close_issue_best_effort(
+        settings=settings,
+        repo=repo,
+        issue_number=int(selected_issue_num),
+    )
 
     summary = f"Merged PR #{pr_number}; closed {issue_kind_for_summary} issue #{selected_issue_num}"
     if issue_close_error:
@@ -809,194 +959,59 @@ def _try_merge_next_ready_gap_analysis_pull_request(
         A merge result dict if a gap-analysis PR was found and merged, else None.
     """
 
-    if not settings.github_token.strip():
-        raise HTTPException(
-            status_code=409,
-            detail="ORCHESTRATOR_GITHUB_TOKEN is required to merge pull requests",
-        )
-
+    _require_github_token_for_merge(settings)
     branch = _get_default_branch(settings, repository=repo)
 
     raw_issues = _list_open_issues_raw(settings, repository=repo)
-    gap_issue_nums: list[int] = []
-    for it in raw_issues:
-        if not isinstance(it, dict):
-            continue
-        if "pull_request" in it:
-            continue
-        num = it.get("number")
-        title = it.get("title")
-        if isinstance(num, int) and isinstance(title, str) and _is_gap_analysis_issue_title(title):
-            gap_issue_nums.append(num)
-
+    gap_issue_nums = _gap_analysis_issue_numbers(raw_issues)
     if not gap_issue_nums:
         return None
 
-    pr_review_request_cache: dict[int, bool] = {}
-    selected_issue_num: int | None = None
-    selected_pr_data: dict[str, Any] | None = None
-    selected_review_requested = False
-
-    for issue_num in sorted(set(gap_issue_nums)):
-        timeline = _list_issue_timeline_raw(settings, repository=repo, issue_number=issue_num)
-        pr_nums = _linked_pr_numbers_from_issue_timeline(timeline)
-        for pr_num in sorted(pr_nums):
-            pr_data = _get_pull_request(settings, repository=repo, pr_number=pr_num)
-            if pr_data.get("state") != "open":
-                continue
-
-            review_requested = _pull_request_has_review_request(pr_data)
-            if not review_requested:
-                cached_rr = pr_review_request_cache.get(pr_num)
-                if cached_rr is None:
-                    cached_rr = _pull_request_has_review_request_history(
-                        settings,
-                        repository=repo,
-                        pr_number=pr_num,
-                    )
-                    pr_review_request_cache[pr_num] = cached_rr
-                review_requested = cached_rr
-
-            if not _pull_request_is_merge_candidate(pr_data, review_requested=review_requested):
-                continue
-
-            selected_issue_num = issue_num
-            selected_pr_data = pr_data
-            selected_review_requested = bool(review_requested)
-            break
-        if selected_pr_data is not None:
-            break
-
-    if selected_issue_num is None or selected_pr_data is None:
+    selected = _select_first_ready_pr_linked_to_issues(
+        settings=settings,
+        repo=repo,
+        issue_nums=gap_issue_nums,
+        require_review_requested=True,
+    )
+    if selected is None:
         return None
 
-    pr_number = selected_pr_data.get("number")
-    if not isinstance(pr_number, int):
-        raise HTTPException(status_code=502, detail="Unexpected pull request response (number)")
+    selected_issue_num, selected_pr_data, review_requested = selected
 
-    # Safety gate: never flip draft->ready or merge while a PR is WIP or before review is requested.
-    pr_title = selected_pr_data.get("title")
-    if isinstance(pr_title, str) and _pull_request_title_is_wip(pr_title):
-        raise HTTPException(
-            status_code=409,
-            detail=f"Pull request #{pr_number} is still WIP; refusing to mark ready or merge.",
-        )
-    if not selected_review_requested:
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                f"Pull request #{pr_number} has no review-request signal; refusing to mark ready "
-                "or merge."
-            ),
-        )
+    pr_number = _pr_number_or_502(selected_pr_data)
+    _raise_if_pr_wip(pr_number=pr_number, pr_data=selected_pr_data)
+    _require_review_requested_or_409(pr_number=pr_number, review_requested=review_requested)
 
-    # Draft PRs cannot be merged; best-effort flip to ready-for-review.
-    ready_for_review_error: str | None = None
-    if selected_pr_data.get("draft") is True:
-        pr_node_id = selected_pr_data.get("node_id")
-        graphql_url = _graphql_api_url(settings)
-        if not isinstance(pr_node_id, str) or not pr_node_id.strip():
-            ready_for_review_error = (
-                "Pull request is draft but is missing node_id; cannot mark ready"
-            )
-        else:
-            mutation = (
-                "mutation($pullRequestId: ID!) {"
-                "  markPullRequestReadyForReview(input: { pullRequestId: $pullRequestId }) {"
-                "    pullRequest { id isDraft }"
-                "  }"
-                "}"
-            )
-            try:
-                payload = _github_graphql_post(
-                    settings,
-                    query=mutation,
-                    variables={"pullRequestId": pr_node_id},
-                )
-                gql_errors = _graphql_errors_as_message(payload)
-                if gql_errors:
-                    ready_for_review_error = (
-                        f"markPullRequestReadyForReview refused for {graphql_url}: {gql_errors}"
-                    )
-            except HTTPException as e:
-                ready_for_review_error = str(e.detail)
-
-        selected_pr_data = _get_pull_request(settings, repository=repo, pr_number=pr_number)
-        if selected_pr_data.get("draft") is True:
-            detail = f"Pull request #{pr_number} is still a draft; cannot merge."
-            if ready_for_review_error:
-                detail = f"{detail} {ready_for_review_error}"
-            raise HTTPException(status_code=409, detail=detail)
-
-    # Best-effort approve.
-    approved = False
-    approval_error: str | None = None
-    try:
-        _github_post_json(
-            settings,
-            url=_repo_api_url(settings, repository=repo, path=f"pulls/{pr_number}/reviews"),
-            payload={
-                "event": "APPROVE",
-                "body": "Approved by orchestrator automation.",
-            },
-        )
-        approved = True
-    except HTTPException as e:
-        approval_error = str(e.detail)
-
-    merge_url = _repo_api_url(settings, repository=repo, path=f"pulls/{pr_number}/merge")
-    status, body = _github_put_json(
-        settings,
-        url=merge_url,
-        payload={"merge_method": "squash"},
+    selected_pr_data = _ensure_pr_not_draft_or_409(
+        settings=settings,
+        repo=repo,
+        pr_number=pr_number,
+        pr_data=selected_pr_data,
     )
-    if status not in {200, 201}:
-        raise HTTPException(status_code=409, detail=f"Merge refused (HTTP {status}): {body}")
 
-    merged = False
-    merge_sha: str | None = None
-    if isinstance(body, dict):
-        merged = bool(body.get("merged"))
-        raw_sha = body.get("sha")
-        merge_sha = raw_sha if isinstance(raw_sha, str) else None
-    if not merged:
-        raise HTTPException(status_code=409, detail="Merge did not complete (merged=false)")
+    approved, approval_error = _try_approve_pull_request(
+        settings=settings,
+        repo=repo,
+        pr_number=pr_number,
+    )
 
-    # Best-effort: delete head branch when safe (same-repo only).
-    branch_deleted = False
-    try:
-        head = selected_pr_data.get("head")
-        head_ref: str | None = None
-        head_repo: str | None = None
-        if isinstance(head, dict):
-            head_ref = head.get("ref")
-            repo_obj = head.get("repo")
-            if isinstance(repo_obj, dict):
-                head_repo = repo_obj.get("full_name")
-        if (
-            isinstance(head_ref, str)
-            and head_ref.strip()
-            and head_ref not in {"main", "master"}
-            and head_repo == repo
-        ):
-            del_url = _repo_api_url(settings, repository=repo, path=f"git/refs/heads/{head_ref}")
-            status_del, _body_del = _github_delete_json(settings, url=del_url)
-            branch_deleted = status_del in {200, 204, 404}
-    except Exception:
-        branch_deleted = False
+    merge_sha = _merge_pull_request_squash_or_409(
+        settings=settings,
+        repo=repo,
+        pr_number=pr_number,
+    )
 
-    # Close the gap-analysis issue (best-effort).
-    issue_closed = False
-    issue_close_error: str | None = None
-    try:
-        _github_patch_json(
-            settings,
-            url=_repo_api_url(settings, repository=repo, path=f"issues/{selected_issue_num}"),
-            payload={"state": "closed"},
-        )
-        issue_closed = True
-    except HTTPException as e:
-        issue_close_error = str(e.detail)
+    branch_deleted = _delete_head_branch_best_effort(
+        settings=settings,
+        repo=repo,
+        pr_data=selected_pr_data,
+    )
+
+    issue_closed, issue_close_error = _close_issue_best_effort(
+        settings=settings,
+        repo=repo,
+        issue_number=int(selected_issue_num),
+    )
 
     summary = f"Merged PR #{pr_number}; closed gap analysis issue #{selected_issue_num}"
     if issue_close_error:
@@ -1034,189 +1049,59 @@ def _try_merge_next_ready_review_consumption_pull_request(
     typically lands as a PR adding queue artefacts.
     """
 
-    if not settings.github_token.strip():
-        raise HTTPException(
-            status_code=409,
-            detail="ORCHESTRATOR_GITHUB_TOKEN is required to merge pull requests",
-        )
-
+    _require_github_token_for_merge(settings)
     branch = _get_default_branch(settings, repository=repo)
 
     raw_issues = _list_open_issues_raw(settings, repository=repo)
-    issue_nums: list[int] = []
-    for it in raw_issues:
-        if not isinstance(it, dict):
-            continue
-        if "pull_request" in it:
-            continue
-        num = it.get("number")
-        if isinstance(num, int) and _issue_has_label(it, label_name=LABEL_REVIEW_CONSUMPTION):
-            issue_nums.append(num)
-
+    issue_nums = _issue_numbers_with_label(raw_issues, label_name=LABEL_REVIEW_CONSUMPTION)
     if not issue_nums:
         return None
 
-    pr_review_request_cache: dict[int, bool] = {}
-    selected_issue_num: int | None = None
-    selected_pr_data: dict[str, Any] | None = None
-    selected_review_requested = False
-
-    for issue_num in sorted(set(issue_nums)):
-        timeline = _list_issue_timeline_raw(settings, repository=repo, issue_number=issue_num)
-        pr_nums = _linked_pr_numbers_from_issue_timeline(timeline)
-        for pr_num in sorted(pr_nums):
-            pr_data = _get_pull_request(settings, repository=repo, pr_number=pr_num)
-            if pr_data.get("state") != "open":
-                continue
-
-            review_requested = _pull_request_has_review_request(pr_data)
-            if not review_requested:
-                cached_rr = pr_review_request_cache.get(pr_num)
-                if cached_rr is None:
-                    cached_rr = _pull_request_has_review_request_history(
-                        settings,
-                        repository=repo,
-                        pr_number=pr_num,
-                    )
-                    pr_review_request_cache[pr_num] = cached_rr
-                review_requested = cached_rr
-
-            if not _pull_request_is_merge_candidate(pr_data, review_requested=review_requested):
-                continue
-
-            selected_issue_num = issue_num
-            selected_pr_data = pr_data
-            selected_review_requested = bool(review_requested)
-            break
-        if selected_pr_data is not None:
-            break
-
-    if selected_issue_num is None or selected_pr_data is None:
+    selected = _select_first_ready_pr_linked_to_issues(
+        settings=settings,
+        repo=repo,
+        issue_nums=issue_nums,
+        require_review_requested=True,
+    )
+    if selected is None:
         return None
 
-    pr_number = selected_pr_data.get("number")
-    if not isinstance(pr_number, int):
-        raise HTTPException(status_code=502, detail="Unexpected pull request response (number)")
+    selected_issue_num, selected_pr_data, review_requested = selected
 
-    pr_title = selected_pr_data.get("title")
-    if isinstance(pr_title, str) and _pull_request_title_is_wip(pr_title):
-        raise HTTPException(
-            status_code=409,
-            detail=f"Pull request #{pr_number} is still WIP; refusing to mark ready or merge.",
-        )
-    if not selected_review_requested:
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                f"Pull request #{pr_number} has no review-request signal; refusing to mark ready "
-                "or merge."
-            ),
-        )
+    pr_number = _pr_number_or_502(selected_pr_data)
+    _raise_if_pr_wip(pr_number=pr_number, pr_data=selected_pr_data)
+    _require_review_requested_or_409(pr_number=pr_number, review_requested=review_requested)
 
-    # Draft PRs cannot be merged; best-effort flip to ready-for-review.
-    ready_for_review_error: str | None = None
-    if selected_pr_data.get("draft") is True:
-        pr_node_id = selected_pr_data.get("node_id")
-        graphql_url = _graphql_api_url(settings)
-        if not isinstance(pr_node_id, str) or not pr_node_id.strip():
-            ready_for_review_error = (
-                "Pull request is draft but is missing node_id; cannot mark ready"
-            )
-        else:
-            mutation = (
-                "mutation($pullRequestId: ID!) {"
-                "  markPullRequestReadyForReview(input: { pullRequestId: $pullRequestId }) {"
-                "    pullRequest { id isDraft }"
-                "  }"
-                "}"
-            )
-            try:
-                payload = _github_graphql_post(
-                    settings,
-                    query=mutation,
-                    variables={"pullRequestId": pr_node_id},
-                )
-                gql_errors = _graphql_errors_as_message(payload)
-                if gql_errors:
-                    ready_for_review_error = (
-                        f"markPullRequestReadyForReview refused for {graphql_url}: {gql_errors}"
-                    )
-            except HTTPException as e:
-                ready_for_review_error = str(e.detail)
-
-        selected_pr_data = _get_pull_request(settings, repository=repo, pr_number=pr_number)
-        if selected_pr_data.get("draft") is True:
-            detail = f"Pull request #{pr_number} is still a draft; cannot merge."
-            if ready_for_review_error:
-                detail = f"{detail} {ready_for_review_error}"
-            raise HTTPException(status_code=409, detail=detail)
-
-    approved = False
-    approval_error: str | None = None
-    try:
-        _github_post_json(
-            settings,
-            url=_repo_api_url(settings, repository=repo, path=f"pulls/{pr_number}/reviews"),
-            payload={
-                "event": "APPROVE",
-                "body": "Approved by orchestrator automation.",
-            },
-        )
-        approved = True
-    except HTTPException as e:
-        approval_error = str(e.detail)
-
-    merge_url = _repo_api_url(settings, repository=repo, path=f"pulls/{pr_number}/merge")
-    status, body = _github_put_json(
-        settings,
-        url=merge_url,
-        payload={"merge_method": "squash"},
+    selected_pr_data = _ensure_pr_not_draft_or_409(
+        settings=settings,
+        repo=repo,
+        pr_number=pr_number,
+        pr_data=selected_pr_data,
     )
-    if status not in {200, 201}:
-        raise HTTPException(status_code=409, detail=f"Merge refused (HTTP {status}): {body}")
 
-    merged = False
-    merge_sha: str | None = None
-    if isinstance(body, dict):
-        merged = bool(body.get("merged"))
-        raw_sha = body.get("sha")
-        merge_sha = raw_sha if isinstance(raw_sha, str) else None
-    if not merged:
-        raise HTTPException(status_code=409, detail="Merge did not complete (merged=false)")
+    approved, approval_error = _try_approve_pull_request(
+        settings=settings,
+        repo=repo,
+        pr_number=pr_number,
+    )
 
-    branch_deleted = False
-    try:
-        head = selected_pr_data.get("head")
-        head_ref: str | None = None
-        head_repo: str | None = None
-        if isinstance(head, dict):
-            head_ref = head.get("ref")
-            repo_obj = head.get("repo")
-            if isinstance(repo_obj, dict):
-                head_repo = repo_obj.get("full_name")
-        if (
-            isinstance(head_ref, str)
-            and head_ref.strip()
-            and head_ref not in {"main", "master"}
-            and head_repo == repo
-        ):
-            del_url = _repo_api_url(settings, repository=repo, path=f"git/refs/heads/{head_ref}")
-            status_del, _body_del = _github_delete_json(settings, url=del_url)
-            branch_deleted = status_del in {200, 204, 404}
-    except Exception:
-        branch_deleted = False
+    merge_sha = _merge_pull_request_squash_or_409(
+        settings=settings,
+        repo=repo,
+        pr_number=pr_number,
+    )
 
-    issue_closed = False
-    issue_close_error: str | None = None
-    try:
-        _github_patch_json(
-            settings,
-            url=_repo_api_url(settings, repository=repo, path=f"issues/{selected_issue_num}"),
-            payload={"state": "closed"},
-        )
-        issue_closed = True
-    except HTTPException as e:
-        issue_close_error = str(e.detail)
+    branch_deleted = _delete_head_branch_best_effort(
+        settings=settings,
+        repo=repo,
+        pr_data=selected_pr_data,
+    )
+
+    issue_closed, issue_close_error = _close_issue_best_effort(
+        settings=settings,
+        repo=repo,
+        issue_number=int(selected_issue_num),
+    )
 
     summary = f"Merged PR #{pr_number}; closed review consumption issue #{selected_issue_num}"
     if issue_close_error:
@@ -1247,219 +1132,53 @@ def _try_merge_next_ready_review_consumption_pull_request(
 def _try_merge_next_ready_capability_pull_request(
     *, settings: ServerSettings, repo: str
 ) -> dict[str, object] | None:
-    """Attempt to merge a ready PR linked to an open 'Update Capability' issue.
+    return _try_merge_next_ready_labeled_issue_pull_request(
+        settings=settings,
+        repo=repo,
+        label_name=LABEL_UPDATE_CAPABILITY,
+        issue_kind_for_summary="capability",
+    )
 
-    Returns:
-        A merge result dict if a capability PR was found and merged, else None.
-    """
 
-    if not settings.github_token.strip():
-        raise HTTPException(
-            status_code=409,
-            detail="ORCHESTRATOR_GITHUB_TOKEN is required to merge pull requests",
-        )
-
-    branch = _get_default_branch(settings, repository=repo)
-
-    raw_issues = _list_open_issues_raw(settings, repository=repo)
-    cap_issue_nums: list[int] = []
-    for it in raw_issues:
-        if not isinstance(it, dict):
+def _promotable_development_queue_candidates(
+    pending_paths: list[str], *, loop_mode: str
+) -> list[str]:
+    promotable_categories = {"development"} if loop_mode != "review" else {"development", "review"}
+    candidates: list[str] = []
+    for p in sorted(pending_paths):
+        filename = _queue_filename(p)
+        if _queue_file_is_excluded_for_loop_mode(filename=filename, loop_mode=loop_mode):
             continue
-        if "pull_request" in it:
+        if _queue_category_for_filename(filename) not in promotable_categories:
             continue
-        num = it.get("number")
-        if isinstance(num, int) and _issue_has_label(it, label_name=LABEL_UPDATE_CAPABILITY):
-            cap_issue_nums.append(num)
+        candidates.append(p)
+    return candidates
 
-    if not cap_issue_nums:
-        return None
 
-    pr_review_request_cache: dict[int, bool] = {}
-    selected_issue_num: int | None = None
-    selected_pr_data: dict[str, Any] | None = None
-
-    for issue_num in sorted(set(cap_issue_nums)):
-        timeline = _list_issue_timeline_raw(settings, repository=repo, issue_number=issue_num)
-        pr_nums = _linked_pr_numbers_from_issue_timeline(timeline)
-        for pr_num in sorted(pr_nums):
-            pr_data = _get_pull_request(settings, repository=repo, pr_number=pr_num)
-            if pr_data.get("state") != "open":
-                continue
-
-            review_requested = _pull_request_has_review_request(pr_data)
-            if not review_requested:
-                cached_rr = pr_review_request_cache.get(pr_num)
-                if cached_rr is None:
-                    cached_rr = _pull_request_has_review_request_history(
-                        settings,
-                        repository=repo,
-                        pr_number=pr_num,
-                    )
-                    pr_review_request_cache[pr_num] = cached_rr
-                review_requested = cached_rr
-
-            if not _pull_request_is_merge_candidate(pr_data, review_requested=review_requested):
-                continue
-
-            selected_issue_num = issue_num
-            selected_pr_data = pr_data
-            break
-        if selected_pr_data is not None:
-            break
-
-    if selected_issue_num is None or selected_pr_data is None:
-        # Capability issues exist, but none are merge-ready.
-        return None
-
-    pr_number = selected_pr_data.get("number")
-    if not isinstance(pr_number, int):
-        raise HTTPException(status_code=502, detail="Unexpected pull request response (number)")
-
-    # Safety gate: never flip draft->ready or merge while a PR is WIP or before review is requested.
-    pr_title = selected_pr_data.get("title")
-    if isinstance(pr_title, str) and _pull_request_title_is_wip(pr_title):
-        raise HTTPException(
-            status_code=409,
-            detail=f"Pull request #{pr_number} is still WIP; refusing to mark ready or merge.",
-        )
-    if not review_requested:
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                f"Pull request #{pr_number} has no review-request signal; refusing to mark ready "
-                "or merge."
-            ),
-        )
-
-    # Draft PRs cannot be merged; best-effort flip to ready-for-review.
-    ready_for_review_error: str | None = None
-    if selected_pr_data.get("draft") is True:
-        pr_node_id = selected_pr_data.get("node_id")
-        graphql_url = _graphql_api_url(settings)
-        if not isinstance(pr_node_id, str) or not pr_node_id.strip():
-            ready_for_review_error = (
-                "Pull request is draft but is missing node_id; cannot mark ready"
-            )
-        else:
-            mutation = (
-                "mutation($pullRequestId: ID!) {"
-                "  markPullRequestReadyForReview(input: { pullRequestId: $pullRequestId }) {"
-                "    pullRequest { id isDraft }"
-                "  }"
-                "}"
-            )
-            try:
-                payload = _github_graphql_post(
-                    settings,
-                    query=mutation,
-                    variables={"pullRequestId": pr_node_id},
-                )
-                gql_errors = _graphql_errors_as_message(payload)
-                if gql_errors:
-                    ready_for_review_error = (
-                        f"markPullRequestReadyForReview refused for {graphql_url}: {gql_errors}"
-                    )
-            except HTTPException as e:
-                ready_for_review_error = str(e.detail)
-
-        selected_pr_data = _get_pull_request(settings, repository=repo, pr_number=pr_number)
-        if selected_pr_data.get("draft") is True:
-            detail = f"Pull request #{pr_number} is still a draft; cannot merge."
-            if ready_for_review_error:
-                detail = f"{detail} {ready_for_review_error}"
-            raise HTTPException(status_code=409, detail=detail)
-
-    # Best-effort approve.
-    approved = False
-    approval_error: str | None = None
-    try:
-        _github_post_json(
+def _select_first_unpromoted_queue_item(
+    *,
+    settings: ServerSettings,
+    repo: str,
+    branch: str,
+    candidates: list[str],
+    open_issues_for_matching: list[dict[str, Any]],
+) -> tuple[str, str, str, str | None]:
+    for pending_path in candidates:
+        raw, sha = _get_repo_text_file(
             settings,
-            url=_repo_api_url(settings, repository=repo, path=f"pulls/{pr_number}/reviews"),
-            payload={
-                "event": "APPROVE",
-                "body": "Approved by orchestrator automation.",
-            },
+            repository=repo,
+            path=pending_path,
+            ref=branch,
         )
-        approved = True
-    except HTTPException as e:
-        approval_error = str(e.detail)
+        title_norm = _first_markdown_line_as_title(raw)
+        issue_num = _best_match_issue_number(title_norm, open_issues_for_matching)
+        if issue_num is None:
+            return pending_path, raw, sha, title_norm
 
-    merge_url = _repo_api_url(settings, repository=repo, path=f"pulls/{pr_number}/merge")
-    status, body = _github_put_json(settings, url=merge_url, payload={"merge_method": "squash"})
-    if status not in {200, 201}:
-        raise HTTPException(status_code=409, detail=f"Merge refused (HTTP {status}): {body}")
-
-    merged = False
-    merge_sha: str | None = None
-    if isinstance(body, dict):
-        merged = bool(body.get("merged"))
-        raw_sha = body.get("sha")
-        merge_sha = raw_sha if isinstance(raw_sha, str) else None
-    if not merged:
-        raise HTTPException(status_code=409, detail="Merge did not complete (merged=false)")
-
-    # Best-effort: delete head branch when safe (same-repo only).
-    branch_deleted = False
-    try:
-        head = selected_pr_data.get("head")
-        head_ref: str | None = None
-        head_repo: str | None = None
-        if isinstance(head, dict):
-            head_ref = head.get("ref")
-            repo_obj = head.get("repo")
-            if isinstance(repo_obj, dict):
-                head_repo = repo_obj.get("full_name")
-        if (
-            isinstance(head_ref, str)
-            and head_ref.strip()
-            and head_ref not in {"main", "master"}
-            and head_repo == repo
-        ):
-            del_url = _repo_api_url(settings, repository=repo, path=f"git/refs/heads/{head_ref}")
-            status_del, _body_del = _github_delete_json(settings, url=del_url)
-            branch_deleted = status_del in {200, 204, 404}
-    except Exception:
-        branch_deleted = False
-
-    # Close the capability issue (best-effort) now that the capabilities update is merged.
-    issue_closed = False
-    issue_close_error: str | None = None
-    try:
-        _github_patch_json(
-            settings,
-            url=_repo_api_url(settings, repository=repo, path=f"issues/{selected_issue_num}"),
-            payload={"state": "closed"},
-        )
-        issue_closed = True
-    except HTTPException as e:
-        issue_close_error = str(e.detail)
-
-    summary = f"Merged PR #{pr_number}; closed capability issue #{selected_issue_num}"
-    if issue_close_error:
-        summary = f"{summary} (warning: failed to close issue: {issue_close_error})"
-
-    # Return a superset of the dev merge schema; UI treats many fields as optional.
-    return {
-        "repo": repo,
-        "branch": branch,
-        "merged": True,
-        "mergeCommitSha": merge_sha,
-        "queuePath": None,
-        "completePath": None,
-        "developmentIssueNumber": None,
-        "pullNumber": pr_number,
-        "approved": approved,
-        "approvalError": approval_error,
-        "headBranchDeleted": branch_deleted,
-        "capabilityIssueNumber": int(selected_issue_num),
-        "capabilityIssueCreated": False,
-        "capabilityIssueUrl": _make_github_issue_url(repo, int(selected_issue_num)),
-        "capabilityIssueAssigned": [],
-        "capabilityIssueClosed": issue_closed,
-        "summary": summary,
-    }
+    raise HTTPException(
+        status_code=409,
+        detail="No unpromoted development queue files found (all match open issues)",
+    )
 
 
 def _promote_next_unpromoted_development_queue_item(
@@ -1477,7 +1196,7 @@ def _promote_next_unpromoted_development_queue_item(
     pending_paths = _list_repo_markdown_files_under(
         settings=settings,
         repository=repo,
-        dir_path="planning/issue_queue/pending",
+        dir_path=DEVELOPMENT_QUEUE_PENDING_DIR,
         ref=branch,
     )
     if not pending_paths:
@@ -1489,15 +1208,7 @@ def _promote_next_unpromoted_development_queue_item(
 
     # Select next unpromoted work item in stable order.
     mode = getattr(settings, "loop_mode", "build")
-    promotable_categories = {"development"} if mode != "review" else {"development", "review"}
-    candidates: list[str] = []
-    for p in sorted(pending_paths):
-        filename = _queue_filename(p)
-        if _queue_file_is_excluded_for_loop_mode(filename=filename, loop_mode=mode):
-            continue
-        if _queue_category_for_filename(filename) not in promotable_categories:
-            continue
-        candidates.append(p)
+    candidates = _promotable_development_queue_candidates(pending_paths, loop_mode=mode)
 
     if not candidates:
         detail = "No promotable development queue files found"
@@ -1505,32 +1216,13 @@ def _promote_next_unpromoted_development_queue_item(
             detail = "No promotable review/development queue files found"
         raise HTTPException(status_code=409, detail=detail)
 
-    selected_path: str | None = None
-    selected_raw: str | None = None
-    selected_sha: str | None = None
-    selected_title_norm: str | None = None
-
-    for pending_path in candidates:
-        raw, sha = _get_repo_text_file(
-            settings,
-            repository=repo,
-            path=pending_path,
-            ref=branch,
-        )
-        title_norm = _first_markdown_line_as_title(raw)
-        issue_num = _best_match_issue_number(title_norm, open_issues_for_matching)
-        if issue_num is None:
-            selected_path = pending_path
-            selected_raw = raw
-            selected_sha = sha
-            selected_title_norm = title_norm
-            break
-
-    if selected_path is None or selected_raw is None or selected_sha is None:
-        raise HTTPException(
-            status_code=409,
-            detail="No unpromoted development queue files found (all match open issues)",
-        )
+    selected_path, selected_raw, selected_sha, selected_title_norm = _select_first_unpromoted_queue_item(
+        settings=settings,
+        repo=repo,
+        branch=branch,
+        candidates=candidates,
+        open_issues_for_matching=open_issues_for_matching,
+    )
 
     queue_id = _queue_filename(selected_path)
     issue_title, issue_body = _parse_queue_file_for_issue(queue_id=queue_id, raw=selected_raw)
@@ -1550,7 +1242,7 @@ def _promote_next_unpromoted_development_queue_item(
         )
         issue_num = issue.get("number")
         if not isinstance(issue_num, int):
-            raise HTTPException(status_code=502, detail="Unexpected GitHub create issue response")
+            raise HTTPException(status_code=502, detail=ERR_UNEXPECTED_GITHUB_CREATE_ISSUE_RESPONSE)
         existing_issue_num = issue_num
         created = True
 
@@ -1620,7 +1312,7 @@ def _promote_next_unpromoted_capability_queue_item(
     pending_paths = _list_repo_markdown_files_under(
         settings=settings,
         repository=repo,
-        dir_path="planning/issue_queue/pending",
+        dir_path=DEVELOPMENT_QUEUE_PENDING_DIR,
         ref=branch,
     )
     if not pending_paths:
@@ -1689,7 +1381,7 @@ def _promote_next_unpromoted_capability_queue_item(
         )
         issue_num = issue.get("number")
         if not isinstance(issue_num, int):
-            raise HTTPException(status_code=502, detail="Unexpected GitHub create issue response")
+            raise HTTPException(status_code=502, detail=ERR_UNEXPECTED_GITHUB_CREATE_ISSUE_RESPONSE)
         existing_issue_num = issue_num
         created = True
 
@@ -1747,31 +1439,49 @@ def _extract_source_pr_number_from_capability_issue(
     and fall back to the human-readable title/body for backwards compatibility.
     """
 
-    repo_norm = repository.strip().strip("/").lower()
+    return (
+        _capability_source_pr_from_marker(repository=repository, issue_body=issue_body)
+        or _capability_source_pr_from_title(issue_title=issue_title)
+        or _capability_source_pr_from_body_summary(issue_body=issue_body)
+        or None
+    )
 
-    # Primary: marker in the body.
-    match = _CAPABILITY_ISSUE_BODY_SOURCE_PR_RE.search(issue_body or "")
-    if match:
-        marker_repo = (match.group(1) or "").strip().strip("/").lower()
-        raw_num = (match.group(2) or "").strip()
-        if marker_repo == repo_norm and raw_num.isdigit():
-            return int(raw_num)
 
-    # Secondary: title convention.
-    match = _CAPABILITY_ISSUE_TITLE_SOURCE_PR_RE.search(issue_title or "")
-    if match:
-        raw_num = (match.group(1) or "").strip()
-        if raw_num.isdigit():
-            return int(raw_num)
-
-    # Tertiary: body summary block.
-    match = re.search(r"\bPR\s+number:\s*(\d+)\b", issue_body or "", flags=re.IGNORECASE)
-    if match:
-        raw_num = (match.group(1) or "").strip()
-        if raw_num.isdigit():
-            return int(raw_num)
-
+def _parse_int_if_digits(raw: str) -> int | None:
+    raw = raw.strip()
+    if raw.isdigit():
+        return int(raw)
     return None
+
+
+def _capability_source_pr_from_marker(*, repository: str, issue_body: str) -> int | None:
+    repo_norm = repository.strip().strip("/").lower()
+    match = _CAPABILITY_ISSUE_BODY_SOURCE_PR_RE.search(issue_body or "")
+    if not match:
+        return None
+
+    marker_repo = (match.group(1) or "").strip().strip("/").lower()
+    if marker_repo != repo_norm:
+        return None
+
+    raw_num = match.group(2) or ""
+    return _parse_int_if_digits(raw_num)
+
+
+def _capability_source_pr_from_title(*, issue_title: str) -> int | None:
+    match = _CAPABILITY_ISSUE_TITLE_SOURCE_PR_RE.search(issue_title or "")
+    if not match:
+        return None
+    raw_num = match.group(1) or ""
+    return _parse_int_if_digits(raw_num)
+
+
+def _capability_source_pr_from_body_summary(*, issue_body: str) -> int | None:
+    match = re.search(r"\bPR\s+number:\s*(\d+)\b", issue_body or "", flags=re.IGNORECASE)
+    if not match:
+        return None
+    raw_num = match.group(1) or ""
+    return _parse_int_if_digits(raw_num)
 
 
 def _render_capability_update_issue_body(
@@ -1806,47 +1516,29 @@ def _render_capability_update_issue_body(
     )
 
 
-def _merge_next_ready_development_pull_request(
-    *, settings: ServerSettings, repo: str
-) -> dict[str, object]:
-    if not settings.github_token.strip():
-        raise HTTPException(
-            status_code=409,
-            detail="ORCHESTRATOR_GITHUB_TOKEN is required to merge pull requests",
-        )
-
-    branch = _get_default_branch(settings, repository=repo)
-
-    # Discover the next ready PR deterministically from inflight development queue items.
-    raw_issues = _list_open_issues_raw(settings, repository=repo)
-    open_issues_for_matching = [it for it in raw_issues if isinstance(it, dict)]
-
-    pending_paths = _list_repo_markdown_files_under(
-        settings=settings,
-        repository=repo,
-        dir_path="planning/issue_queue/pending",
-        ref=branch,
-    )
-    processed_paths = _list_repo_markdown_files_under(
-        settings=settings,
-        repository=repo,
-        dir_path="planning/issue_queue/processed",
-        ref=branch,
-    )
-    inflight_paths = list(pending_paths) + list(processed_paths)
-
-    mode = getattr(settings, "loop_mode", "build")
-    mergeable_categories = {"development"} if mode != "review" else {"development", "review"}
+def _development_merge_candidate_paths(
+    inflight_paths: list[str], *, loop_mode: str
+) -> list[str]:
+    mergeable_categories = {"development"} if loop_mode != "review" else {"development", "review"}
     candidates: list[str] = []
     for p in sorted(inflight_paths):
         filename = _queue_filename(p)
-        if _queue_file_is_excluded_for_loop_mode(filename=filename, loop_mode=mode):
+        if _queue_file_is_excluded_for_loop_mode(filename=filename, loop_mode=loop_mode):
             continue
         if _queue_category_for_filename(filename) not in mergeable_categories:
             continue
         candidates.append(p)
+    return candidates
 
-    selected: dict[str, Any] | None = None
+
+def _select_ready_development_merge_candidate(
+    *,
+    settings: ServerSettings,
+    repo: str,
+    branch: str,
+    candidates: list[str],
+    open_issues_for_matching: list[dict[str, Any]],
+) -> tuple[str, str, str, str, int, dict[str, Any], bool] | None:
     pr_review_request_cache: dict[int, bool] = {}
     for queue_path in candidates:
         content, queue_sha = _get_repo_text_file(
@@ -1863,148 +1555,174 @@ def _merge_next_ready_development_pull_request(
         timeline = _list_issue_timeline_raw(settings, repository=repo, issue_number=issue_num)
         pr_nums = _linked_pr_numbers_from_issue_timeline(timeline)
         for pr_num in sorted(pr_nums):
-            pr_data = _get_pull_request(settings, repository=repo, pr_number=pr_num)
-            if pr_data.get("state") != "open":
+            pr_data = _open_pull_request_or_none(settings=settings, repo=repo, pr_number=pr_num)
+            if pr_data is None:
                 continue
-
-            review_requested = _pull_request_has_review_request(pr_data)
-            if not review_requested:
-                cached_rr = pr_review_request_cache.get(pr_num)
-                if cached_rr is None:
-                    cached_rr = _pull_request_has_review_request_history(
-                        settings,
-                        repository=repo,
-                        pr_number=pr_num,
-                    )
-                    pr_review_request_cache[pr_num] = cached_rr
-                review_requested = cached_rr
-
+            review_requested = _review_requested_for_pr_cached(
+                settings=settings,
+                repo=repo,
+                pr_number=pr_num,
+                pr_data=pr_data,
+                cache=pr_review_request_cache,
+            )
             if not _pull_request_is_merge_candidate(pr_data, review_requested=review_requested):
                 continue
-            selected = {
-                "queue_path": queue_path,
-                "queue_sha": queue_sha,
-                "queue_content": content,
-                "queue_id": _queue_filename(queue_path),
-                "issue_number": issue_num,
-                "pr": pr_data,
-                "review_requested": review_requested,
-            }
-            break
-        if selected is not None:
-            break
 
+            queue_id = _queue_filename(queue_path)
+            return queue_id, queue_path, queue_sha, content, issue_num, pr_data, bool(review_requested)
+    return None
+
+
+def _ensure_followup_issue_after_development_merge(
+    *,
+    settings: ServerSettings,
+    repo: str,
+    branch: str,
+    loop_mode: str,
+    pr_number: int,
+    pr_title: str,
+    pr_body: str,
+    queue_path: str,
+    queue_content: str,
+) -> tuple[int, bool, str]:
+    if loop_mode == "review":
+        follow_issue_label = LABEL_UPDATE_REVIEW
+        marker = f"{_REVIEW_UPDATE_FROM_PR_MARKER_PREFIX} {repo}#{pr_number}"
+        existing = _search_issue_number_by_body_marker(settings, repository=repo, marker=marker)
+        if existing is not None:
+            return existing, False, follow_issue_label
+
+        _ensure_repo_label_exists(settings, repository=repo, label_name=LABEL_UPDATE_REVIEW)
+        discussion_md = _get_pull_request_discussion_markdown(
+            settings,
+            repository=repo,
+            pr_number=pr_number,
+        )
+        follow_issue_title, follow_issue_body = _render_review_actions_update_issue_body(
+            settings=settings,
+            repo=repo,
+            branch=branch,
+            pr_number=pr_number,
+            pr_title=pr_title,
+            pr_body=pr_body,
+            discussion_markdown=discussion_md,
+            queue_path=queue_path,
+            queue_content=queue_content,
+        )
+        created_issue = _github_post_json(
+            settings,
+            url=_repo_api_url(settings, repository=repo, path="issues"),
+            payload={
+                "title": follow_issue_title,
+                "body": follow_issue_body,
+                "labels": [LABEL_UPDATE_REVIEW],
+            },
+        )
+        num = created_issue.get("number")
+        if not isinstance(num, int):
+            raise HTTPException(status_code=502, detail=ERR_UNEXPECTED_GITHUB_CREATE_ISSUE_RESPONSE)
+        return num, True, follow_issue_label
+
+    follow_issue_label = LABEL_UPDATE_CAPABILITY
+    marker = f"{_CAPABILITY_UPDATE_FROM_PR_MARKER_PREFIX} {repo}#{pr_number}"
+    existing = _search_issue_number_by_body_marker(settings, repository=repo, marker=marker)
+    if existing is not None:
+        return existing, False, follow_issue_label
+
+    _ensure_repo_label_exists(settings, repository=repo, label_name=LABEL_UPDATE_CAPABILITY)
+    discussion_md = _get_pull_request_discussion_markdown(
+        settings,
+        repository=repo,
+        pr_number=pr_number,
+    )
+    follow_issue_body = _render_capability_update_issue_body(
+        repo=repo,
+        pr_number=pr_number,
+        pr_title=pr_title,
+        pr_body=pr_body,
+        discussion_markdown=discussion_md,
+    )
+    follow_issue_title = f"Update system capabilities based on merged PR #{pr_number}"
+    created_issue = _github_post_json(
+        settings,
+        url=_repo_api_url(settings, repository=repo, path="issues"),
+        payload={
+            "title": follow_issue_title,
+            "body": follow_issue_body,
+            "labels": [LABEL_UPDATE_CAPABILITY],
+        },
+    )
+    num = created_issue.get("number")
+    if not isinstance(num, int):
+        raise HTTPException(status_code=502, detail=ERR_UNEXPECTED_GITHUB_CREATE_ISSUE_RESPONSE)
+    return num, True, follow_issue_label
+
+
+def _merge_next_ready_development_pull_request(
+    *, settings: ServerSettings, repo: str
+) -> dict[str, object]:
+    _require_github_token_for_merge(settings)
+
+    branch = _get_default_branch(settings, repository=repo)
+    mode = getattr(settings, "loop_mode", "build")
+
+    # Discover the next ready PR deterministically from inflight development queue items.
+    raw_issues = _list_open_issues_raw(settings, repository=repo)
+    open_issues_for_matching = [it for it in raw_issues if isinstance(it, dict)]
+
+    pending_paths = _list_repo_markdown_files_under(
+        settings=settings,
+        repository=repo,
+        dir_path=DEVELOPMENT_QUEUE_PENDING_DIR,
+        ref=branch,
+    )
+    processed_paths = _list_repo_markdown_files_under(
+        settings=settings,
+        repository=repo,
+        dir_path="planning/issue_queue/processed",
+        ref=branch,
+    )
+    inflight_paths = list(pending_paths) + list(processed_paths)
+
+    candidates = _development_merge_candidate_paths(inflight_paths, loop_mode=mode)
+    selected = _select_ready_development_merge_candidate(
+        settings=settings,
+        repo=repo,
+        branch=branch,
+        candidates=candidates,
+        open_issues_for_matching=open_issues_for_matching,
+    )
     if selected is None:
         raise HTTPException(status_code=409, detail="No ready development pull requests found")
 
-    pr_data = selected["pr"]
-    review_requested = bool(selected.get("review_requested"))
-    pr_number = pr_data.get("number")
-    if not isinstance(pr_number, int):
-        raise HTTPException(status_code=502, detail="Unexpected pull request response (number)")
-
-    # Safety gate: never flip draft->ready or merge while a PR is WIP or before review is requested.
-    pr_title = pr_data.get("title")
-    if isinstance(pr_title, str) and _pull_request_title_is_wip(pr_title):
-        raise HTTPException(
-            status_code=409,
-            detail=f"Pull request #{pr_number} is still WIP; refusing to mark ready or merge.",
-        )
-    if not review_requested:
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                f"Pull request #{pr_number} has no review-request signal; refusing to mark ready "
-                "or merge."
-            ),
-        )
-
-    # If PR is a draft, try to mark it ready for review.
-    # Draft PRs cannot be merged, so we fail early with a clearer 409 if we can't flip it.
-    ready_for_review_error: str | None = None
-    if pr_data.get("draft") is True:
-        # There is no REST API endpoint to convert a draft PR to "ready for review".
-        # See: https://github.com/orgs/community/discussions/70061
-        # Use GraphQL: markPullRequestReadyForReview
-        pr_node_id = pr_data.get("node_id")
-        graphql_url = _graphql_api_url(settings)
-        if not isinstance(pr_node_id, str) or not pr_node_id.strip():
-            ready_for_review_error = (
-                "Pull request is draft but is missing node_id; cannot mark ready"
-            )
-        else:
-            mutation = (
-                "mutation($pullRequestId: ID!) {"
-                "  markPullRequestReadyForReview(input: { pullRequestId: $pullRequestId }) {"
-                "    pullRequest { id isDraft }"
-                "  }"
-                "}"
-            )
-            try:
-                payload = _github_graphql_post(
-                    settings,
-                    query=mutation,
-                    variables={"pullRequestId": pr_node_id},
-                )
-                gql_errors = _graphql_errors_as_message(payload)
-                if gql_errors:
-                    ready_for_review_error = (
-                        f"markPullRequestReadyForReview refused for {graphql_url}: {gql_errors}"
-                    )
-            except HTTPException as e:
-                ready_for_review_error = str(e.detail)
-
-        pr_data = _get_pull_request(settings, repository=repo, pr_number=pr_number)
-
-        if pr_data.get("draft") is True:
-            detail = f"Pull request #{pr_number} is still a draft; cannot merge."
-            if ready_for_review_error:
-                detail = f"{detail} {ready_for_review_error}"
-            raise HTTPException(status_code=409, detail=detail)
-
-    # Best-effort: submit an approval review (may be refused by policy).
-    approved = False
-    approval_error: str | None = None
-    try:
-        _github_post_json(
-            settings,
-            url=_repo_api_url(settings, repository=repo, path=f"pulls/{pr_number}/reviews"),
-            payload={
-                "event": "APPROVE",
-                "body": "Approved by orchestrator automation.",
-            },
-        )
-        approved = True
-    except HTTPException as e:
-        approval_error = str(e.detail)
-
-    # Attempt merge (squash by default). GitHub may refuse if checks/approvals aren't met.
-    merge_url = _repo_api_url(settings, repository=repo, path=f"pulls/{pr_number}/merge")
-    status, body = _github_put_json(
-        settings,
-        url=merge_url,
-        payload={"merge_method": "squash"},
+    queue_id, source_path, source_sha, source_content, issue_number, pr_data, review_requested = (
+        selected
     )
-    if status not in {200, 201}:
-        raise HTTPException(
-            status_code=409,
-            detail=f"Merge refused (HTTP {status}): {body}",
-        )
 
-    merged = False
-    merge_sha: str | None = None
-    if isinstance(body, dict):
-        merged = bool(body.get("merged"))
-        raw_sha = body.get("sha")
-        merge_sha = raw_sha if isinstance(raw_sha, str) else None
-    if not merged:
-        raise HTTPException(status_code=409, detail="Merge did not complete (merged=false)")
+    pr_number = _pr_number_or_502(pr_data)
+    _raise_if_pr_wip(pr_number=pr_number, pr_data=pr_data)
+    _require_review_requested_or_409(pr_number=pr_number, review_requested=review_requested)
+
+    pr_data = _ensure_pr_not_draft_or_409(
+        settings=settings,
+        repo=repo,
+        pr_number=pr_number,
+        pr_data=pr_data,
+    )
+
+    approved, approval_error = _try_approve_pull_request(
+        settings=settings,
+        repo=repo,
+        pr_number=pr_number,
+    )
+
+    merge_sha = _merge_pull_request_squash_or_409(
+        settings=settings,
+        repo=repo,
+        pr_number=pr_number,
+    )
 
     # Move the queue file to complete/ to avoid lingering processed artefacts keeping the loop in C.
-    queue_id = str(selected["queue_id"])
-    source_path = str(selected["queue_path"])
-    source_sha = str(selected["queue_sha"])
-    source_content = str(selected["queue_content"])
     complete_path = f"planning/issue_queue/complete/{queue_id}"
     _ensure_repo_file_present_in_complete(
         settings,
@@ -2023,121 +1741,27 @@ def _merge_next_ready_development_pull_request(
         message=f"Remove {queue_id} from issue_queue (completed)",
     )
 
-    # Best-effort: delete head branch when safe (same-repo only).
-    branch_deleted = False
-    try:
-        head = pr_data.get("head")
-        head_ref: str | None = None
-        head_repo: str | None = None
-        if isinstance(head, dict):
-            head_ref = head.get("ref")
-            repo_obj = head.get("repo")
-            if isinstance(repo_obj, dict):
-                head_repo = repo_obj.get("full_name")
-        if (
-            isinstance(head_ref, str)
-            and head_ref.strip()
-            and head_ref not in {"main", "master"}
-            and head_repo == repo
-        ):
-            del_url = _repo_api_url(settings, repository=repo, path=f"git/refs/heads/{head_ref}")
-            status_del, _body_del = _github_delete_json(settings, url=del_url)
-            branch_deleted = status_del in {200, 204, 404}
-    except Exception:
-        branch_deleted = False
+    branch_deleted = _delete_head_branch_best_effort(settings=settings, repo=repo, pr_data=pr_data)
 
     # Create a follow-up issue and assign it to Copilot.
-    pr_title = pr_data.get("title")
-    pr_body = pr_data.get("body")
-    if not isinstance(pr_title, str):
-        pr_title = ""
-    if not isinstance(pr_body, str):
-        pr_body = ""
+    raw_title = pr_data.get("title")
+    raw_body = pr_data.get("body")
+    pr_title = raw_title if isinstance(raw_title, str) else ""
+    pr_body = raw_body if isinstance(raw_body, str) else ""
 
-    mode = getattr(settings, "loop_mode", "build")
-
-    follow_issue_number: int
-    follow_issue_created = False
-    follow_issue_label = LABEL_UPDATE_CAPABILITY
-    follow_issue_title: str
-    follow_issue_body: str
-
-    if mode == "review":
-        follow_issue_label = LABEL_UPDATE_REVIEW
-        marker = f"{_REVIEW_UPDATE_FROM_PR_MARKER_PREFIX} {repo}#{pr_number}"
-        existing = _search_issue_number_by_body_marker(settings, repository=repo, marker=marker)
-        if existing is None:
-            _ensure_repo_label_exists(settings, repository=repo, label_name=LABEL_UPDATE_REVIEW)
-            discussion_md = _get_pull_request_discussion_markdown(
-                settings,
-                repository=repo,
-                pr_number=pr_number,
-            )
-            follow_issue_title, follow_issue_body = _render_review_actions_update_issue_body(
-                settings=settings,
-                repo=repo,
-                branch=branch,
-                pr_number=pr_number,
-                pr_title=pr_title,
-                pr_body=pr_body,
-                discussion_markdown=discussion_md,
-                queue_path=source_path,
-                queue_content=source_content,
-            )
-            created_issue = _github_post_json(
-                settings,
-                url=_repo_api_url(settings, repository=repo, path="issues"),
-                payload={
-                    "title": follow_issue_title,
-                    "body": follow_issue_body,
-                    "labels": [LABEL_UPDATE_REVIEW],
-                },
-            )
-            num = created_issue.get("number")
-            if not isinstance(num, int):
-                raise HTTPException(
-                    status_code=502, detail="Unexpected GitHub create issue response"
-                )
-            follow_issue_number = num
-            follow_issue_created = True
-        else:
-            follow_issue_number = existing
-    else:
-        marker = f"{_CAPABILITY_UPDATE_FROM_PR_MARKER_PREFIX} {repo}#{pr_number}"
-        existing = _search_issue_number_by_body_marker(settings, repository=repo, marker=marker)
-        if existing is None:
-            _ensure_repo_label_exists(settings, repository=repo, label_name=LABEL_UPDATE_CAPABILITY)
-            discussion_md = _get_pull_request_discussion_markdown(
-                settings,
-                repository=repo,
-                pr_number=pr_number,
-            )
-            follow_issue_body = _render_capability_update_issue_body(
-                repo=repo,
-                pr_number=pr_number,
-                pr_title=pr_title,
-                pr_body=pr_body,
-                discussion_markdown=discussion_md,
-            )
-            follow_issue_title = f"Update system capabilities based on merged PR #{pr_number}"
-            created_issue = _github_post_json(
-                settings,
-                url=_repo_api_url(settings, repository=repo, path="issues"),
-                payload={
-                    "title": follow_issue_title,
-                    "body": follow_issue_body,
-                    "labels": [LABEL_UPDATE_CAPABILITY],
-                },
-            )
-            num = created_issue.get("number")
-            if not isinstance(num, int):
-                raise HTTPException(
-                    status_code=502, detail="Unexpected GitHub create issue response"
-                )
-            follow_issue_number = num
-            follow_issue_created = True
-        else:
-            follow_issue_number = existing
+    follow_issue_number, follow_issue_created, follow_issue_label = (
+        _ensure_followup_issue_after_development_merge(
+            settings=settings,
+            repo=repo,
+            branch=branch,
+            loop_mode=mode,
+            pr_number=pr_number,
+            pr_title=pr_title,
+            pr_body=pr_body,
+            queue_path=source_path,
+            queue_content=source_content,
+        )
+    )
 
     assigned = _assign_issue_to_copilot(
         settings,
@@ -2155,7 +1779,7 @@ def _merge_next_ready_development_pull_request(
         "mergeCommitSha": merge_sha,
         "queuePath": source_path,
         "completePath": complete_path,
-        "developmentIssueNumber": int(selected["issue_number"]),
+        "developmentIssueNumber": int(issue_number),
         "pullNumber": pr_number,
         "approved": approved,
         "approvalError": approval_error,

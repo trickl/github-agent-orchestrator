@@ -27,6 +27,16 @@ from github_agent_orchestrator.orchestrator.github.models import (
 
 logger = logging.getLogger(__name__)
 
+ERR_AT_LEAST_ONE_ASSIGNEE = "At least one assignee is required"
+
+_MARK_READY_FOR_REVIEW_MUTATION = (
+    "mutation($pullRequestId: ID!) {"
+    "  markPullRequestReadyForReview(input: { pullRequestId: $pullRequestId }) {"
+    "    pullRequest { id isDraft }"
+    "  }"
+    "}"
+)
+
 __all__ = [
     "GitHubClient",
     "CreatedIssue",
@@ -414,14 +424,22 @@ class GitHubClient:
         """
 
         discussion: list[PullRequestDiscussionItem] = []
+        self._append_pull_request_issue_comments(discussion=discussion, pull_number=pull_number)
+        self._append_pull_request_reviews(discussion=discussion, pull_number=pull_number)
+        self._append_pull_request_review_comments(discussion=discussion, pull_number=pull_number)
 
+        discussion.sort(key=lambda d: d.created_at)
+        return discussion
+
+    def _append_pull_request_issue_comments(
+        self, *, discussion: list[PullRequestDiscussionItem], pull_number: int
+    ) -> None:
         issue_comments_url = self._repo_url(
             repository=self._repository_name, path=f"issues/{pull_number}/comments"
         )
         for item in self._get_paginated_json_list(issue_comments_url):
-            created_at = item.get("created_at")
             try:
-                created_dt = self._parse_datetime(created_at)
+                created_dt = self._parse_datetime(item.get("created_at"))
             except Exception:
                 continue
 
@@ -443,6 +461,9 @@ class GitHubClient:
                 )
             )
 
+    def _append_pull_request_reviews(
+        self, *, discussion: list[PullRequestDiscussionItem], pull_number: int
+    ) -> None:
         reviews_url = self._repo_url(
             repository=self._repository_name,
             path=f"pulls/{pull_number}/reviews",
@@ -461,7 +482,6 @@ class GitHubClient:
             body = item.get("body")
             if not isinstance(body, str):
                 body = ""
-
             if not body.strip() and state.strip():
                 body = f"Review state: {state.strip()}"
 
@@ -479,13 +499,15 @@ class GitHubClient:
                 )
             )
 
+    def _append_pull_request_review_comments(
+        self, *, discussion: list[PullRequestDiscussionItem], pull_number: int
+    ) -> None:
         review_comments_url = self._repo_url(
             repository=self._repository_name, path=f"pulls/{pull_number}/comments"
         )
         for item in self._get_paginated_json_list(review_comments_url):
-            created_at = item.get("created_at")
             try:
-                created_dt = self._parse_datetime(created_at)
+                created_dt = self._parse_datetime(item.get("created_at"))
             except Exception:
                 continue
 
@@ -494,12 +516,7 @@ class GitHubClient:
                 body = ""
 
             path = item.get("path")
-            if isinstance(path, str) and path.strip():
-                line = item.get("line")
-                if isinstance(line, int) and line > 0:
-                    body = f"File: {path}:{line}\n\n{body}".strip()
-                else:
-                    body = f"File: {path}\n\n{body}".strip()
+            body = self._maybe_prefix_review_comment_body(body=body, path=path, line=item.get("line"))
 
             url = item.get("html_url")
             if not isinstance(url, str) or not url.strip():
@@ -515,8 +532,13 @@ class GitHubClient:
                 )
             )
 
-        discussion.sort(key=lambda d: d.created_at)
-        return discussion
+    @staticmethod
+    def _maybe_prefix_review_comment_body(*, body: str, path: object, line: object) -> str:
+        if not isinstance(path, str) or not path.strip():
+            return body
+        if isinstance(line, int) and line > 0:
+            return f"File: {path}:{line}\n\n{body}".strip()
+        return f"File: {path}\n\n{body}".strip()
 
     def _parse_assignees_from_issue_json(self, data: dict[str, Any]) -> list[str]:
         raw_assignees = data.get("assignees")
@@ -532,17 +554,11 @@ class GitHubClient:
 
     @staticmethod
     def _parse_pull_request_json(data: dict[str, Any]) -> PullRequestDetails:
-        number = data.get("number")
-        if not isinstance(number, int) or number <= 0:
-            raise ValueError("Invalid pull request response: missing number")
-
-        node_id = data.get("node_id")
-        if not isinstance(node_id, str) or not node_id.strip():
-            node_id = None
-
-        state = data.get("state")
-        if not isinstance(state, str):
-            state = ""
+        number = GitHubClient._require_positive_int(
+            data, key="number", error="Invalid pull request response: missing number"
+        )
+        node_id = GitHubClient._optional_str(data.get("node_id"))
+        state = GitHubClient._safe_str(data.get("state"))
 
         draft = bool(data.get("draft"))
         merged = bool(data.get("merged"))
@@ -555,32 +571,28 @@ class GitHubClient:
         if not isinstance(mergeable_state, str):
             mergeable_state = None
 
-        head = data.get("head")
-        base = data.get("base")
-        if not isinstance(head, dict) or not isinstance(base, dict):
-            raise ValueError("Invalid pull request response: missing head/base")
+        head = GitHubClient._require_dict(data.get("head"), error="Invalid pull request response: missing head/base")
+        base = GitHubClient._require_dict(data.get("base"), error="Invalid pull request response: missing head/base")
 
-        head_ref = head.get("ref")
-        head_sha = head.get("sha")
-        head_repo = head.get("repo")
-        base_ref = base.get("ref")
-        base_repo = base.get("repo")
+        head_ref = GitHubClient._require_non_empty_str(
+            head.get("ref"), error="Invalid pull request response: missing head.ref"
+        )
+        head_sha = GitHubClient._require_non_empty_str(
+            head.get("sha"), error="Invalid pull request response: missing head.sha"
+        )
+        base_ref = GitHubClient._require_non_empty_str(
+            base.get("ref"), error="Invalid pull request response: missing base.ref"
+        )
 
-        if not isinstance(head_ref, str) or not head_ref.strip():
-            raise ValueError("Invalid pull request response: missing head.ref")
-        if not isinstance(head_sha, str) or not head_sha.strip():
-            raise ValueError("Invalid pull request response: missing head.sha")
-        if not isinstance(base_ref, str) or not base_ref.strip():
-            raise ValueError("Invalid pull request response: missing base.ref")
-        if not isinstance(head_repo, dict) or not isinstance(base_repo, dict):
-            raise ValueError("Invalid pull request response: missing repo info")
+        head_repo = GitHubClient._require_dict(head.get("repo"), error="Invalid pull request response: missing repo info")
+        base_repo = GitHubClient._require_dict(base.get("repo"), error="Invalid pull request response: missing repo info")
 
-        head_repo_full_name = head_repo.get("full_name")
-        base_repo_full_name = base_repo.get("full_name")
-        if not isinstance(head_repo_full_name, str) or not head_repo_full_name.strip():
-            raise ValueError("Invalid pull request response: missing head.repo.full_name")
-        if not isinstance(base_repo_full_name, str) or not base_repo_full_name.strip():
-            raise ValueError("Invalid pull request response: missing base.repo.full_name")
+        head_repo_full_name = GitHubClient._require_non_empty_str(
+            head_repo.get("full_name"), error="Invalid pull request response: missing head.repo.full_name"
+        )
+        base_repo_full_name = GitHubClient._require_non_empty_str(
+            base_repo.get("full_name"), error="Invalid pull request response: missing base.repo.full_name"
+        )
 
         return PullRequestDetails(
             number=number,
@@ -602,36 +614,34 @@ class GitHubClient:
         if not isinstance(timeline, list):
             return set()
 
-        def _extract_pr_number(ev: dict[str, Any]) -> int | None:
-            # Common: cross-referenced event with nested source.issue.pull_request
-            source = ev.get("source")
-            if isinstance(source, dict):
-                issue = source.get("issue")
-                if isinstance(issue, dict) and "pull_request" in issue:
-                    num = issue.get("number")
-                    if isinstance(num, int):
-                        return num
-
-            # Connected events may include a "subject" that is a PR.
-            subject = ev.get("subject")
-            if isinstance(subject, dict) and "pull_request" in subject:
-                num = subject.get("number")
-                if isinstance(num, int):
-                    return num
-
-            return None
-
         out: set[int] = set()
         for raw in timeline:
             if not isinstance(raw, dict):
                 continue
-            event = raw.get("event")
-            if event not in {"cross-referenced", "connected"}:
+            if raw.get("event") not in {"cross-referenced", "connected"}:
                 continue
-            num = _extract_pr_number(raw)
-            if num is not None:
+            num = GitHubClient._extract_linked_pr_number_from_timeline_event(raw)
+            if isinstance(num, int):
                 out.add(num)
         return out
+
+    @staticmethod
+    def _extract_linked_pr_number_from_timeline_event(ev: dict[str, Any]) -> int | None:
+        # Common: cross-referenced event with nested source.issue.pull_request
+        source = ev.get("source")
+        if isinstance(source, dict):
+            issue = source.get("issue")
+            if isinstance(issue, dict) and "pull_request" in issue:
+                num = issue.get("number")
+                return num if isinstance(num, int) else None
+
+        # Connected events may include a "subject" that is a PR.
+        subject = ev.get("subject")
+        if isinstance(subject, dict) and "pull_request" in subject:
+            num = subject.get("number")
+            return num if isinstance(num, int) else None
+
+        return None
 
     @staticmethod
     def _parse_linked_pull_request_rest(data: Any) -> LinkedPullRequest | None:
@@ -839,32 +849,20 @@ class GitHubClient:
 
         # There is no REST API endpoint for this; GitHub requires GraphQL.
         # https://github.com/orgs/community/discussions/70061
-        mutation = (
-            "mutation($pullRequestId: ID!) {"
-            "  markPullRequestReadyForReview(input: { pullRequestId: $pullRequestId }) {"
-            "    pullRequest { id isDraft }"
-            "  }"
-            "}"
+        payload = self._graphql_post(
+            query=_MARK_READY_FOR_REVIEW_MUTATION,
+            variables={"pullRequestId": pr.node_id},
         )
 
-        payload = self._graphql_post(query=mutation, variables={"pullRequestId": pr.node_id})
-
-        errors = payload.get("errors")
-        if isinstance(errors, list) and errors:
-            messages: list[str] = []
-            for err in errors:
-                if isinstance(err, dict):
-                    msg = err.get("message")
-                    if isinstance(msg, str) and msg.strip():
-                        messages.append(msg.strip())
-            message = "; ".join(messages) if messages else str(errors)
-
+        error_message = self._graphql_errors_to_message(payload.get("errors"))
+        if error_message:
             # If the PR is already ready, callers want the current state.
-            if "not a draft" in message.lower() or "not draft" in message.lower():
+            lowered = error_message.lower()
+            if "not a draft" in lowered or "not draft" in lowered:
                 return self.get_pull_request(pull_number=pull_number)
 
             raise RuntimeError(
-                f"markPullRequestReadyForReview failed for PR #{pull_number}: {message}"
+                f"markPullRequestReadyForReview failed for PR #{pull_number}: {error_message}"
             )
 
         # GraphQL mutation succeeded; refetch for full details and consistency.
@@ -879,6 +877,46 @@ class GitHubClient:
             },
         )
         return pr
+
+    @staticmethod
+    def _graphql_errors_to_message(errors: object) -> str | None:
+        if not isinstance(errors, list) or not errors:
+            return None
+        messages: list[str] = []
+        for err in errors:
+            if not isinstance(err, dict):
+                continue
+            msg = err.get("message")
+            if isinstance(msg, str) and msg.strip():
+                messages.append(msg.strip())
+        return "; ".join(messages) if messages else str(errors)
+
+    @staticmethod
+    def _safe_str(value: object) -> str:
+        return value if isinstance(value, str) else ""
+
+    @staticmethod
+    def _optional_str(value: object) -> str | None:
+        return value if isinstance(value, str) and value.strip() else None
+
+    @staticmethod
+    def _require_dict(value: object, *, error: str) -> dict[str, Any]:
+        if not isinstance(value, dict):
+            raise ValueError(error)
+        return value
+
+    @staticmethod
+    def _require_non_empty_str(value: object, *, error: str) -> str:
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(error)
+        return value
+
+    @staticmethod
+    def _require_positive_int(data: dict[str, Any], *, key: str, error: str) -> int:
+        value = data.get(key)
+        if not isinstance(value, int) or value <= 0:
+            raise ValueError(error)
+        return value
 
     def merge_pull_request(
         self,
@@ -1014,7 +1052,7 @@ class GitHubClient:
 
         normalized = [a.strip() for a in assignees if a.strip()]
         if not normalized:
-            raise ValueError("At least one assignee is required")
+            raise ValueError(ERR_AT_LEAST_ONE_ASSIGNEE)
 
         url = self._issues_url(issue_number=issue_number, suffix="assignees")
         resp = self._session.post(url, json={"assignees": normalized}, timeout=30)
@@ -1049,7 +1087,7 @@ class GitHubClient:
 
         normalized = [a.strip() for a in assignees if a.strip()]
         if not normalized:
-            raise ValueError("At least one assignee is required")
+            raise ValueError(ERR_AT_LEAST_ONE_ASSIGNEE)
 
         payload: dict[str, Any] = {"assignees": normalized}
         if agent_assignment:
@@ -1092,7 +1130,7 @@ class GitHubClient:
 
         normalized = [a.strip() for a in assignees if a.strip()]
         if not normalized:
-            raise ValueError("At least one assignee is required")
+            raise ValueError(ERR_AT_LEAST_ONE_ASSIGNEE)
 
         url = self._issues_url(issue_number=issue_number, suffix="assignees")
         resp = self._session.delete(url, json={"assignees": normalized}, timeout=30)

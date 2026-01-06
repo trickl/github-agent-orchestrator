@@ -122,7 +122,7 @@ def format_text(stats: Sequence[FileStat], *, threshold: int, top: int) -> str:
 def format_markdown(stats: Sequence[FileStat], *, threshold: int, top: int) -> str:
     over = [s for s in stats if s.lines >= threshold]
     lines: list[str] = []
-    lines.append(f"# Large files report\n")
+    lines.append("# Large files report")
     lines.append(f"Threshold: **{threshold}** lines")
     lines.append("")
 

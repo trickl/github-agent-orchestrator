@@ -7,11 +7,124 @@ issues without manual intervention.
 
 from __future__ import annotations
 
-from datetime import timedelta
+from collections.abc import Callable
+from datetime import datetime, timedelta
 
 from fastapi import HTTPException
 
 from github_agent_orchestrator.server.config import ServerSettings
+
+
+def _safe_http_call(fn: Callable[[], list[object]]) -> list[object] | None:
+    try:
+        return fn()
+    except HTTPException:
+        return None
+
+
+def _auto_resume_is_enabled(settings: ServerSettings) -> bool:
+    if not settings.auto_resume_copilot_on_rate_limit:
+        return False
+    return bool(settings.github_token.strip())
+
+
+def _copilot_failure_event_created_at_iso(ev: object) -> str | None:
+    if not isinstance(ev, dict):
+        return None
+    if ev.get("event") != "copilot_work_finished_failure":
+        return None
+
+    created_at = ev.get("created_at")
+    if not isinstance(created_at, str) or not created_at.strip():
+        return None
+
+    # Best-effort: ensure the event was produced via the Copilot SWE Agent app.
+    app = ev.get("performed_via_github_app")
+    slug = app.get("slug") if isinstance(app, dict) else None
+    if isinstance(slug, str) and slug.strip() and slug.strip().lower() != "copilot-swe-agent":
+        return None
+
+    return created_at
+
+
+def _latest_copilot_failure_iso(events: list[object]) -> str | None:
+    latest_failure_iso: str | None = None
+    for ev in events:
+        created_at = _copilot_failure_event_created_at_iso(ev)
+        if created_at is None:
+            continue
+        if latest_failure_iso is None or created_at > latest_failure_iso:
+            latest_failure_iso = created_at
+    return latest_failure_iso
+
+
+def _copilot_progressed_after_failure(*, events: list[object], failure_iso: str) -> bool:
+    for ev in events:
+        if not isinstance(ev, dict):
+            continue
+        created_at = ev.get("created_at")
+        if not isinstance(created_at, str) or created_at <= failure_iso:
+            continue
+        if ev.get("event") in {"copilot_work_started", "copilot_work_finished_success"}:
+            return True
+    return False
+
+
+def _resume_nudge_exists_after_failure(
+    *,
+    comments: list[object],
+    failure_iso: str,
+    is_resume_nudge: Callable[[str], bool],
+) -> bool:
+    for it in comments:
+        if not isinstance(it, dict):
+            continue
+        created_at = it.get("created_at")
+        if not isinstance(created_at, str) or created_at <= failure_iso:
+            continue
+        body = it.get("body")
+        if isinstance(body, str) and is_resume_nudge(body):
+            return True
+    return False
+
+
+def _last_copilot_progress_iso_before_failure(*, events: list[object], failure_iso: str) -> str | None:
+    last_progress_iso: str | None = None
+    for ev in events:
+        if not isinstance(ev, dict):
+            continue
+        if ev.get("event") not in {"copilot_work_started", "copilot_work_finished_success"}:
+            continue
+        created_at = ev.get("created_at")
+        if not isinstance(created_at, str) or not created_at.strip():
+            continue
+        if created_at > failure_iso:
+            continue
+        if last_progress_iso is None or created_at > last_progress_iso:
+            last_progress_iso = created_at
+    return last_progress_iso
+
+
+def _count_resume_nudges_since(
+    *,
+    comments: list[object],
+    cutoff_dt: datetime,
+    dt_from_iso: Callable[[str], datetime],
+    is_resume_nudge: Callable[[str], bool],
+) -> int:
+    nudge_count = 0
+    for it in comments:
+        if not isinstance(it, dict):
+            continue
+        created_at = it.get("created_at")
+        if not isinstance(created_at, str) or not created_at.strip():
+            continue
+        if dt_from_iso(created_at) < cutoff_dt:
+            continue
+        body = it.get("body")
+        if isinstance(body, str) and is_resume_nudge(body):
+            nudge_count += 1
+    return nudge_count
 
 
 def maybe_auto_resume_copilot_after_rate_limit(
@@ -36,9 +149,7 @@ def maybe_auto_resume_copilot_after_rate_limit(
     # Import here to avoid circular dependency at module load time
     from github_agent_orchestrator.server import dashboard_router
 
-    if not settings.auto_resume_copilot_on_rate_limit:
-        return None
-    if not settings.github_token.strip():
+    if not _auto_resume_is_enabled(settings):
         return None
 
     delay_minutes = int(settings.auto_resume_copilot_on_rate_limit_delay_minutes)
@@ -47,45 +158,23 @@ def maybe_auto_resume_copilot_after_rate_limit(
 
     now = dashboard_router._utc_now()
 
-    try:
-        events = dashboard_router._list_issue_events_raw(
+    events = _safe_http_call(
+        lambda: dashboard_router._list_issue_events_raw(
             settings, repository=repository, issue_number=pr_number
         )
-    except HTTPException:
+    )
+    if events is None:
         # Best-effort only: do not break status rendering.
         return None
 
-    latest_failure_iso: str | None = None
-    for ev in events:
-        if not isinstance(ev, dict):
-            continue
-        if ev.get("event") != "copilot_work_finished_failure":
-            continue
-        created_at = ev.get("created_at")
-        if not isinstance(created_at, str) or not created_at.strip():
-            continue
-
-        # Best-effort: ensure the event was produced via the Copilot SWE Agent app.
-        app = ev.get("performed_via_github_app")
-        slug = app.get("slug") if isinstance(app, dict) else None
-        if isinstance(slug, str) and slug.strip() and slug.strip().lower() != "copilot-swe-agent":
-            continue
-
-        if latest_failure_iso is None or created_at > latest_failure_iso:
-            latest_failure_iso = created_at
+    latest_failure_iso = _latest_copilot_failure_iso(events)
 
     if latest_failure_iso is None:
         return None
 
     # If Copilot has started work again after the failure, don't nudge.
-    for ev in events:
-        if not isinstance(ev, dict):
-            continue
-        created_at = ev.get("created_at")
-        if not isinstance(created_at, str) or created_at <= latest_failure_iso:
-            continue
-        if ev.get("event") in {"copilot_work_started", "copilot_work_finished_success"}:
-            return None
+    if _copilot_progressed_after_failure(events=events, failure_iso=latest_failure_iso):
+        return None
 
     failure_dt = dashboard_router._dt_from_iso(latest_failure_iso)
     due_dt = failure_dt + timedelta(minutes=delay_minutes)
@@ -96,57 +185,40 @@ def maybe_auto_resume_copilot_after_rate_limit(
             f"auto-resume eligible in ~{remaining} minutes."
         )
 
-    try:
-        comments = dashboard_router._list_issue_comments_raw(
+    comments = _safe_http_call(
+        lambda: dashboard_router._list_issue_comments_raw(
             settings, repository=repository, issue_number=pr_number
         )
-    except HTTPException:
+    )
+    if comments is None:
         # If we can't check for idempotency/budget, don't risk spamming.
         return None
 
     # Do not post if a resume nudge already exists after the failure timestamp.
-    for it in comments:
-        if not isinstance(it, dict):
-            continue
-        created_at = it.get("created_at")
-        if not isinstance(created_at, str) or created_at <= latest_failure_iso:
-            continue
-        body = it.get("body")
-        if isinstance(body, str) and dashboard_router._comment_body_is_copilot_resume_nudge(body):
-            return None
+    if _resume_nudge_exists_after_failure(
+        comments=comments,
+        failure_iso=latest_failure_iso,
+        is_resume_nudge=dashboard_router._comment_body_is_copilot_resume_nudge,
+    ):
+        return None
 
     # Enforce a simple "nudge budget" to prevent infinite retry loops.
     # Budget window is the max of: (now - window_minutes) and the last observed Copilot start/success.
-    last_progress_iso: str | None = None
-    for ev in events:
-        if not isinstance(ev, dict):
-            continue
-        if ev.get("event") not in {"copilot_work_started", "copilot_work_finished_success"}:
-            continue
-        created_at = ev.get("created_at")
-        if not isinstance(created_at, str) or not created_at.strip():
-            continue
-        if created_at > latest_failure_iso:
-            continue
-        if last_progress_iso is None or created_at > last_progress_iso:
-            last_progress_iso = created_at
+    last_progress_iso = _last_copilot_progress_iso_before_failure(
+        events=events,
+        failure_iso=latest_failure_iso,
+    )
 
     cutoff_dt = now - timedelta(minutes=window_minutes)
     if last_progress_iso is not None:
         cutoff_dt = max(cutoff_dt, dashboard_router._dt_from_iso(last_progress_iso))
 
-    nudge_count = 0
-    for it in comments:
-        if not isinstance(it, dict):
-            continue
-        created_at = it.get("created_at")
-        if not isinstance(created_at, str) or not created_at.strip():
-            continue
-        if dashboard_router._dt_from_iso(created_at) < cutoff_dt:
-            continue
-        body = it.get("body")
-        if isinstance(body, str) and dashboard_router._comment_body_is_copilot_resume_nudge(body):
-            nudge_count += 1
+    nudge_count = _count_resume_nudges_since(
+        comments=comments,
+        cutoff_dt=cutoff_dt,
+        dt_from_iso=dashboard_router._dt_from_iso,
+        is_resume_nudge=dashboard_router._comment_body_is_copilot_resume_nudge,
+    )
 
     if max_nudges <= 0:
         return "Auto-resume suppressed (nudge budget disabled)."

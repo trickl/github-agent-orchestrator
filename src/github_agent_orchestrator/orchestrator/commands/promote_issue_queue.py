@@ -38,7 +38,7 @@ def handle_promote_issue_queue(args: argparse.Namespace, settings: OrchestratorS
         pending_files = discover_pending_items(pending_dir)
         if not pending_files:
             print(f"No pending queue files found in {pending_dir}")
-            return 0
+            return 10
 
         item = parse_issue_queue_item(pending_files[0])
         queue_path = str(item.path.as_posix())
