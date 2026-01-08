@@ -7,7 +7,6 @@ including PR evaluation, timeline analysis, and matching logic.
 from __future__ import annotations
 
 import difflib
-import re
 from typing import Any
 
 from github_agent_orchestrator.server.config import ServerSettings
@@ -17,10 +16,6 @@ from github_agent_orchestrator.server.dashboard.github_api import (
 from github_agent_orchestrator.server.dashboard.text_utilities import (
     _normalize_issue_title,
 )
-
-# Copilot often prefixes PR titles with "WIP" while it is still working.
-_WIP_TITLE_RE = re.compile(r"^\s*(?:\[\s*)?wip\b", re.IGNORECASE)
-
 
 def _extract_pr_number_from_timeline_event(ev: dict[str, Any]) -> int | None:
     source = ev.get("source")
@@ -118,13 +113,6 @@ def linked_pr_numbers_from_issue_timeline(timeline: list[dict[str, Any]]) -> set
     return out
 
 
-def pull_request_title_is_wip(title: str) -> bool:
-    """Check if a PR title indicates work-in-progress."""
-    if not isinstance(title, str):
-        return False
-    return bool(_WIP_TITLE_RE.search(title.strip()))
-
-
 def pull_request_has_review_request(pr_data: dict[str, Any]) -> bool:
     """Check if a PR has active review requests."""
     requested_reviewers = pr_data.get("requested_reviewers")
@@ -199,10 +187,6 @@ def pull_request_is_ready_for_review(pr_data: dict[str, Any], *, review_requeste
     if pr_data.get("draft") is True:
         return False
 
-    title = pr_data.get("title")
-    if isinstance(title, str) and pull_request_title_is_wip(title):
-        return False
-
     if not review_requested:
         return False
 
@@ -225,16 +209,11 @@ def pull_request_is_merge_candidate(pr_data: dict[str, Any], *, review_requested
 
     Safety gates still apply:
     - PR must be open
-    - PR must not be WIP
     - a review must have been requested (signal of Copilot completion)
     - PR must not be conflicted
     """
 
     if pr_data.get("state") != "open":
-        return False
-
-    title = pr_data.get("title")
-    if isinstance(title, str) and pull_request_title_is_wip(title):
         return False
 
     if not review_requested:

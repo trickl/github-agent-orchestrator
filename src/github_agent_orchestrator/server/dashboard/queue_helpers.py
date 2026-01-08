@@ -8,7 +8,6 @@ Important refactor invariant:
 from __future__ import annotations
 
 import base64
-from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +20,7 @@ from github_agent_orchestrator.server.dashboard.github_api import (
     _github_patch_json,
     _repo_api_url,
 )
+from github_agent_orchestrator.server.local_templates import load_local_template_or_raise
 
 # Conventions for orchestrator-created artefacts.
 #
@@ -117,28 +117,25 @@ def _get_repo_text_file(
 def _load_gap_analysis_template_or_raise(
     *, settings: ServerSettings, repo: str, branch: str
 ) -> str:
-    """Load the gap analysis issue template.
+    """Load the gap analysis issue template from the local repository."""
 
-    Single source of truth: the target repository (GitHub) under planning/issue_templates.
-    """
-
+    attempts: list[str] = []
     for template_path in _GAP_ANALYSIS_TEMPLATE_PATHS:
-        with suppress(Exception):
-            content, _sha = _get_repo_text_file(
-                settings,
-                repository=repo,
-                path=template_path,
-                ref=branch,
-            )
-            if content.strip():
-                return content
+        try:
+            return load_local_template_or_raise(relative_path=template_path)
+        except HTTPException as e:
+            attempts.append(f"{template_path}: {getattr(e, 'detail', '')}")
+
+    tried = "; ".join(attempts[:3])
+    more = "" if len(attempts) <= 3 else f" (+{len(attempts) - 3} more)"
 
     raise HTTPException(
         status_code=502,
         detail=(
-            "Unable to load gap analysis template from the target repository. "
+            "Unable to load local gap analysis template. "
             "Expected one of: planning/issue_templates/gap-analysis.md or "
-            "planning/issue_templates/gap_analysis.md"
+            "planning/issue_templates/gap_analysis.md. "
+            f"Attempts: {tried}{more}"
         ),
     )
 

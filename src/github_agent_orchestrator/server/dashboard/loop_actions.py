@@ -54,9 +54,6 @@ from github_agent_orchestrator.server.dashboard.github_issue_pr_helpers import (
 from github_agent_orchestrator.server.dashboard.github_issue_pr_helpers import (
     pull_request_is_merge_candidate as _pull_request_is_merge_candidate,
 )
-from github_agent_orchestrator.server.dashboard.github_issue_pr_helpers import (
-    pull_request_title_is_wip as _pull_request_title_is_wip,
-)
 from github_agent_orchestrator.server.dashboard.github_operations import (
     delete_repo_file_if_present as _delete_repo_file_if_present,
 )
@@ -100,6 +97,7 @@ from github_agent_orchestrator.server.dashboard.queue_helpers import (
 from github_agent_orchestrator.server.dashboard.text_utilities import (
     _first_markdown_line_as_title,
 )
+from github_agent_orchestrator.server.local_templates import load_local_template_or_raise
 
 ERR_UNEXPECTED_GITHUB_CREATE_ISSUE_RESPONSE = "Unexpected GitHub create issue response"
 ERR_UNEXPECTED_PULL_REQUEST_RESPONSE_NUMBER = "Unexpected pull request response (number)"
@@ -275,30 +273,29 @@ def _render_review_actions_update_issue_body(
 def _load_gap_analysis_template_or_raise(
     *, settings: ServerSettings, repo: str, branch: str
 ) -> str:
-    """Load the gap analysis issue template.
+    """Load the gap analysis issue template from the local repository.
 
-    Single source of truth: the target repository (GitHub) under planning/issue_templates.
-    This keeps behavior predictable for operators: editing the repo template changes what
-    the server will create.
+    These templates define orchestrator behavior and must come from THIS repo.
+    The target GitHub repository is the arena where work happens, not the source
+    of orchestration prompts.
     """
 
+    attempts: list[str] = []
     for template_path in _GAP_ANALYSIS_TEMPLATE_PATHS:
-        with suppress(Exception):
-            content, _sha = _get_repo_text_file(
-                settings,
-                repository=repo,
-                path=template_path,
-                ref=branch,
-            )
-            if content.strip():
-                return content
+        try:
+            return load_local_template_or_raise(relative_path=template_path)
+        except HTTPException as e:
+            attempts.append(f"{template_path}: {getattr(e, 'detail', '')}")
 
+    tried = "; ".join(attempts[:3])
+    more = "" if len(attempts) <= 3 else f" (+{len(attempts) - 3} more)"
     raise HTTPException(
         status_code=502,
         detail=(
-            "Unable to load gap analysis template from the target repository. "
+            "Unable to load local gap analysis template. "
             "Expected one of: planning/issue_templates/gap-analysis.md or "
-            "planning/issue_templates/gap_analysis.md"
+            "planning/issue_templates/gap_analysis.md. "
+            f"Attempts: {tried}{more}"
         ),
     )
 
@@ -306,24 +303,23 @@ def _load_gap_analysis_template_or_raise(
 def _load_review_actions_after_merge_template_or_raise(
     *, settings: ServerSettings, repo: str, branch: str
 ) -> str:
-    """Load the review-actions-after-merge issue template from the target repository."""
+    """Load the review-actions-after-merge issue template from the local repository."""
 
+    attempts: list[str] = []
     for template_path in _REVIEW_ACTIONS_AFTER_MERGE_TEMPLATE_PATHS:
-        with suppress(Exception):
-            content, _sha = _get_repo_text_file(
-                settings,
-                repository=repo,
-                path=template_path,
-                ref=branch,
-            )
-            if content.strip():
-                return content
+        try:
+            return load_local_template_or_raise(relative_path=template_path)
+        except HTTPException as e:
+            attempts.append(f"{template_path}: {getattr(e, 'detail', '')}")
 
+    tried = "; ".join(attempts[:3])
+    more = "" if len(attempts) <= 3 else f" (+{len(attempts) - 3} more)"
     raise HTTPException(
         status_code=502,
         detail=(
-            "Unable to load review actions-after-merge template from the target repository. "
-            "Expected planning/issue_templates/review-actions-after-pr-merge.md"
+            "Unable to load local review actions-after-merge template. "
+            "Expected planning/issue_templates/review-actions-after-pr-merge.md. "
+            f"Attempts: {tried}{more}"
         ),
     )
 
@@ -937,15 +933,6 @@ def _pr_number_or_502(pr_data: dict[str, Any]) -> int:
     return pr_number
 
 
-def _raise_if_pr_wip(*, pr_number: int, pr_data: dict[str, Any]) -> None:
-    pr_title = pr_data.get("title")
-    if isinstance(pr_title, str) and _pull_request_title_is_wip(pr_title):
-        raise HTTPException(
-            status_code=409,
-            detail=f"Pull request #{pr_number} is still WIP; refusing to mark ready or merge.",
-        )
-
-
 def _require_review_requested_or_409(*, pr_number: int, review_requested: bool) -> None:
     if not review_requested:
         raise HTTPException(
@@ -1111,7 +1098,6 @@ def _try_merge_next_ready_labeled_issue_pull_request(
     selected_issue_num, selected_pr_data, _review_requested = selected
 
     pr_number = _pr_number_or_502(selected_pr_data)
-    _raise_if_pr_wip(pr_number=pr_number, pr_data=selected_pr_data)
     selected_pr_data = _ensure_pr_not_draft_or_409(
         settings=settings,
         repo=repo,
@@ -1181,7 +1167,7 @@ def _try_merge_next_ready_gap_analysis_pull_request(
     """Attempt to merge a ready PR linked to an open gap-analysis issue.
 
     Step A is modeled as a single stage, but gap analysis is often executed via a PR.
-    When that PR is ready (non-WIP + review requested, no conflicts), we can merge it
+    When that PR is ready (review requested, no conflicts), we can merge it
     deterministically.
 
     Returns:
@@ -1208,7 +1194,6 @@ def _try_merge_next_ready_gap_analysis_pull_request(
     selected_issue_num, selected_pr_data, review_requested = selected
 
     pr_number = _pr_number_or_502(selected_pr_data)
-    _raise_if_pr_wip(pr_number=pr_number, pr_data=selected_pr_data)
     _require_review_requested_or_409(pr_number=pr_number, review_requested=review_requested)
 
     selected_pr_data = _ensure_pr_not_draft_or_409(
@@ -1298,7 +1283,6 @@ def _try_merge_next_ready_review_consumption_pull_request(
     selected_issue_num, selected_pr_data, review_requested = selected
 
     pr_number = _pr_number_or_502(selected_pr_data)
-    _raise_if_pr_wip(pr_number=pr_number, pr_data=selected_pr_data)
     _require_review_requested_or_409(pr_number=pr_number, review_requested=review_requested)
 
     selected_pr_data = _ensure_pr_not_draft_or_409(
@@ -1929,7 +1913,6 @@ def _merge_next_ready_development_pull_request(
     )
 
     pr_number = _pr_number_or_502(pr_data)
-    _raise_if_pr_wip(pr_number=pr_number, pr_data=pr_data)
     _require_review_requested_or_409(pr_number=pr_number, review_requested=review_requested)
 
     pr_data = _ensure_pr_not_draft_or_409(

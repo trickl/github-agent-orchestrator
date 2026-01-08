@@ -89,6 +89,7 @@ from github_agent_orchestrator.server.dashboard.loop_actions import (
 from github_agent_orchestrator.server.dashboard.loop_actions import (
     promote_next_pending_issue_queue_item as promote_next_pending_issue_queue_item,
 )
+from github_agent_orchestrator.server.local_templates import load_local_template_or_raise
 from github_agent_orchestrator.server.dashboard.loop_status import (
     _queue_file_is_excluded_for_loop_mode as _queue_file_is_excluded_for_loop_mode,
 )
@@ -311,24 +312,23 @@ _REVIEW_ACTIONS_AFTER_MERGE_TEMPLATE_PATHS: tuple[str, ...] = (
 def _load_review_consumption_template_or_raise(
     *, settings: ServerSettings, repo: str, branch: str
 ) -> str:
-    """Load the review-consumption issue template from the target repository."""
+    """Load the review-consumption issue template from the local repository."""
 
+    attempts: list[str] = []
     for template_path in _REVIEW_CONSUMPTION_TEMPLATE_PATHS:
-        with suppress(Exception):
-            content, _sha = _get_repo_text_file(
-                settings,
-                repository=repo,
-                path=template_path,
-                ref=branch,
-            )
-            if content.strip():
-                return content
+        try:
+            return load_local_template_or_raise(relative_path=template_path)
+        except HTTPException as e:
+            attempts.append(f"{template_path}: {getattr(e, 'detail', '')}")
 
+    tried = "; ".join(attempts[:3])
+    more = "" if len(attempts) <= 3 else f" (+{len(attempts) - 3} more)"
     raise HTTPException(
         status_code=502,
         detail=(
-            "Unable to load review consumption template from the target repository. "
-            "Expected planning/issue_templates/review-consumption.md"
+            "Unable to load local review consumption template. "
+            "Expected planning/issue_templates/review-consumption.md. "
+            f"Attempts: {tried}{more}"
         ),
     )
 
@@ -909,15 +909,27 @@ def _load_repo_cognitive_task_templates(
     repository: str,
     ref: str,
 ) -> list[dict[str, object]]:
-    paths = _list_repo_markdown_files_under(
-        settings=settings,
-        repository=repository,
-        dir_path="planning/issue_templates",
-        ref=ref,
-    )
+    # Cognitive task templates are defined by this orchestrator repo.
+    # Do not load them from the target repository.
+    from github_agent_orchestrator.server.local_templates import _find_repo_root
+
+    root = _find_repo_root()
+    template_dir = root / "planning" / "issue_templates"
+    if not template_dir.exists() or not template_dir.is_dir():
+        raise HTTPException(
+            status_code=502,
+            detail=f"Local template directory not found: {template_dir}",
+        )
+
+    paths = [
+        str(p.relative_to(root)).replace("\\", "/")
+        for p in template_dir.rglob("*.md")
+        if p.is_file()
+    ]
+
     tasks: list[dict[str, object]] = []
     for p in paths:
-        content, _sha = _get_repo_text_file(settings, repository=repository, path=p, ref=ref)
+        content = load_local_template_or_raise(relative_path=p)
         name = Path(p).stem
         tasks.append(
             {

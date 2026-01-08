@@ -448,7 +448,7 @@ def test_loop_status_stage_d_when_processed_has_review_requested_event_even_with
     assert loop["activeStep"] == 5
 
 
-def test_loop_status_does_not_advance_when_pr_is_wip(monkeypatch, tmp_path: Path) -> None:
+def test_loop_status_advances_when_pr_title_is_wip(monkeypatch, tmp_path: Path) -> None:
     planning = tmp_path / "planning"
     agent_state = tmp_path / "agent_state"
 
@@ -507,8 +507,8 @@ def test_loop_status_does_not_advance_when_pr_is_wip(monkeypatch, tmp_path: Path
     client = TestClient(create_app())
     loop = client.get("/api/loop").json()
 
-    assert loop["stage"] == "2b"
-    assert loop["activeStep"] == 4
+    assert loop["stage"] == "2c"
+    assert loop["activeStep"] == 5
 
 
 def test_loop_status_stage_a_exposes_gap_pr_ready_for_merge(monkeypatch, tmp_path: Path) -> None:

@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from github_agent_orchestrator.server.app import create_app
@@ -149,6 +150,24 @@ def test_loop_promote_endpoint_promotes_one_file(monkeypatch, tmp_path: Path) ->
     assert data["processedPath"].endswith("planning/issue_queue/processed/dev-1.md")
 
 
+def test_load_gap_analysis_template_is_local_not_github(monkeypatch) -> None:
+    import github_agent_orchestrator.server.dashboard.loop_actions as loop_actions
+
+    monkeypatch.setattr(
+        loop_actions,
+        "_get_repo_text_file",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("Should not call GitHub for templates")),
+    )
+
+    content = loop_actions._load_gap_analysis_template_or_raise(
+        settings=loop_actions.ServerSettings(),
+        repo="acme/repo",
+        branch="main",
+    )
+    assert isinstance(content, str)
+    assert "Gap Analysis" in content
+
+
 def test_ensure_gap_analysis_issue_exists_creates_and_assigns(monkeypatch) -> None:
     monkeypatch.setenv("ORCHESTRATOR_GITHUB_TOKEN", "test-token")
 
@@ -272,15 +291,16 @@ def test_loop_gap_analysis_ensure_endpoint_creates_and_assigns(monkeypatch, tmp_
     monkeypatch.setattr(loop_actions, "_get_default_branch", lambda *_a, **_k: "main")
     monkeypatch.setattr(dashboard_router, "_list_open_issues_raw", lambda *_a, **_k: [])
     monkeypatch.setattr(loop_actions, "_list_open_issues_raw", lambda *_a, **_k: [])
+    # Templates are loaded locally; no GitHub file reads should be attempted for templates.
     monkeypatch.setattr(
         dashboard_router,
         "_get_repo_text_file",
-        lambda *_a, **_k: ("# Gap Analysis\n\nDo the thing\n", "sha"),
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("Unexpected GitHub file read")),
     )
     monkeypatch.setattr(
         loop_actions,
         "_get_repo_text_file",
-        lambda *_a, **_k: ("# Gap Analysis\n\nDo the thing\n", "sha"),
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("Unexpected GitHub file read")),
     )
 
     def fake_get_json(*_a, **kwargs):
