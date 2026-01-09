@@ -533,10 +533,27 @@ def _review_consumption_candidate_should_be_archived(
     *,
     settings: ServerSettings,
     repo: str,
+    branch: str,
     review_path: str,
 ) -> bool:
+    """Return True if the review should be archived as fully consumed.
+
+    We only archive a review when the most recent review-consumption issue for that review
+    was closed *without producing a queue artefact* (per the review-consumption template's
+    completion check).
+
+    A closed review-consumption issue can also mean: "this run produced a queue item and the
+    issue was closed after its PR merged". In that case we must NOT archive the review; we
+    should allow Step 1a to run again to generate the next work item.
+    """
+
     marker = f"{_REVIEW_CONSUMPTION_MARKER_PREFIX} {review_path}"
-    existing = _search_issue_number_by_body_marker(settings, repository=repo, marker=marker)
+    existing = _search_issue_number_by_body_marker(
+        settings,
+        repository=repo,
+        marker=marker,
+        state="closed",
+    )
     if existing is None:
         return False
 
@@ -544,11 +561,128 @@ def _review_consumption_candidate_should_be_archived(
         settings,
         url=_repo_api_url(settings, repository=repo, path=f"issues/{existing}"),
     )
-    # If the review-consumption issue is closed, we treat the associated review as consumed.
-    # This prevents repeatedly creating new review-consumption issues for the same review file
-    # in cases where the agent correctly determines there are no unaddressed items and produces
-    # no queue artefact.
-    return isinstance(issue, dict) and issue.get("state") == "closed"
+    if not isinstance(issue, dict) or issue.get("state") != "closed":
+        return False
+
+    created_at = issue.get("created_at")
+    closed_at = issue.get("closed_at")
+    created_dt = _dt_from_iso(created_at) if isinstance(created_at, str) else None
+    closed_dt = _dt_from_iso(closed_at) if isinstance(closed_at, str) else None
+    created_epoch = int(created_dt.timestamp()) if created_dt is not None else None
+    closed_epoch = int(closed_dt.timestamp()) if closed_dt is not None else None
+
+    # If we can find a review queue artefact created during the lifetime of this issue (and
+    # referring to this review), then work exists and the review must remain active.
+    if _review_consumption_issue_produced_queue_output(
+        settings=settings,
+        repo=repo,
+        branch=branch,
+        review_path=review_path,
+        issue_created_epoch=created_epoch,
+        issue_closed_epoch=closed_epoch,
+    ):
+        return False
+
+    return True
+
+
+def _queue_item_epoch_seconds_from_queue_id(queue_id: str) -> int | None:
+    """Best-effort timestamp extraction from a queue id.
+
+    Supports:
+    - review-<unix_seconds>-...
+    - review-YYYY-MM-DD-...
+
+    Returns unix epoch seconds, or None if unknown.
+    """
+
+    m = re.match(r"^review-(\d{9,12})(?:\b|-)" , queue_id)
+    if m is not None:
+        try:
+            return int(m.group(1))
+        except Exception:
+            return None
+
+    m = re.match(r"^review-(\d{4}-\d{2}-\d{2})(?:\b|-)" , queue_id, flags=re.IGNORECASE)
+    if m is None:
+        return None
+    try:
+        dt = datetime.fromisoformat(m.group(1)).replace(tzinfo=UTC)
+        return int(dt.timestamp())
+    except Exception:
+        return None
+
+
+def _review_consumption_issue_produced_queue_output(
+    *,
+    settings: ServerSettings,
+    repo: str,
+    branch: str,
+    review_path: str,
+    issue_created_epoch: int | None,
+    issue_closed_epoch: int | None,
+) -> bool:
+    """Return True if there is evidence this issue produced review work.
+
+    We consider it "produced output" if we can find a `review-*.md` queue artefact created
+    during the issue's lifetime whose content references the given review path.
+    """
+
+    queue_dirs = (
+        "planning/issue_queue/pending",
+        "planning/issue_queue/processed",
+        "planning/issue_queue/complete",
+    )
+
+    candidates: list[str] = []
+    for d in queue_dirs:
+        try:
+            paths = _list_repo_markdown_files_under(
+                settings=settings,
+                repository=repo,
+                dir_path=d,
+                ref=branch,
+            )
+        except Exception:
+            continue
+        for p in paths:
+            name = Path(p).name
+            if name.lower().startswith("review-"):
+                candidates.append(p)
+
+    # If we have timestamps, narrow to items plausibly created during the issue run.
+    def in_window(queue_id: str) -> bool:
+        ts = _queue_item_epoch_seconds_from_queue_id(queue_id)
+        if ts is None:
+            return True
+        if issue_created_epoch is not None and ts < issue_created_epoch - 60:
+            return False
+        if issue_closed_epoch is not None and ts > issue_closed_epoch + 3600:
+            return False
+        return True
+
+    for p in sorted(set(candidates)):
+        queue_id = Path(p).name
+        if not in_window(queue_id):
+            continue
+
+        try:
+            content, _sha = _get_repo_text_file(
+                settings,
+                repository=repo,
+                path=p,
+                ref=branch,
+            )
+        except Exception:
+            continue
+
+        extracted_review_path, _extracted_actions_path = _extract_review_paths_from_queue_content(
+            queue_id=queue_id,
+            queue_content=content,
+        )
+        if extracted_review_path == review_path:
+            return True
+    return False
 
 
 def _select_next_review_consumption_target_or_raise(
@@ -571,6 +705,7 @@ def _select_next_review_consumption_target_or_raise(
         if not _review_consumption_candidate_should_be_archived(
             settings=settings,
             repo=repo,
+            branch=branch,
             review_path=review_path,
         ):
             return review_path, _review_actions_path_for_review_path(review_path)

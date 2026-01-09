@@ -244,15 +244,42 @@ def list_repo_markdown_files_under(
 
 
 def search_issue_number_by_body_marker(
-    settings: ServerSettings, *, repository: str, marker: str
+    settings: ServerSettings,
+    *,
+    repository: str,
+    marker: str,
+    state: str = "all",
 ) -> int | None:
-    """Search for any issue (open or closed) containing the given marker string."""
+    """Search for an issue containing a marker string.
+
+    Args:
+        settings: Server settings.
+        repository: Target repository (e.g. "owner/name").
+        marker: Marker string to search for in issue bodies.
+        state: "open", "closed", or "all".
+
+    Notes:
+        We use the GitHub Search API. When markers are reused over time (e.g. multiple
+        review-consumption iterations for the same review source), we prefer the most
+        recently updated match.
+    """
 
     marker_norm = marker.strip()
     if not marker_norm:
         return None
 
-    q = f'repo:{repository} "{marker_norm}" in:body is:issue'
+    state_norm = state.strip().lower()
+    state_filter = ""
+    if state_norm in {"all", "any"}:
+        state_filter = ""
+    elif state_norm == "open":
+        state_filter = " is:open"
+    elif state_norm == "closed":
+        state_filter = " is:closed"
+    else:
+        raise ValueError(f"Unexpected issue state filter: {state!r}")
+
+    q = f'repo:{repository} "{marker_norm}" in:body is:issue{state_filter}'
     # Use updated-desc ordering to make this deterministic for markers that may be reused over time
     # (e.g. multiple review-consumption iterations for the same review source file).
     data = _github_get_json(
