@@ -27,9 +27,10 @@ from __future__ import annotations
 
 import argparse
 import json
+from collections.abc import Iterable, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Iterable, Literal, Sequence
+from typing import Literal
 
 
 @dataclass(frozen=True)

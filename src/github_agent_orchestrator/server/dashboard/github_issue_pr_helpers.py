@@ -10,12 +10,9 @@ import difflib
 from typing import Any
 
 from github_agent_orchestrator.server.config import ServerSettings
-from github_agent_orchestrator.server.dashboard.github_api import (
-    _repo_api_url,
-)
-from github_agent_orchestrator.server.dashboard.text_utilities import (
-    _normalize_issue_title,
-)
+from github_agent_orchestrator.server.dashboard.github_api import _repo_api_url
+from github_agent_orchestrator.server.dashboard.text_utilities import _normalize_issue_title
+
 
 def _extract_pr_number_from_timeline_event(ev: dict[str, Any]) -> int | None:
     source = ev.get("source")

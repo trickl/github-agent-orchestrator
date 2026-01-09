@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import base64
 import re
-from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -42,9 +41,6 @@ from github_agent_orchestrator.server.dashboard.github_operations import (
 )
 from github_agent_orchestrator.server.dashboard.github_operations import (
     get_repo_text_file as _get_repo_text_file,
-)
-from github_agent_orchestrator.server.dashboard.github_operations import (
-    list_issue_timeline_raw as _list_issue_timeline_raw,
 )
 from github_agent_orchestrator.server.dashboard.github_operations import (
     list_open_issues_raw as _list_open_issues_raw,
@@ -80,8 +76,10 @@ from github_agent_orchestrator.server.dashboard.loop_actions import (
     _repair_gap_analysis_issue_body_if_unsafe as _repair_gap_analysis_issue_body_if_unsafe,
 )
 from github_agent_orchestrator.server.dashboard.loop_actions import (
-    heal_orphaned_processed_queue_items as heal_orphaned_processed_queue_items,
     ensure_gap_analysis_issue as ensure_gap_analysis_issue,
+)
+from github_agent_orchestrator.server.dashboard.loop_actions import (
+    heal_orphaned_processed_queue_items as heal_orphaned_processed_queue_items,
 )
 from github_agent_orchestrator.server.dashboard.loop_actions import (
     merge_next_ready_development_pull_request as merge_next_ready_development_pull_request,
@@ -89,7 +87,6 @@ from github_agent_orchestrator.server.dashboard.loop_actions import (
 from github_agent_orchestrator.server.dashboard.loop_actions import (
     promote_next_pending_issue_queue_item as promote_next_pending_issue_queue_item,
 )
-from github_agent_orchestrator.server.local_templates import load_local_template_or_raise
 from github_agent_orchestrator.server.dashboard.loop_status import (
     _queue_file_is_excluded_for_loop_mode as _queue_file_is_excluded_for_loop_mode,
 )
@@ -102,6 +99,7 @@ from github_agent_orchestrator.server.dashboard.text_utilities import (
     _normalize_repo_path_candidate,
     _utc_now_iso,
 )
+from github_agent_orchestrator.server.local_templates import load_local_template_or_raise
 
 router = APIRouter()
 
@@ -144,6 +142,22 @@ def _github_patch_json(
     from github_agent_orchestrator.server.dashboard.github_api import _github_patch_json as _impl
 
     return _impl(settings, url=url, payload=payload, params=params)
+
+
+def _list_issue_timeline_raw(
+    settings: ServerSettings, *, repository: str, issue_number: int
+) -> list[dict[str, Any]]:
+    """Compatibility shim for tests and helper functions.
+
+    The dashboard test suite monkeypatches `dashboard_router._list_issue_timeline_raw` to
+    prevent accidental real GitHub API calls.
+    """
+
+    from github_agent_orchestrator.server.dashboard.github_operations import (
+        list_issue_timeline_raw as _impl,
+    )
+
+    return _impl(settings, repository=repository, issue_number=issue_number)
 
 
 def _list_open_pull_requests_raw(
@@ -313,6 +327,8 @@ def _load_review_consumption_template_or_raise(
     *, settings: ServerSettings, repo: str, branch: str
 ) -> str:
     """Load the review-consumption issue template from the local repository."""
+
+    _ = (settings, repo, branch)
 
     attempts: list[str] = []
     for template_path in _REVIEW_CONSUMPTION_TEMPLATE_PATHS:
@@ -491,10 +507,7 @@ def _issue_is_assigned_to_login(issue: dict[str, Any], *, login: str) -> bool:
     assignees = issue.get("assignees")
     if not isinstance(assignees, list):
         return False
-    for a in assignees:
-        if isinstance(a, dict) and a.get("login") == login:
-            return True
-    return False
+    return any(isinstance(a, dict) and a.get("login") == login for a in assignees)
 
 
 def _first_open_review_consumption_issue_number(
@@ -531,11 +544,11 @@ def _review_consumption_candidate_should_be_archived(
         settings,
         url=_repo_api_url(settings, repository=repo, path=f"issues/{existing}"),
     )
-    if not isinstance(issue, dict) or issue.get("state") != "closed":
-        return False
-
-    timeline = _list_issue_timeline_raw(settings, repository=repo, issue_number=existing)
-    return not _review_consumption_issue_has_linked_pull_requests(timeline=timeline)
+    # If the review-consumption issue is closed, we treat the associated review as consumed.
+    # This prevents repeatedly creating new review-consumption issues for the same review file
+    # in cases where the agent correctly determines there are no unaddressed items and produces
+    # no queue artefact.
+    return isinstance(issue, dict) and issue.get("state") == "closed"
 
 
 def _select_next_review_consumption_target_or_raise(
@@ -911,6 +924,7 @@ def _load_repo_cognitive_task_templates(
 ) -> list[dict[str, object]]:
     # Cognitive task templates are defined by this orchestrator repo.
     # Do not load them from the target repository.
+    _ = (settings, repository, ref)
     from github_agent_orchestrator.server.local_templates import _find_repo_root
 
     root = _find_repo_root()

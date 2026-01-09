@@ -16,7 +16,6 @@ from fastapi import HTTPException
 
 from github_agent_orchestrator.server.config import ServerSettings
 
-
 TOKEN_ACCESS_HINT = (
     "Check ORCHESTRATOR_GITHUB_TOKEN (missing/expired/insufficient scopes) and that it "
     "has access to the repository."

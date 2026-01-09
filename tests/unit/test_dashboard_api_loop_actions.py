@@ -1161,8 +1161,12 @@ def test_loop_merge_endpoint_merges_ready_gap_analysis_pr_and_closes_issue(
     assert resp.status_code == 200
 
 
-def test_ensure_review_consumption_archives_completed_review_when_no_pr(monkeypatch) -> None:
-    """If the last review-consumption issue is closed and has no linked PR, archive the review."""
+def test_ensure_review_consumption_archives_completed_review_when_issue_closed(monkeypatch) -> None:
+    """If the last review-consumption issue is closed, archive the review.
+
+    This prevents repeatedly re-creating review-consumption issues for the same review file in cases
+    where the agent correctly produces no queue artefact.
+    """
 
     import github_agent_orchestrator.server.dashboard_router as dashboard_router
 
@@ -1189,7 +1193,7 @@ def test_ensure_review_consumption_archives_completed_review_when_no_pr(monkeypa
     monkeypatch.setattr(dashboard_router, "_get_default_branch", lambda *_a, **_k: "main")
     monkeypatch.setattr(dashboard_router, "_list_open_issues_raw", lambda *_a, **_k: [])
 
-    # A previous review-consumption issue exists, is closed, and has no linked PR.
+    # A previous review-consumption issue exists and is closed.
     monkeypatch.setattr(dashboard_router, "_search_issue_number_by_body_marker", lambda *_a, **_k: 77)
 
     def fake_get_json(*_a, **kwargs):
@@ -1201,7 +1205,17 @@ def test_ensure_review_consumption_archives_completed_review_when_no_pr(monkeypa
         return {"sha": "sha-existing"}
 
     monkeypatch.setattr(dashboard_router, "_github_get_json", fake_get_json)
-    monkeypatch.setattr(dashboard_router, "_list_issue_timeline_raw", lambda *_a, **_k: [])
+    # Timeline may include a linked PR; we still archive once the issue is closed.
+    monkeypatch.setattr(
+        dashboard_router,
+        "_list_issue_timeline_raw",
+        lambda *_a, **_k: [
+            {
+                "event": "cross-referenced",
+                "source": {"issue": {"number": 5, "pull_request": {}}},
+            }
+        ],
+    )
 
     # Source review files exist.
     def fake_get_repo_text_file(*_a, **kwargs):
@@ -1234,8 +1248,6 @@ def test_ensure_review_consumption_archives_completed_review_when_no_pr(monkeypa
 
     # If archiving occurred, the ensure endpoint should then report there are no remaining reviews.
     # (We only had one review file.)
-    from fastapi import HTTPException
-
     with pytest.raises(HTTPException) as exc:
         dashboard_router._ensure_review_consumption_issue_exists(
             settings=dashboard_router.ServerSettings(),

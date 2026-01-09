@@ -79,7 +79,6 @@ from github_agent_orchestrator.server.dashboard.text_utilities import (
     _utc_now_iso,
 )
 
-
 STAGE_LABEL_DEVELOPMENT_EXECUTION = "2b — Development execution"
 
 

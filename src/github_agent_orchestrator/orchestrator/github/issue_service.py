@@ -712,13 +712,16 @@ class IssueService:
     ) -> PullRequestMergeOutcome | None:
         if not hasattr(pr_details, "merged") or not hasattr(pr_details, "state"):
             return None
-        if bool(getattr(pr_details, "merged")):
+
+        merged = pr_details.merged  # type: ignore[attr-defined]
+        if bool(merged):
             return self._outcome_already_merged(
                 issue_number=issue_number,
                 pull_number=pull_number,
                 delete_branch=delete_branch,
             )
-        state = getattr(pr_details, "state")
+
+        state = pr_details.state  # type: ignore[attr-defined]
         if isinstance(state, str) and state.lower() != "open":
             return self._outcome_not_open(pull_number=pull_number, state=state)
         return None
