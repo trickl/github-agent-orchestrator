@@ -251,9 +251,7 @@ ensure_gap_analysis_issue = router.post("/loop/gap-analysis/ensure")(ensure_gap_
 merge_next_ready_development_pull_request = router.post("/loop/merge")(
     merge_next_ready_development_pull_request
 )
-heal_orphaned_processed_queue_items = router.post("/loop/heal")(
-    heal_orphaned_processed_queue_items
-)
+heal_orphaned_processed_queue_items = router.post("/loop/heal")(heal_orphaned_processed_queue_items)
 
 # Apply router decorator to imported loop status endpoint
 loop_status = router.get("/loop")(loop_status)
@@ -413,9 +411,7 @@ def _delete_repo_file_if_present(
     )
 
 
-def _review_consumption_issue_has_linked_pull_requests(
-    *, timeline: list[dict[str, Any]]
-) -> bool:
+def _review_consumption_issue_has_linked_pull_requests(*, timeline: list[dict[str, Any]]) -> bool:
     """Conservative check: if timeline contains any cross-referenced PR, treat as linked."""
 
     for ev in timeline:
@@ -573,17 +569,14 @@ def _review_consumption_candidate_should_be_archived(
 
     # If we can find a review queue artefact created during the lifetime of this issue (and
     # referring to this review), then work exists and the review must remain active.
-    if _review_consumption_issue_produced_queue_output(
+    return not _review_consumption_issue_produced_queue_output(
         settings=settings,
         repo=repo,
         branch=branch,
         review_path=review_path,
         issue_created_epoch=created_epoch,
         issue_closed_epoch=closed_epoch,
-    ):
-        return False
-
-    return True
+    )
 
 
 def _queue_item_epoch_seconds_from_queue_id(queue_id: str) -> int | None:
@@ -596,14 +589,14 @@ def _queue_item_epoch_seconds_from_queue_id(queue_id: str) -> int | None:
     Returns unix epoch seconds, or None if unknown.
     """
 
-    m = re.match(r"^review-(\d{9,12})(?:\b|-)" , queue_id)
+    m = re.match(r"^review-(\d{9,12})(?:\b|-)", queue_id)
     if m is not None:
         try:
             return int(m.group(1))
         except Exception:
             return None
 
-    m = re.match(r"^review-(\d{4}-\d{2}-\d{2})(?:\b|-)" , queue_id, flags=re.IGNORECASE)
+    m = re.match(r"^review-(\d{4}-\d{2}-\d{2})(?:\b|-)", queue_id, flags=re.IGNORECASE)
     if m is None:
         return None
     try:
@@ -629,10 +622,10 @@ def _review_consumption_issue_produced_queue_output(
       strictly enforce that the artefact includes a machine-parseable `Source review:` line.
     - Review filenames are not guaranteed to follow `review-YYYY-MM-DD.md`.
 
-    Therefore we treat either of these as evidence of output:
-    1) A `review-*.md` queue artefact whose queue-id timestamp falls within the issue lifetime.
-       (This is the most reliable signal when queue ids include epoch seconds.)
-    2) Fallback: queue content explicitly references `review_path` via parsed `Source review:`.
+    Therefore we treat this as evidence of output:
+    - A `review-*.md` queue artefact (pending/processed/complete) that plausibly falls within the
+      issue lifetime (when a timestamp is available), and whose content indicates it was sourced
+      from `review_path` (best-effort parse of the queue file content).
     """
 
     queue_dirs = (
@@ -658,9 +651,22 @@ def _review_consumption_issue_produced_queue_output(
                 candidates.append(p)
 
     # If we have timestamps, narrow to items plausibly created during the issue run.
-    def in_window(queue_id: str) -> tuple[bool, int | None]:
+    def in_window(*, queue_path: str, queue_id: str) -> tuple[bool, int | None]:
         ts = _queue_item_epoch_seconds_from_queue_id(queue_id)
         if ts is None:
+            # We cannot correlate by time. If the issue has known timestamps, only treat
+            # non-timestamped items as evidence when they're still in pending/processed.
+            #
+            # Rationale: completed/ is a long-lived archive; content matches there are prone
+            # to false positives (historical outputs referencing the same review).
+            if issue_created_epoch is not None or issue_closed_epoch is not None:
+                norm = queue_path.replace("\\", "/")
+                if (
+                    "/planning/issue_queue/pending/" in f"/{norm}"
+                    or "/planning/issue_queue/processed/" in f"/{norm}"
+                ):
+                    return True, None
+                return False, None
             return True, None
         if issue_created_epoch is not None and ts < issue_created_epoch - 60:
             return False, ts
@@ -670,15 +676,9 @@ def _review_consumption_issue_produced_queue_output(
 
     for p in sorted(set(candidates)):
         queue_id = Path(p).name
-        ok, ts = in_window(queue_id)
+        ok, ts = in_window(queue_path=p, queue_id=queue_id)
         if not ok:
             continue
-
-        # Primary signal: if the queue id encodes time and it falls within the issue window,
-        # we consider this evidence that the review-consumption issue produced output.
-        # This avoids relying on the LLM-authored queue file structure.
-        if ts is not None and issue_created_epoch is not None:
-            return True
 
         try:
             content, _sha = _get_repo_text_file(
@@ -705,6 +705,7 @@ def _select_next_review_consumption_target_or_raise(
     repo: str,
     branch: str,
 ) -> tuple[str, str]:
+    attempted_archives: set[str] = set()
     while True:
         review_path = _pick_next_review_file(settings=settings, repo=repo, branch=branch)
         if review_path is None:
@@ -723,6 +724,17 @@ def _select_next_review_consumption_target_or_raise(
             review_path=review_path,
         ):
             return review_path, _review_actions_path_for_review_path(review_path)
+
+        # Avoid infinite loops if archiving doesn't change which review file is considered active.
+        if review_path in attempted_archives:
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    "Review archiving made no progress; refusing to loop indefinitely. "
+                    f"review_path={review_path}"
+                ),
+            )
+        attempted_archives.add(review_path)
 
         _archive_review_and_actions_if_present(
             settings=settings,
@@ -981,7 +993,10 @@ def _scan_review_paths_in_queue_lines(queue_content: str) -> tuple[str | None, s
                 expecting_review_path = True
                 expecting_actions_path = False
                 continue
-            if actions_path is None and heading in {"review actions", "review actions & completions"}:
+            if actions_path is None and heading in {
+                "review actions",
+                "review actions & completions",
+            }:
                 expecting_actions_path = True
                 expecting_review_path = False
                 continue
@@ -1307,7 +1322,9 @@ def _issue_row_from_github_item(
         "typePath": "github/issues",
         "status": st,
         "ageSeconds": age_seconds,
-        "githubIssueUrl": (str(html_url) if isinstance(html_url, str) else _make_github_issue_url(repo, num)),
+        "githubIssueUrl": (
+            str(html_url) if isinstance(html_url, str) else _make_github_issue_url(repo, num)
+        ),
         "prUrl": None,
         "lastUpdatedIso": (str(updated_at) if isinstance(updated_at, str) else _utc_now_iso()),
         "isActive": False,
@@ -1338,10 +1355,7 @@ def list_issues(request: Request, status: str = Query(default="open")) -> list[d
     now = datetime.now(tz=UTC)
     mapped = [
         r
-        for r in (
-            _issue_row_from_github_item(repo=repo, it=it, now=now)
-            for it in raw
-        )
+        for r in (_issue_row_from_github_item(repo=repo, it=it, now=now) for it in raw)
         if r is not None
     ]
 

@@ -115,17 +115,23 @@ def test_loop_promote_endpoint_promotes_one_file(monkeypatch, tmp_path: Path) ->
 
     # Merge completion moves the processed queue file to complete/ and deletes the processed file.
     # Those helpers live in github_operations (imported into loop_actions), so patch them here.
-    monkeypatch.setattr(loop_actions, "_ensure_repo_file_present_in_complete", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        loop_actions, "_ensure_repo_file_present_in_complete", lambda *_a, **_k: None
+    )
     monkeypatch.setattr(loop_actions, "_delete_repo_file_if_present", lambda *_a, **_k: None)
 
     # Merge completion moves the processed queue file to complete/ and deletes it.
     # These helpers are implemented in github_operations and imported into loop_actions.
-    monkeypatch.setattr(loop_actions, "_ensure_repo_file_present_in_complete", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        loop_actions, "_ensure_repo_file_present_in_complete", lambda *_a, **_k: None
+    )
     monkeypatch.setattr(loop_actions, "_delete_repo_file_if_present", lambda *_a, **_k: None)
 
     # Merge completion moves the processed queue file to complete/ and deletes the processed file.
     # Those operations are implemented in github_operations and imported into loop_actions.
-    monkeypatch.setattr(loop_actions, "_ensure_repo_file_present_in_complete", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        loop_actions, "_ensure_repo_file_present_in_complete", lambda *_a, **_k: None
+    )
     monkeypatch.setattr(loop_actions, "_delete_repo_file_if_present", lambda *_a, **_k: None)
     monkeypatch.setattr(dashboard_router, "_github_put_json", lambda *_a, **_k: (201, {}))
     monkeypatch.setattr(loop_actions, "_github_put_json", lambda *_a, **_k: (201, {}))
@@ -135,7 +141,9 @@ def test_loop_promote_endpoint_promotes_one_file(monkeypatch, tmp_path: Path) ->
     # The promote path moves the queue file from pending -> processed.
     # Those operations live in github_operations and are imported into loop_actions;
     # patch them here to avoid accidental real GitHub writes.
-    monkeypatch.setattr(loop_actions, "_ensure_repo_file_present_in_processed", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        loop_actions, "_ensure_repo_file_present_in_processed", lambda *_a, **_k: None
+    )
     monkeypatch.setattr(loop_actions, "_delete_repo_file_if_present", lambda *_a, **_k: None)
 
     client = TestClient(create_app())
@@ -156,7 +164,9 @@ def test_load_gap_analysis_template_is_local_not_github(monkeypatch) -> None:
     monkeypatch.setattr(
         loop_actions,
         "_get_repo_text_file",
-        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("Should not call GitHub for templates")),
+        lambda *_a, **_k: (_ for _ in ()).throw(
+            AssertionError("Should not call GitHub for templates")
+        ),
     )
 
     content = loop_actions._load_gap_analysis_template_or_raise(
@@ -438,9 +448,7 @@ def test_loop_merge_endpoint_merges_one_ready_pr_and_creates_capability_issue(
     monkeypatch.setattr(
         dashboard_router, "_search_issue_number_by_body_marker", lambda *_a, **_k: None
     )
-    monkeypatch.setattr(
-        loop_actions, "_search_issue_number_by_body_marker", lambda *_a, **_k: None
-    )
+    monkeypatch.setattr(loop_actions, "_search_issue_number_by_body_marker", lambda *_a, **_k: None)
     monkeypatch.setattr(dashboard_router, "_github_get_list", lambda *_a, **_k: [])
     monkeypatch.setattr(loop_actions, "_github_get_list", lambda *_a, **_k: [])
 
@@ -528,7 +536,9 @@ def test_loop_merge_endpoint_merges_one_ready_pr_and_creates_capability_issue(
 
     # Merge completion moves the processed queue file to complete/ and deletes the processed file.
     # These helpers are implemented in github_operations and imported into loop_actions.
-    monkeypatch.setattr(loop_actions, "_ensure_repo_file_present_in_complete", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        loop_actions, "_ensure_repo_file_present_in_complete", lambda *_a, **_k: None
+    )
     monkeypatch.setattr(loop_actions, "_delete_repo_file_if_present", lambda *_a, **_k: None)
 
     client = TestClient(create_app())
@@ -582,7 +592,9 @@ def test_loop_heal_endpoint_moves_orphaned_processed_to_complete_and_ensures_fol
     monkeypatch.setattr(loop_actions, "_list_open_issues_raw", lambda *_a, **_k: [])
 
     # Find the historical issue by queue marker.
-    monkeypatch.setattr(dashboard_router, "_search_issue_number_by_queue_marker", lambda *_a, **_k: 101)
+    monkeypatch.setattr(
+        dashboard_router, "_search_issue_number_by_queue_marker", lambda *_a, **_k: 101
+    )
     monkeypatch.setattr(loop_actions, "_search_issue_number_by_queue_marker", lambda *_a, **_k: 101)
 
     # Issue is closed.
@@ -636,7 +648,9 @@ def test_loop_heal_endpoint_moves_orphaned_processed_to_complete_and_ensures_fol
     )
 
     # Follow-up issue idempotency search should yield none.
-    monkeypatch.setattr(dashboard_router, "_search_issue_number_by_body_marker", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        dashboard_router, "_search_issue_number_by_body_marker", lambda *_a, **_k: None
+    )
     monkeypatch.setattr(loop_actions, "_search_issue_number_by_body_marker", lambda *_a, **_k: None)
 
     # Avoid label creation side effects.
@@ -644,7 +658,9 @@ def test_loop_heal_endpoint_moves_orphaned_processed_to_complete_and_ensures_fol
     monkeypatch.setattr(loop_actions, "_ensure_repo_label_exists", lambda *_a, **_k: None)
 
     # Follow-up issue body needs discussion markdown.
-    monkeypatch.setattr(loop_actions, "_get_pull_request_discussion_markdown", lambda *_a, **_k: "discussion")
+    monkeypatch.setattr(
+        loop_actions, "_get_pull_request_discussion_markdown", lambda *_a, **_k: "discussion"
+    )
 
     # Creating follow-up issue and assignment.
     def fake_post_json(*_a, **kwargs):
@@ -882,7 +898,9 @@ def test_promote_next_unpromoted_capability_queue_item_promotes_one_file(
     monkeypatch.setattr(loop_actions, "_github_delete_json", lambda *_a, **_k: (204, None))
 
     # Capability promotion also writes processed queue files and deletes the pending file.
-    monkeypatch.setattr(loop_actions, "_ensure_repo_file_present_in_processed", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        loop_actions, "_ensure_repo_file_present_in_processed", lambda *_a, **_k: None
+    )
     monkeypatch.setattr(loop_actions, "_delete_repo_file_if_present", lambda *_a, **_k: None)
 
     out = dashboard_router._promote_next_unpromoted_capability_queue_item(
@@ -1200,7 +1218,9 @@ def test_ensure_review_consumption_archives_completed_review_when_issue_closed(m
     monkeypatch.setattr(dashboard_router, "_ensure_repo_label_exists", lambda *_a, **_k: None)
 
     # A previous review-consumption issue exists and is closed.
-    monkeypatch.setattr(dashboard_router, "_search_issue_number_by_body_marker", lambda *_a, **_k: 77)
+    monkeypatch.setattr(
+        dashboard_router, "_search_issue_number_by_body_marker", lambda *_a, **_k: 77
+    )
 
     def fake_get_json(*_a, **kwargs):
         url = str(kwargs.get("url") or "")
@@ -1264,7 +1284,10 @@ def test_ensure_review_consumption_archives_completed_review_when_issue_closed(m
     assert "No uncompleted review files" in str(exc.value.detail)
 
     # Review and actions were archived to planning/reviews/completed/ and removed from original paths.
-    assert any("contents/planning/reviews/completed/review-2026-01-05-refactor-large-files.md" in u for u in written)
+    assert any(
+        "contents/planning/reviews/completed/review-2026-01-05-refactor-large-files.md" in u
+        for u in written
+    )
     assert any(
         "contents/planning/reviews/completed/review-2026-01-05-refactor-large-files.actions.md" in u
         for u in written
@@ -1273,7 +1296,9 @@ def test_ensure_review_consumption_archives_completed_review_when_issue_closed(m
     assert any(f"contents/{actions_path}" in u for u in deleted)
 
 
-def test_ensure_review_consumption_does_not_archive_when_closed_issue_produced_queue(monkeypatch) -> None:
+def test_ensure_review_consumption_does_not_archive_when_closed_issue_produced_queue(
+    monkeypatch,
+) -> None:
     """A closed review-consumption issue does not imply the review is complete.
 
     If the closed issue produced a review queue artefact (i.e. it generated work), the review
@@ -1374,7 +1399,9 @@ def test_ensure_review_consumption_does_not_archive_when_closed_issue_produced_q
     assert created_issues
 
 
-def test_ensure_review_consumption_does_not_archive_when_queue_has_source_review_section(monkeypatch) -> None:
+def test_ensure_review_consumption_does_not_archive_when_queue_has_source_review_section(
+    monkeypatch,
+) -> None:
     """Queue artefacts may encode source review as a Markdown section.
 
     breadboard-lab style queue items often use:
@@ -1394,13 +1421,16 @@ def test_ensure_review_consumption_does_not_archive_when_queue_has_source_review
 
     review_path = "planning/reviews/review-2026-01-05-refactor-large-files.md"
     actions_path = "planning/reviews/review-2026-01-05-refactor-large-files.actions.md"
-    queue_path = "planning/issue_queue/complete/review-pixijs-removal-milestone-0-react-setup.md"
+    # When a review-consumption run has produced output but it has not yet been promoted/merged,
+    # the queue artefact will still be in pending/processed. Those items are strong evidence of
+    # current work and must prevent the review being archived.
+    queue_path = "planning/issue_queue/pending/review-pixijs-removal-milestone-0-react-setup.md"
 
     def fake_list_repo_md(*_a, **_k):
         dir_path = str(_k.get("dir_path") or "")
         if dir_path.rstrip("/") == "planning/reviews":
             return [review_path, actions_path]
-        if dir_path.rstrip("/") == "planning/issue_queue/complete":
+        if dir_path.rstrip("/") == "planning/issue_queue/pending":
             return [queue_path]
         if "planning/issue_queue/" in dir_path:
             return []
@@ -1438,10 +1468,7 @@ def test_ensure_review_consumption_does_not_archive_when_queue_has_source_review
         path = kwargs.get("path")
         if path == queue_path:
             return (
-                "Task title\n\n"
-                "## Source Review\n\n"
-                f"`{review_path}`\n\n"
-                "Details...\n",
+                "Task title\n\n" "## Source Review\n\n" f"`{review_path}`\n\n" "Details...\n",
                 "sha-queue",
             )
         if path == review_path:
@@ -1477,3 +1504,52 @@ def test_ensure_review_consumption_does_not_archive_when_queue_has_source_review
     assert out.get("created") is True
     assert out.get("issueNumber") == 123
     assert created_issues
+
+
+def test_review_consumption_ignores_non_timestamped_complete_when_issue_has_timestamps(
+    monkeypatch,
+) -> None:
+    """Non-timestamped complete/ artefacts are too ambiguous to correlate.
+
+    If we have created/closed timestamps for the issue, and a matching review queue artefact lives
+    only in complete/ without any parseable timestamp in its filename, treating it as evidence of
+    output is prone to false positives (historical outputs referencing the same source review).
+    """
+
+    import github_agent_orchestrator.server.dashboard_router as dashboard_router
+
+    review_path = "planning/reviews/review-2026-01-05-refactor-large-files.md"
+    queue_path = "planning/issue_queue/complete/review-pixijs-removal-milestone-0-react-setup.md"
+
+    monkeypatch.setattr(
+        dashboard_router,
+        "_list_repo_markdown_files_under",
+        lambda *_a, **kwargs: (
+            [queue_path]
+            if str(kwargs.get("dir_path") or "").rstrip("/") == "planning/issue_queue/complete"
+            else []
+        ),
+    )
+
+    def fake_get_repo_text_file(*_a, **kwargs):
+        assert kwargs.get("path") == queue_path
+        return (
+            "Task title\n\n## Source Review\n\n" f"`{review_path}`\n\nDetails...\n",
+            "sha-queue",
+        )
+
+    monkeypatch.setattr(dashboard_router, "_get_repo_text_file", fake_get_repo_text_file)
+
+    created_epoch = int(dashboard_router._dt_from_iso("2026-01-09T00:00:10Z").timestamp())
+    closed_epoch = int(dashboard_router._dt_from_iso("2026-01-09T00:12:00Z").timestamp())
+
+    produced = dashboard_router._review_consumption_issue_produced_queue_output(
+        settings=dashboard_router.ServerSettings(),
+        repo="acme/repo",
+        branch="main",
+        review_path=review_path,
+        issue_created_epoch=created_epoch,
+        issue_closed_epoch=closed_epoch,
+    )
+
+    assert produced is False
