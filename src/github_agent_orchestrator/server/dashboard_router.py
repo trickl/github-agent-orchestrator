@@ -624,8 +624,15 @@ def _review_consumption_issue_produced_queue_output(
 ) -> bool:
     """Return True if there is evidence this issue produced review work.
 
-    We consider it "produced output" if we can find a `review-*.md` queue artefact created
-    during the issue's lifetime whose content references the given review path.
+    Why this is intentionally heuristic:
+    - The review-consumption template *asks* the agent to produce a queue artefact, but does not
+      strictly enforce that the artefact includes a machine-parseable `Source review:` line.
+    - Review filenames are not guaranteed to follow `review-YYYY-MM-DD.md`.
+
+    Therefore we treat either of these as evidence of output:
+    1) A `review-*.md` queue artefact whose queue-id timestamp falls within the issue lifetime.
+       (This is the most reliable signal when queue ids include epoch seconds.)
+    2) Fallback: queue content explicitly references `review_path` via parsed `Source review:`.
     """
 
     queue_dirs = (
@@ -651,20 +658,27 @@ def _review_consumption_issue_produced_queue_output(
                 candidates.append(p)
 
     # If we have timestamps, narrow to items plausibly created during the issue run.
-    def in_window(queue_id: str) -> bool:
+    def in_window(queue_id: str) -> tuple[bool, int | None]:
         ts = _queue_item_epoch_seconds_from_queue_id(queue_id)
         if ts is None:
-            return True
+            return True, None
         if issue_created_epoch is not None and ts < issue_created_epoch - 60:
-            return False
+            return False, ts
         if issue_closed_epoch is not None and ts > issue_closed_epoch + 3600:
-            return False
-        return True
+            return False, ts
+        return True, ts
 
     for p in sorted(set(candidates)):
         queue_id = Path(p).name
-        if not in_window(queue_id):
+        ok, ts = in_window(queue_id)
+        if not ok:
             continue
+
+        # Primary signal: if the queue id encodes time and it falls within the issue window,
+        # we consider this evidence that the review-consumption issue produced output.
+        # This avoids relying on the LLM-authored queue file structure.
+        if ts is not None and issue_created_epoch is not None:
+            return True
 
         try:
             content, _sha = _get_repo_text_file(
