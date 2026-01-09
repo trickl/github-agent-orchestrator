@@ -119,6 +119,8 @@ def _load_gap_analysis_template_or_raise(
 ) -> str:
     """Load the gap analysis issue template from the local repository."""
 
+    _ = (settings, repo, branch)
+
     attempts: list[str] = []
     for template_path in _GAP_ANALYSIS_TEMPLATE_PATHS:
         try:

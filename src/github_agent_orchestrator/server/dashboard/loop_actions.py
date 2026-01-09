@@ -280,6 +280,8 @@ def _load_gap_analysis_template_or_raise(
     of orchestration prompts.
     """
 
+    _ = (settings, repo, branch)
+
     attempts: list[str] = []
     for template_path in _GAP_ANALYSIS_TEMPLATE_PATHS:
         try:
@@ -304,6 +306,8 @@ def _load_review_actions_after_merge_template_or_raise(
     *, settings: ServerSettings, repo: str, branch: str
 ) -> str:
     """Load the review-actions-after-merge issue template from the local repository."""
+
+    _ = (settings, repo, branch)
 
     attempts: list[str] = []
     for template_path in _REVIEW_ACTIONS_AFTER_MERGE_TEMPLATE_PATHS:
@@ -398,10 +402,7 @@ def _issue_is_assigned_to_login(issue: dict[str, Any], *, login: str) -> bool:
     assignees = issue.get("assignees")
     if not isinstance(assignees, list):
         return False
-    for a in assignees:
-        if isinstance(a, dict) and a.get("login") == login:
-            return True
-    return False
+    return any(isinstance(a, dict) and a.get("login") == login for a in assignees)
 
 
 def _gap_analysis_issue_result_from_existing(
@@ -1090,7 +1091,7 @@ def _try_merge_next_ready_labeled_issue_pull_request(
         settings=settings,
         repo=repo,
         issue_nums=issue_nums,
-        require_review_requested=False,
+        require_review_requested=True,
     )
     if selected is None:
         return None
@@ -1195,6 +1196,7 @@ def _try_merge_next_ready_gap_analysis_pull_request(
 
     pr_number = _pr_number_or_502(selected_pr_data)
     _require_review_requested_or_409(pr_number=pr_number, review_requested=review_requested)
+    _require_review_requested_or_409(pr_number=pr_number, review_requested=review_requested)
 
     selected_pr_data = _ensure_pr_not_draft_or_409(
         settings=settings,
@@ -1275,7 +1277,7 @@ def _try_merge_next_ready_review_consumption_pull_request(
         settings=settings,
         repo=repo,
         issue_nums=issue_nums,
-        require_review_requested=True,
+        require_review_requested=False,
     )
     if selected is None:
         return None
@@ -1283,7 +1285,6 @@ def _try_merge_next_ready_review_consumption_pull_request(
     selected_issue_num, selected_pr_data, review_requested = selected
 
     pr_number = _pr_number_or_502(selected_pr_data)
-    _require_review_requested_or_409(pr_number=pr_number, review_requested=review_requested)
 
     selected_pr_data = _ensure_pr_not_draft_or_409(
         settings=settings,
