@@ -1372,3 +1372,108 @@ def test_ensure_review_consumption_does_not_archive_when_closed_issue_produced_q
     assert out.get("created") is True
     assert out.get("issueNumber") == 123
     assert created_issues
+
+
+def test_ensure_review_consumption_does_not_archive_when_queue_has_source_review_section(monkeypatch) -> None:
+    """Queue artefacts may encode source review as a Markdown section.
+
+    breadboard-lab style queue items often use:
+
+      ## Source Review
+
+      `planning/reviews/review-...md`
+
+    rather than a single-line "Source review:" field. We must still detect this as output,
+    otherwise Step 1a will incorrectly archive an in-progress review.
+    """
+
+    import github_agent_orchestrator.server.dashboard_router as dashboard_router
+
+    monkeypatch.setenv("ORCHESTRATOR_GITHUB_TOKEN", "ghp_test")
+    monkeypatch.setenv("ORCHESTRATOR_DEFAULT_REPO", "acme/repo")
+
+    review_path = "planning/reviews/review-2026-01-05-refactor-large-files.md"
+    actions_path = "planning/reviews/review-2026-01-05-refactor-large-files.actions.md"
+    queue_path = "planning/issue_queue/complete/review-pixijs-removal-milestone-0-react-setup.md"
+
+    def fake_list_repo_md(*_a, **_k):
+        dir_path = str(_k.get("dir_path") or "")
+        if dir_path.rstrip("/") == "planning/reviews":
+            return [review_path, actions_path]
+        if dir_path.rstrip("/") == "planning/issue_queue/complete":
+            return [queue_path]
+        if "planning/issue_queue/" in dir_path:
+            return []
+        return []
+
+    monkeypatch.setattr(dashboard_router, "_list_repo_markdown_files_under", fake_list_repo_md)
+    monkeypatch.setattr(dashboard_router, "_get_default_branch", lambda *_a, **_k: "main")
+    monkeypatch.setattr(dashboard_router, "_list_open_issues_raw", lambda *_a, **_k: [])
+    monkeypatch.setattr(dashboard_router, "_ensure_repo_label_exists", lambda *_a, **_k: None)
+
+    def fake_search(*_a, **kwargs):
+        if str(kwargs.get("state") or "") == "closed":
+            return 77
+        return None
+
+    monkeypatch.setattr(dashboard_router, "_search_issue_number_by_body_marker", fake_search)
+
+    def fake_get_json(*_a, **kwargs):
+        url = str(kwargs.get("url") or "")
+        if url.endswith("/issues/77"):
+            return {
+                "number": 77,
+                "state": "closed",
+                "title": "Review consumption",
+                "created_at": "2026-01-09T00:00:10Z",
+                "closed_at": "2026-01-09T00:12:00Z",
+            }
+        if url.endswith("/issues/123/assignees"):
+            return {"assignees": [{"login": "copilot"}]}
+        return {"sha": "sha-existing"}
+
+    monkeypatch.setattr(dashboard_router, "_github_get_json", fake_get_json)
+
+    def fake_get_repo_text_file(*_a, **kwargs):
+        path = kwargs.get("path")
+        if path == queue_path:
+            return (
+                "Task title\n\n"
+                "## Source Review\n\n"
+                f"`{review_path}`\n\n"
+                "Details...\n",
+                "sha-queue",
+            )
+        if path == review_path:
+            return ("# Review\n\n- Item\n", "sha-review")
+        if path == actions_path:
+            return ("# Actions\n\n- Done\n", "sha-actions")
+        raise AssertionError(f"Unexpected get_repo_text_file path: {path}")
+
+    monkeypatch.setattr(dashboard_router, "_get_repo_text_file", fake_get_repo_text_file)
+
+    created_issues: list[dict[str, object]] = []
+
+    def fake_post_json(*_a, **kwargs):
+        url = str(kwargs.get("url") or "")
+        if url.endswith("/issues"):
+            created_issues.append(kwargs.get("payload") or {})
+            return {"number": 123}
+        if url.endswith("/issues/123/assignees"):
+            return {"assignees": [{"login": "copilot"}]}
+        raise AssertionError(f"Unexpected POST url: {url}")
+
+    monkeypatch.setattr(dashboard_router, "_github_post_json", fake_post_json)
+
+    # No archiving should occur.
+    monkeypatch.setattr(dashboard_router, "_github_put_json", lambda *_a, **_k: (201, {}))
+    monkeypatch.setattr(dashboard_router, "_github_delete_json", lambda *_a, **_k: (200, {}))
+
+    out = dashboard_router._ensure_review_consumption_issue_exists(
+        settings=dashboard_router.ServerSettings(),
+        repo="acme/repo",
+    )
+
+    assert out.get("created") is True
+    assert out.get("issueNumber") == 123
+    assert created_issues

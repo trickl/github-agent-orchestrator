@@ -961,8 +961,45 @@ def _scan_review_paths_in_queue_lines(queue_content: str) -> tuple[str | None, s
     review_path: str | None = None
     actions_path: str | None = None
 
+    # Some queue artefacts express metadata as sections rather than as a single "Source review:" line.
+    # Example:
+    #   ## Source Review
+    #
+    #   `planning/reviews/review-...md`
+    expecting_review_path = False
+    expecting_actions_path = False
+
     for raw in (queue_content or "").splitlines():
         line = raw.strip("\n")
+
+        stripped = line.strip()
+
+        # Section-heading based metadata (Markdown headings).
+        if stripped.startswith("#"):
+            heading = stripped.lstrip("#").strip().lower()
+            if review_path is None and heading == "source review":
+                expecting_review_path = True
+                expecting_actions_path = False
+                continue
+            if actions_path is None and heading in {"review actions", "review actions & completions"}:
+                expecting_actions_path = True
+                expecting_review_path = False
+                continue
+
+        # Capture the first non-empty line after a matching heading.
+        if expecting_review_path and stripped:
+            if not stripped.lower().startswith("permalink:"):
+                candidate = _normalize_repo_path_candidate(stripped)
+                if candidate:
+                    review_path = candidate
+            expecting_review_path = False
+
+        if expecting_actions_path and stripped:
+            if not stripped.lower().startswith("permalink:"):
+                candidate = _normalize_repo_path_candidate(stripped)
+                if candidate:
+                    actions_path = candidate
+            expecting_actions_path = False
 
         if review_path is None:
             candidate = _review_path_from_queue_line(line)
