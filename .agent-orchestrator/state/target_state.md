@@ -20,4 +20,3 @@ hold steady over time.
 ## Related documents
 
 - Current state: `/.agent-orchestrator/state/current_state.md`
-- Goal: `/.agent-orchestrator/vision/goal.md`

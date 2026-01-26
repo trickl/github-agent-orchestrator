@@ -57,11 +57,8 @@ test('Issues page: active issue row marked', async ({ page }) => {
   await expect(activeRow).toHaveCount(1);
 });
 
-test('Docs page renders goal, target, and current state', async ({ page }) => {
+test('Docs page renders target and current state', async ({ page }) => {
   await page.goto('/docs');
-  await expect(page.getByText('.agent-orchestrator/vision/goal.md')).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Goal', level: 1 })).toBeVisible();
-
   await page.getByRole('tab', { name: 'Target' }).click();
   await expect(page.getByText('.agent-orchestrator/state/target_state.md')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Target State', level: 1 })).toBeVisible();

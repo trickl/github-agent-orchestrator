@@ -10,7 +10,7 @@ This project’s core value proposition is a **long-horizon software engineering
 
 - Operates over **hours, not minutes** (target: ~$12$ hours unattended).
 - Executes **multi-PR, multi-issue, multi-review** workstreams.
-- **Continuously plans, executes, evaluates, and realigns** against a stated goal.
+- **Continuously plans, executes, evaluates, and realigns** against the target state.
 
 It uses GitHub as the arena in which reasoning is **materialised**:
 
@@ -41,8 +41,6 @@ These folders are the contract between the user, Copilot PR work, and the orches
 
 ```
 /.agent-orchestrator
-  /vision
-    goal.md
   /state
     target_state.md
     current_state.md
@@ -59,7 +57,7 @@ The `/.agent-orchestrator/issue_queue` boundary is **the heart of the system**.
 
 1) **Gap Analysis (Plan → Build)**
 
-- Purpose: compare `target_state.md` vs `current_state.md` (and `goal.md`) and identify the next development step.
+- Purpose: compare `target_state.md` vs `current_state.md` and identify the next development step.
 - Output: exactly one file in `/.agent-orchestrator/issue_queue/pending/dev-<timestamp>.md`.
 - Constraints: **no code changes**, **no GitHub issue creation**, output is a **candidate task**, not a fix.
 
@@ -98,7 +96,6 @@ If you violate this, you reintroduce hidden intelligence and lose debuggability.
 
 The user owns two artefacts:
 
-- `/.agent-orchestrator/vision/goal.md`
 - `/.agent-orchestrator/state/target_state.md`
 
 Everything else is derived.

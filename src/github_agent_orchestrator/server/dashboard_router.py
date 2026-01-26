@@ -1296,29 +1296,6 @@ def health(request: Request) -> dict[str, object]:
     }
 
 
-@router.get("/docs/goal")
-def doc_goal(request: Request) -> dict[str, object]:
-    settings = _settings(request)
-    repo = _active_repo(request, settings)
-    ref = _active_ref(request)
-    content, sha = _get_repo_text_file(
-        settings,
-        repository=repo,
-        path=".agent-orchestrator/vision/goal.md",
-        ref=ref,
-    )
-    return {
-        "key": "goal",
-        "title": "Goal",
-        "path": ".agent-orchestrator/vision/goal.md",
-        "lastUpdatedIso": _utc_now_iso(),
-        "sha": sha,
-        "repo": repo,
-        "ref": (ref or None),
-        "content": content,
-    }
-
-
 @router.get("/docs/target-state")
 def doc_target_state(request: Request) -> dict[str, object]:
     settings = _settings(request)

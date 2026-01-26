@@ -102,7 +102,7 @@ There is **no growing prompt comtext**.
 
 ```mermaid
 flowchart TD
-    Goal["Target State<br/>target_state.md"]
+    Target["Target State<br/>target_state.md"]
     Cap["Current State<br/>current_state.md"]
 
     Gap["Gap Analysis<br/>(bounded context)"]
@@ -114,7 +114,7 @@ flowchart TD
 
     Update["Update Current State<br/>current_state.md"]
 
-    Goal --> Gap
+    Target --> Gap
     Cap --> Gap
     Gap --> Queue
     Queue --> Issue
@@ -134,8 +134,6 @@ The entire loop is driven by a small, explicit set of Git-tracked artefacts:
 
 ```text
 /.agent-orchestrator
-    /vision
-        goal.md
     /state
         target_state.md
         current_state.md
@@ -204,7 +202,6 @@ It runs linting, formatting checks, type checking, and tests.
 The user owns two artefacts:
 
 ```text
-/.agent-orchestrator/vision/goal.md
 /.agent-orchestrator/state/target_state.md
 ```
 

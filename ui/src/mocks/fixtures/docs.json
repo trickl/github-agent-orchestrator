@@ -1,11 +1,4 @@
 {
-  "goal": {
-    "key": "goal",
-    "title": "Goal",
-    "path": ".agent-orchestrator/vision/goal.md",
-    "lastUpdatedIso": "2025-12-01T09:00:00Z",
-    "content": "# Goal\n\nBuild a transparent, debuggable orchestrator loop driven by planning artefacts.\n"
-  },
   "targetState": {
     "key": "targetState",
     "title": "Target",

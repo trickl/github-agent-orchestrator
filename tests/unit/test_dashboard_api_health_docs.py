@@ -24,8 +24,6 @@ def test_dashboard_health_and_docs(monkeypatch, tmp_path: Path) -> None:
 
     def fake_get_repo_text_file(*_args, **kwargs):
         path = kwargs.get("path")
-        if path == ".agent-orchestrator/vision/goal.md":
-            return "# Goal\n\nShip it.\n", "sha-goal"
         if path == ".agent-orchestrator/state/target_state.md":
             return "# Target State\n\n- A\n", "sha-target"
         if path == ".agent-orchestrator/state/current_state.md":
@@ -57,12 +55,6 @@ def test_dashboard_health_and_docs(monkeypatch, tmp_path: Path) -> None:
     assert health["ok"] is True
     assert "version" in health
     assert health["repoName"] == "acme/repo"
-
-    goal = client.get("/api/docs/goal").json()
-    assert goal["key"] == "goal"
-    assert goal["title"] == "Goal"
-    assert goal["path"].endswith(".agent-orchestrator/vision/goal.md")
-    assert "Ship it" in goal["content"]
 
     target_state = client.get("/api/docs/target-state").json()
     assert target_state["key"] == "targetState"

@@ -22,7 +22,6 @@ It is valid—and expected—for this task to conclude that **no further work is
 ---
 
 ### Inputs
-- `/.agent-orchestrator/vision/goal.md`
 - `/.agent-orchestrator/state/target_state.md`
 - `/.agent-orchestrator/state/current_state.md`
 - Any other relevant planning or architectural documents
@@ -34,13 +33,13 @@ Compare the **explicit requirements, assumptions, and operating expectations** e
 
 In particular, assess whether:
 
-- Every required capability described in the goal exists in the system capabilities
-- The system can operate end-to-end as described in the goal
+- Every required capability described in the target state exists in the system capabilities
+- The system can operate end-to-end as described in the target state
 - Any required functionality is missing or incomplete
-- Any stated behaviour in the goal is contradicted or unsupported by current capabilities
+- Any stated behaviour in the target state is contradicted or unsupported by current capabilities
 
-Ignore speculative, optional, or “nice-to-have” ideas unless they are explicitly required by the goal.
-Where the goal specifies an incremental development approach, choose the next development item
+Ignore speculative, optional, or “nice-to-have” ideas unless they are explicitly required by the target state.
+Where the target state specifies an incremental development approach, choose the next development item
 according to the current system capabilities.
 
 ---
@@ -48,7 +47,7 @@ according to the current system capabilities.
 ### Completion Check (Mandatory)
 Before proposing any task, answer the following question:
 
-> **Does the current system, as described in `current_state.md`, fully and adequately satisfy the target state defined in `target_state.md` (and the goal)?**
+> **Does the current system, as described in `current_state.md`, fully and adequately satisfy the target state defined in `target_state.md`?**
 
 - If **YES**:
   - **Do not create any file**

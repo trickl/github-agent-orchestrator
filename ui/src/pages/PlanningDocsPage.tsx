@@ -8,12 +8,11 @@ import { LoadingState } from '../components/LoadingState';
 import type { PlanningDoc } from '../features/planning/planningTypes';
 import { DocViewer } from '../features/planning/DocViewer';
 
-type TabKey = 'goal' | 'targetState' | 'currentState';
+type TabKey = 'targetState' | 'currentState';
 
 export function PlanningDocsPage(): React.JSX.Element {
-  const [tab, setTab] = React.useState<TabKey>('goal');
+  const [tab, setTab] = React.useState<TabKey>('targetState');
 
-  const goal = useApiResource(() => apiFetch<PlanningDoc>(endpoints.docGoal()), []);
   const targetState = useApiResource(() => apiFetch<PlanningDoc>(endpoints.docTargetState()), []);
   const currentState = useApiResource(
     () =>
@@ -31,7 +30,7 @@ export function PlanningDocsPage(): React.JSX.Element {
     []
   );
 
-  const selected = tab === 'goal' ? goal : tab === 'targetState' ? targetState : currentState;
+  const selected = tab === 'targetState' ? targetState : currentState;
   const [targetStateDraft, setTargetStateDraft] = React.useState<string>('');
   const [targetStateTouched, setTargetStateTouched] = React.useState(false);
   const [saveBusy, setSaveBusy] = React.useState(false);
@@ -77,7 +76,6 @@ export function PlanningDocsPage(): React.JSX.Element {
       </Typography>
 
       <Tabs value={tab} onChange={(_, v) => setTab(v as TabKey)} sx={{ mb: 2 }}>
-        <Tab value="goal" label="Goal" />
         <Tab value="targetState" label="Target" />
         <Tab value="currentState" label="Current" />
       </Tabs>
@@ -87,7 +85,6 @@ export function PlanningDocsPage(): React.JSX.Element {
         <ErrorState
           message={selected.error}
           onRetry={() => {
-            goal.reload();
             targetState.reload();
             currentState.reload();
           }}

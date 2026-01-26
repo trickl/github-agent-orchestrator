@@ -1,4 +1,4 @@
-export type PlanningDocKey = 'goal' | 'targetState' | 'currentState';
+export type PlanningDocKey = 'targetState' | 'currentState';
 
 export type PlanningDoc = {
   key: PlanningDocKey;

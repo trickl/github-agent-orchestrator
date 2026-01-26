@@ -11,7 +11,6 @@ import type { PlanningDoc } from '../features/planning/planningTypes';
 type Health = { ok: true; version: string; repoName: string };
 
 type DocsFixture = {
-  goal: PlanningDoc;
   targetState: PlanningDoc;
   currentState: PlanningDoc;
 };
@@ -231,11 +230,6 @@ export const handlers = [
     const url = new URL(request.url);
     const limit = Number(url.searchParams.get('limit') ?? '200');
     return HttpResponse.json(timeline.slice(0, Number.isFinite(limit) ? limit : 200));
-  }),
-
-  http.get('*/docs/goal', async () => {
-    await delay(150);
-    return HttpResponse.json(docs.goal);
   }),
 
   http.get('*/docs/target-state', async () => {
