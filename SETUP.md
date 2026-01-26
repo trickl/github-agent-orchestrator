@@ -37,10 +37,6 @@ pip install -e ".[dev]"
 pip install github-agent-orchestrator
 ```
 
-With LLaMA support:
-```bash
-pip install "github-agent-orchestrator[llama]"
-```
 
 ## Configuration
 
@@ -61,13 +57,6 @@ AGENT_STATE_PATH=agent_state
 Repository selection is intentionally not stored in `.env`; you pass it per command via `--repo`.
 
 ## Getting API Keys
-
-### OpenAI API Key
-
-1. Go to https://platform.openai.com/api-keys
-2. Sign in or create an account
-3. Click "Create new secret key"
-4. Copy the key and save it securely
 
 ### GitHub Token
 

@@ -53,6 +53,23 @@ class ServerSettings(BaseSettings):
         ),
     )
 
+    include_copilot_job_errors: bool = Field(
+        default=False,
+        validation_alias="ORCHESTRATOR_INCLUDE_COPILOT_JOB_ERRORS",
+        description=(
+            "If true, the loop status will attempt to surface the latest Copilot job failure "
+            "details (requires a token with actions:read)."
+        ),
+    )
+
+    copilot_job_error_max_lines: int = Field(
+        default=5,
+        validation_alias="ORCHESTRATOR_COPILOT_JOB_ERROR_MAX_LINES",
+        description="Maximum number of error lines to surface from Copilot job logs.",
+        ge=1,
+        le=20,
+    )
+
     auto_promote_enabled: bool = Field(
         default=False,
         validation_alias="ORCHESTRATOR_AUTO_PROMOTE_ENABLED",
@@ -146,35 +163,6 @@ class ServerSettings(BaseSettings):
         ),
     )
 
-    gap_analysis_mode: str = Field(
-        default="copilot",
-        validation_alias="ORCHESTRATOR_GAP_ANALYSIS_MODE",
-        description=(
-            "Execution mode for gap analysis: 'copilot' (create issue), 'openai', or 'ollama'."
-        ),
-    )
-
-    capability_update_mode: str = Field(
-        default="copilot",
-        validation_alias="ORCHESTRATOR_CAPABILITY_UPDATE_MODE",
-        description=(
-            "Execution mode for capability updates: 'copilot' (create issue), 'openai', or 'ollama'."
-        ),
-    )
-
-    openai_api_key: str = Field(default="", validation_alias="OPENAI_API_KEY")
-    openai_base_url: str = Field(
-        default="https://api.openai.com",
-        validation_alias="OPENAI_BASE_URL",
-    )
-    openai_model: str = Field(default="gpt-4o-mini", validation_alias="OPENAI_MODEL")
-
-    ollama_base_url: str = Field(
-        default="http://localhost:11434",
-        validation_alias="OLLAMA_BASE_URL",
-    )
-    ollama_model: str = Field(default="llama3.1", validation_alias="OLLAMA_MODEL")
-
     # Where the Vite build output lives when serving the UI from the backend.
     ui_dist_path: Path = Field(default=Path("ui/dist"), validation_alias="ORCHESTRATOR_UI_DIST")
 
@@ -194,14 +182,6 @@ class ServerSettings(BaseSettings):
         if mode in {"build", "review"}:
             return mode
         raise ValueError("ORCHESTRATOR_LOOP_MODE must be one of: build, review")
-
-    @field_validator("gap_analysis_mode", "capability_update_mode")
-    @classmethod
-    def _validate_cognitive_mode(cls, v: str) -> str:
-        mode = (v or "").strip().lower()
-        if mode in {"copilot", "openai", "ollama"}:
-            return mode
-        raise ValueError("Mode must be one of: copilot, openai, ollama")
 
     def parsed_cors_origins(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]

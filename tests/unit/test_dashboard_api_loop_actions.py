@@ -315,105 +315,6 @@ def test_ensure_gap_analysis_issue_exists_assigns_existing_when_unassigned(monke
     assert called.get("issue_number") == 42
 
 
-def test_gap_analysis_mode_openai_writes_queue_item(monkeypatch) -> None:
-    monkeypatch.setenv("ORCHESTRATOR_GITHUB_TOKEN", "test-token")
-    monkeypatch.setenv("ORCHESTRATOR_GAP_ANALYSIS_MODE", "openai")
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-
-    import github_agent_orchestrator.server.dashboard.loop_actions as loop_actions
-
-    monkeypatch.setattr(loop_actions, "_get_default_branch", lambda *_a, **_k: "main")
-
-    def fake_get_repo_text_file(*_a, **kwargs):
-        path = kwargs.get("path")
-        if path == ".agent-orchestrator/state/target_state.md":
-            return "# Target State\n\n- Target\n", "sha-target"
-        if path == ".agent-orchestrator/state/current_state.md":
-            return "# Current State\n\n- Current\n", "sha-current"
-        raise AssertionError(f"Unexpected path: {path}")
-
-    monkeypatch.setattr(loop_actions, "_get_repo_text_file", fake_get_repo_text_file)
-    monkeypatch.setattr(
-        loop_actions,
-        "_generate_chat_completion",
-        lambda **_k: "Dev: Improve gap analysis\n\n- Do the thing\n",
-    )
-
-    captured: dict[str, object] = {}
-
-    def fake_ensure_repo_text_file_present(*_a, **kwargs):
-        captured.update(kwargs)
-
-    monkeypatch.setattr(loop_actions, "_ensure_repo_text_file_present", fake_ensure_repo_text_file_present)
-
-    out = loop_actions._ensure_gap_analysis_issue_exists(
-        settings=loop_actions.ServerSettings(),
-        repo="acme/repo",
-    )
-
-    assert out["created"] is True
-    assert isinstance(out.get("queuePath"), str)
-    assert captured.get("path") is not None
-    assert str(captured.get("path")).startswith(".agent-orchestrator/issue_queue/pending/")
-
-
-def test_gap_analysis_creates_baseline_current_state_when_missing(monkeypatch) -> None:
-    monkeypatch.setenv("ORCHESTRATOR_GITHUB_TOKEN", "test-token")
-    monkeypatch.setenv("ORCHESTRATOR_GAP_ANALYSIS_MODE", "openai")
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-
-    import github_agent_orchestrator.server.dashboard.loop_actions as loop_actions
-
-    monkeypatch.setattr(loop_actions, "_get_default_branch", lambda *_a, **_k: "main")
-
-    def fake_get_repo_text_file(*_a, **kwargs):
-        path = kwargs.get("path")
-        if path == ".agent-orchestrator/state/target_state.md":
-            return "# Target State\n\n- Target\n", "sha-target"
-        if path == ".agent-orchestrator/state/current_state.md":
-            raise HTTPException(status_code=404, detail="missing")
-        raise AssertionError(f"Unexpected path: {path}")
-
-    monkeypatch.setattr(loop_actions, "_get_repo_text_file", fake_get_repo_text_file)
-    monkeypatch.setattr(
-        loop_actions,
-        "_generate_chat_completion",
-        lambda **_k: "Dev: Improve gap analysis\n\n- Do the thing\n",
-    )
-
-    calls: list[dict[str, object]] = []
-
-    def fake_ensure_repo_text_file_present(*_a, **kwargs):
-        calls.append(kwargs)
-
-    monkeypatch.setattr(loop_actions, "_ensure_repo_text_file_present", fake_ensure_repo_text_file_present)
-
-    out = loop_actions._ensure_gap_analysis_issue_exists(
-        settings=loop_actions.ServerSettings(),
-        repo="acme/repo",
-    )
-
-    assert out["created"] is True
-    init_calls = [c for c in calls if c.get("path") == ".agent-orchestrator/state/current_state.md"]
-    assert init_calls
-    expected = (
-        "# Current State\n\n"
-        "## Overview\n"
-        "This repository has no implemented capabilities yet. It is a clean starting point.\n\n"
-        "## Specification\n"
-        "The target specification is defined in `/.agent-orchestrator/state/target_state.md`.\n\n"
-        "## Implemented Capabilities\n"
-        "- None.\n\n"
-        "## In-Progress\n"
-        "- None.\n\n"
-        "## Known Gaps (High-Level)\n"
-        "- All implementation work remains.\n\n"
-        "## Notes\n"
-        "This document should be updated after each merged PR that changes capabilities.\n"
-    )
-    assert init_calls[0].get("content_text") == expected
-
-
 def test_loop_gap_analysis_ensure_endpoint_creates_and_assigns(monkeypatch, tmp_path: Path) -> None:
     planning = tmp_path / ".agent-orchestrator"
     agent_state = tmp_path / "agent_state"
@@ -482,58 +383,6 @@ def test_loop_gap_analysis_ensure_endpoint_creates_and_assigns(monkeypatch, tmp_
     assert "summary" in data
 
 
-def test_capability_update_mode_openai_writes_current_state(monkeypatch) -> None:
-    monkeypatch.setenv("ORCHESTRATOR_GITHUB_TOKEN", "test-token")
-    monkeypatch.setenv("ORCHESTRATOR_CAPABILITY_UPDATE_MODE", "openai")
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-
-    import github_agent_orchestrator.server.dashboard.loop_actions as loop_actions
-
-    monkeypatch.setattr(loop_actions, "_get_default_branch", lambda *_a, **_k: "main")
-    monkeypatch.setattr(
-        loop_actions,
-        "_get_pull_request_discussion_markdown",
-        lambda *_a, **_k: "Discussion",
-    )
-
-    def fake_get_repo_text_file(*_a, **kwargs):
-        path = kwargs.get("path")
-        if path == ".agent-orchestrator/state/current_state.md":
-            return "# Current State\n\n- Before\n", "sha-current"
-        raise AssertionError(f"Unexpected path: {path}")
-
-    monkeypatch.setattr(loop_actions, "_get_repo_text_file", fake_get_repo_text_file)
-    monkeypatch.setattr(
-        loop_actions,
-        "_generate_chat_completion",
-        lambda **_k: "# Current State\n\n- After\n",
-    )
-
-    captured: dict[str, object] = {}
-
-    def fake_ensure_repo_text_file_present(*_a, **kwargs):
-        captured.update(kwargs)
-
-    monkeypatch.setattr(loop_actions, "_ensure_repo_text_file_present", fake_ensure_repo_text_file_present)
-
-    num, created, label = loop_actions._ensure_followup_issue_after_development_merge(
-        settings=loop_actions.ServerSettings(),
-        repo="acme/repo",
-        branch="main",
-        loop_mode="build",
-        pr_number=5,
-        pr_title="Add thing",
-        pr_body="Body",
-        queue_path=".agent-orchestrator/issue_queue/processed/dev-1.md",
-        queue_content="Dev: One",
-    )
-
-    assert num is None
-    assert created is None
-    assert label is None
-    assert captured.get("path") == ".agent-orchestrator/state/current_state.md"
-
-
 def test_ensure_gap_analysis_issue_exists_repairs_unsafe_existing_issue_before_assign(
     monkeypatch,
 ) -> None:
@@ -567,6 +416,22 @@ def test_ensure_gap_analysis_issue_exists_repairs_unsafe_existing_issue_before_a
                 "body": "# Gap Analysis\n\nCompletion:\n- Open a PR that adds exactly one new file\n",
             }
         ],
+    )
+    monkeypatch.setattr(
+        dashboard_router,
+        "_get_repo_text_file",
+        lambda *_a, **kwargs: (
+            "# Target State\n" if kwargs.get("path") == ".agent-orchestrator/state/target_state.md" else "",
+            "sha",
+        ),
+    )
+    monkeypatch.setattr(
+        loop_actions,
+        "_get_repo_text_file",
+        lambda *_a, **kwargs: (
+            "# Target State\n" if kwargs.get("path") == ".agent-orchestrator/state/target_state.md" else "",
+            "sha",
+        ),
     )
     monkeypatch.setattr(
         dashboard_router,
@@ -1659,6 +1524,7 @@ def test_ensure_review_consumption_does_not_archive_when_closed_issue_produced_q
 
     monkeypatch.setenv("ORCHESTRATOR_GITHUB_TOKEN", "ghp_test")
     monkeypatch.setenv("ORCHESTRATOR_DEFAULT_REPO", "acme/repo")
+    monkeypatch.setenv("ORCHESTRATOR_LOOP_MODE", "review")
 
     review_path = ".agent-orchestrator/reviews/review-2026-01-05-refactor-large-files.md"
     actions_path = ".agent-orchestrator/reviews/review-2026-01-05-refactor-large-files.actions.md"
@@ -1768,6 +1634,7 @@ def test_ensure_review_consumption_does_not_archive_when_queue_has_source_review
 
     monkeypatch.setenv("ORCHESTRATOR_GITHUB_TOKEN", "ghp_test")
     monkeypatch.setenv("ORCHESTRATOR_DEFAULT_REPO", "acme/repo")
+    monkeypatch.setenv("ORCHESTRATOR_LOOP_MODE", "review")
 
     review_path = ".agent-orchestrator/reviews/review-2026-01-05-refactor-large-files.md"
     actions_path = ".agent-orchestrator/reviews/review-2026-01-05-refactor-large-files.actions.md"

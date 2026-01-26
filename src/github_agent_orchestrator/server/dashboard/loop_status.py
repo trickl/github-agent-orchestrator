@@ -13,6 +13,9 @@ The loop follows stages 1a-3c:
 
 from __future__ import annotations
 
+import io
+import re
+import zipfile
 from dataclasses import dataclass
 from typing import Any
 
@@ -47,10 +50,14 @@ from github_agent_orchestrator.server.dashboard.github_issue_pr_helpers import (
     pull_request_is_merge_candidate as _pull_request_is_merge_candidate,
 )
 from github_agent_orchestrator.server.dashboard.github_operations import (
+    download_workflow_job_logs as _download_workflow_job_logs,
     get_pull_request as _get_pull_request,
 )
 from github_agent_orchestrator.server.dashboard.github_operations import (
     get_repo_text_file as _get_repo_text_file,
+)
+from github_agent_orchestrator.server.dashboard.github_operations import (
+    list_workflow_jobs_for_run as _list_workflow_jobs_for_run,
 )
 from github_agent_orchestrator.server.dashboard.github_operations import (
     list_issue_timeline_raw as _list_issue_timeline_raw,
@@ -63,6 +70,9 @@ from github_agent_orchestrator.server.dashboard.github_operations import (
 )
 from github_agent_orchestrator.server.dashboard.github_operations import (
     list_repo_markdown_files_under as _list_repo_markdown_files_under,
+)
+from github_agent_orchestrator.server.dashboard.github_operations import (
+    list_workflow_runs_for_head_sha as _list_workflow_runs_for_head_sha,
 )
 from github_agent_orchestrator.server.dashboard.loop_actions import (
     _extract_source_pr_number_from_capability_issue as _extract_source_pr_number_from_capability_issue,
@@ -1157,6 +1167,182 @@ def _apply_best_effort_automations(
         warnings.append(msg)
 
 
+_COPILOT_ERROR_PATTERN = re.compile(r"(error|exception|traceback|fatal)", re.IGNORECASE)
+
+
+def _workflow_item_timestamp(item: dict[str, Any], fields: tuple[str, ...]) -> str:
+    for field in fields:
+        raw_value = item.get(field)
+        if isinstance(raw_value, str) and raw_value.strip():
+            return raw_value.strip()
+    return ""
+
+
+def _sort_workflow_items(
+    items: list[dict[str, Any]], fields: tuple[str, ...]
+) -> list[dict[str, Any]]:
+    def _sort_key(item: dict[str, Any]) -> tuple[str, int]:
+        timestamp = _workflow_item_timestamp(item, fields)
+        raw_id = item.get("id")
+        return (timestamp, int(raw_id) if isinstance(raw_id, int) else 0)
+
+    return sorted(items, key=_sort_key, reverse=True)
+
+
+def _select_latest_failed_run(runs: list[dict[str, Any]]) -> dict[str, Any] | None:
+    for run in _sort_workflow_items(runs, ("run_started_at", "created_at", "updated_at")):
+        if run.get("status") != "completed":
+            continue
+        if run.get("conclusion") in {"failure", "timed_out"}:
+            return run
+    return None
+
+
+def _job_name(job: dict[str, Any]) -> str:
+    raw_name = job.get("name")
+    if isinstance(raw_name, str) and raw_name.strip():
+        return raw_name.strip()
+    return ""
+
+
+def _job_is_copilot(job: dict[str, Any]) -> bool:
+    name = _job_name(job).lower()
+    return bool(name) and ("copilot" in name or "swe" in name)
+
+
+def _select_latest_failed_job(jobs: list[dict[str, Any]]) -> dict[str, Any] | None:
+    failed_jobs = [
+        job
+        for job in jobs
+        if job.get("status") == "completed" and job.get("conclusion") in {"failure", "timed_out"}
+    ]
+    if not failed_jobs:
+        return None
+    failed_jobs = _sort_workflow_items(failed_jobs, ("completed_at", "started_at", "created_at"))
+    for job in failed_jobs:
+        if _job_is_copilot(job):
+            return job
+    return failed_jobs[0]
+
+
+def _extract_log_lines(log_bytes: bytes) -> list[str]:
+    try:
+        with zipfile.ZipFile(io.BytesIO(log_bytes)) as archive:
+            lines: list[str] = []
+            for name in archive.namelist():
+                if name.endswith("/"):
+                    continue
+                data = archive.read(name)
+                lines.extend(data.decode("utf-8", errors="replace").splitlines())
+            return lines
+    except zipfile.BadZipFile:
+        return log_bytes.decode("utf-8", errors="replace").splitlines()
+
+
+def _select_error_snippet(lines: list[str], max_lines: int) -> list[str]:
+    cleaned_lines = [line.strip() for line in lines if line.strip()]
+    error_lines = [line for line in cleaned_lines if _COPILOT_ERROR_PATTERN.search(line)]
+    selected = error_lines[-max_lines:] if error_lines else cleaned_lines[-max_lines:]
+    return selected
+
+
+def _format_copilot_job_warning(
+    *, run_id: int, job_name: str, snippet: list[str]
+) -> str | None:
+    if not snippet:
+        return None
+    display_name = job_name or "job"
+    formatted_lines = "\n".join(f"- {line}" for line in snippet)
+    return (
+        f"Latest Copilot job failure (run {run_id}, {display_name}):\n{formatted_lines}"
+    )
+
+
+def _format_copilot_job_error(exc: HTTPException, context: str) -> str:
+    status = exc.status_code
+    if status in {401, 403}:
+        return (
+            "Unable to fetch Copilot Actions logs; ensure ORCHESTRATOR_GITHUB_TOKEN has "
+            f"actions:read access (HTTP {status} during {context})."
+        )
+    return f"Unable to fetch Copilot Actions logs (HTTP {status} during {context})."
+
+
+def _append_copilot_job_error_warning(
+    *,
+    settings: ServerSettings,
+    repository: str,
+    focus: dict[str, object] | None,
+    warnings: list[str],
+) -> None:
+    if not settings.include_copilot_job_errors:
+        return
+    if not isinstance(focus, dict):
+        return
+    pull_number = focus.get("pullNumber")
+    if not (isinstance(pull_number, int) and pull_number > 0):
+        return
+
+    try:
+        pr_data = _get_pull_request(settings, repository=repository, pr_number=pull_number)
+    except HTTPException as exc:
+        warnings.append(_format_copilot_job_error(exc, "PR lookup"))
+        return
+
+    head = pr_data.get("head")
+    if not isinstance(head, dict):
+        return
+    head_sha = head.get("sha")
+    if not isinstance(head_sha, str) or not head_sha.strip():
+        return
+
+    try:
+        runs = _list_workflow_runs_for_head_sha(
+            settings,
+            repository=repository,
+            head_sha=head_sha.strip(),
+        )
+    except HTTPException as exc:
+        warnings.append(_format_copilot_job_error(exc, "workflow runs"))
+        return
+
+    run = _select_latest_failed_run(runs)
+    if not isinstance(run, dict):
+        return
+
+    run_id = run.get("id")
+    if not isinstance(run_id, int):
+        return
+
+    try:
+        jobs = _list_workflow_jobs_for_run(settings, repository=repository, run_id=run_id)
+    except HTTPException as exc:
+        warnings.append(_format_copilot_job_error(exc, "workflow jobs"))
+        return
+
+    job = _select_latest_failed_job(jobs)
+    if not isinstance(job, dict):
+        return
+
+    job_id = job.get("id")
+    if not isinstance(job_id, int):
+        return
+
+    job_name = _job_name(job)
+    try:
+        log_bytes = _download_workflow_job_logs(settings, repository=repository, job_id=job_id)
+    except HTTPException as exc:
+        warnings.append(_format_copilot_job_error(exc, "job logs"))
+        return
+
+    log_lines = _extract_log_lines(log_bytes)
+    snippet = _select_error_snippet(log_lines, settings.copilot_job_error_max_lines)
+
+    warning = _format_copilot_job_warning(run_id=run_id, job_name=job_name, snippet=snippet)
+    if isinstance(warning, str) and warning.strip():
+        warnings.append(warning)
+
+
 def _loop_status_for_repo(
     *, settings: ServerSettings, active_repo: str, ref: str
 ) -> dict[str, object]:
@@ -1171,7 +1357,7 @@ def _loop_status_for_repo(
             path=".agent-orchestrator/state/target_state.md",
             ref=ref,
         )
-    except HTTPException:
+    except (HTTPException, FileNotFoundError):
         target_state_missing = True
 
     if target_state_missing:
@@ -1555,6 +1741,13 @@ def _loop_status_for_repo(
         active_repo=active_repo,
         focus=focus if isinstance(focus, dict) else None,
         raw_open_prs=raw_open_prs,
+        warnings=warnings,
+    )
+
+    _append_copilot_job_error_warning(
+        settings=settings,
+        repository=active_repo,
+        focus=focus if isinstance(focus, dict) else None,
         warnings=warnings,
     )
 

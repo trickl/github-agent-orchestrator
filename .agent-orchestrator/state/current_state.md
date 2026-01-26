@@ -11,40 +11,13 @@ The system provides type-safe configuration through Pydantic models:
 - **Environment-based configuration**: Loads settings from environment variables with `ORCHESTRATOR_` prefix
 - **Configuration validation**: Validates configuration at initialization time
 - **Nested configuration structure**:
-  - `LLMConfig`: LLM provider settings (OpenAI and LLaMA)
   - `GitHubConfig`: GitHub API credentials and repository
   - `StateConfig`: State storage and version control settings
   - `OrchestratorConfig`: Top-level orchestrator settings including logging
 - **Logging setup**: Configures Python logging with customizable log levels (INFO, DEBUG, etc.)
 - **Default values**: Provides sensible defaults for all optional configuration parameters
 
-### 2. LLM Integration
-
-The system implements a pluggable LLM provider architecture:
-
-#### OpenAI Provider
-- **API integration**: Uses OpenAI Python SDK to communicate with OpenAI API
-- **Model configuration**: Supports any OpenAI chat model (default: gpt-4)
-- **Temperature control**: Configurable temperature parameter (default: 0.7, range: 0.0-2.0)
-- **Text generation**: Converts prompts into chat messages and returns completions
-- **Chat completion**: Accepts structured message lists with role and content
-- **Token counting**: Provides rough token estimation (1 token ≈ 4 characters)
-- **Validation**: Requires valid API key at initialization
-
-#### LLaMA Provider
-- **Local model support**: Loads GGUF format models via llama-cpp-python
-- **Context window**: Configurable context size (default: 4096 tokens)
-- **Thread control**: Optional thread count configuration for CPU optimization
-- **Text generation**: Single-prompt completion with local inference
-- **Chat completion**: Structured chat interface using llama-cpp's chat format
-- **Token counting**: Accurate tokenization using LLaMA's tokenizer
-- **Optional dependency**: Only required when using llama provider
-
-#### Factory Pattern
-- **Provider selection**: Creates appropriate provider based on configuration
-- **Runtime switching**: Can instantiate different providers without code changes
-
-### 3. GitHub Integration
+### 2. GitHub Integration
 
 The system provides GitHub API operations via PyGithub:
 
@@ -74,7 +47,7 @@ The system provides GitHub API operations via PyGithub:
 - **Base URL configuration**: Supports custom GitHub Enterprise URLs
 - **Connection cleanup**: Provides explicit close method
 
-### 4. State Management
+### 3. State Management
 
 The system maintains persistent orchestrator state:
 
@@ -107,34 +80,32 @@ The system maintains persistent orchestrator state:
 - **Get state**: Returns current state object
 - **Clear state**: Resets to empty state
 
-### 5. Orchestrator
+### 4. Orchestrator
 
 The main orchestrator coordinates all components:
 
 #### Initialization
-- **Component assembly**: Initializes LLM provider, GitHub client, and state manager
+- **Component assembly**: Initializes GitHub client and state manager
 - **Configuration loading**: Loads from environment or accepts explicit configuration
 - **Logging setup**: Configures logging based on configuration
 - **Conditional GitHub**: Only initializes GitHub client if credentials provided
 
 #### Task Processing
 - **Single task execution**: Processes individual task descriptions
-- **Plan generation**: Uses LLM to generate plans from task descriptions
 - **State persistence**: Stores tasks in state manager
-- **Result formatting**: Returns structured dictionary with task, plan, and status
+- **Result formatting**: Returns structured dictionary with task and status
 
 #### Orchestration Loop
 - **State loading**: Loads persistent state at start
 - **Main loop placeholder**: Basic structure for future orchestration workflows
 - **State saving**: Persists state after execution
 
-### 6. Command-Line Interface
+### 5. Command-Line Interface
 
 The system provides a CLI tool (`orchestrator` command):
 
 #### Commands
 - **init**: Creates `.env` configuration file with template
-  - Provider selection (openai or llama)
   - Interactive overwrite confirmation
 - **run**: Executes orchestrator main loop
   - Debug mode flag
@@ -154,7 +125,6 @@ The system includes a comprehensive test suite:
 
 ### Unit Tests
 - **Configuration tests**: Validates default values and nested configuration
-- **LLM provider tests**: Tests factory creation, validation, and mocked API calls
 - **State management tests**: Tests save/load, task/plan operations, and state clearing
 - **Test coverage**: Uses pytest with coverage reporting (target: >90%)
 
@@ -223,11 +193,10 @@ The system is packaged as a Python package:
 - **Type marker**: py.typed file for PEP 561 type checking support
 
 ### Dependencies
-- **Core dependencies**: openai, PyGithub, pydantic, pydantic-settings, pyyaml, requests, httpx, tenacity
+- **Core dependencies**: PyGithub, pydantic, pydantic-settings, pyyaml, requests, httpx, tenacity
 - **Optional dependencies**:
   - dev: Testing, linting, and development tools
   - docs: Sphinx and documentation dependencies
-  - llama: llama-cpp-python for local model support
 
 ### Build System
 - **setuptools**: Uses setuptools with pyproject.toml configuration
@@ -241,7 +210,6 @@ The system includes example code:
 ### basic_usage.py
 - **Basic usage**: Demonstrates environment-based initialization and task processing
 - **Custom configuration**: Shows explicit configuration object creation
-- **Direct LLM usage**: Examples of using LLM providers directly
 - **GitHub client usage**: Demonstrates PR and issue operations
 - **State management**: Shows state manager operations
 - **Error handling**: Graceful handling of missing credentials
@@ -266,21 +234,19 @@ The system includes example code:
 
 ### Known Technical Limitations
 
-1. **Token counting approximation**: OpenAI provider uses rough estimation, not exact tokenization
-2. **State commit conflicts**: No conflict resolution for concurrent state updates
-3. **No state migrations**: No automated schema migration between versions
-4. **No distributed state**: State is local file-based only
-5. **No authentication refresh**: GitHub token must be valid for entire session
-6. **No rate limiting**: No built-in rate limit handling for GitHub or OpenAI APIs
-7. **Synchronous execution**: No async/await support in orchestrator
-8. **Single repository**: Can only operate on one repository per instance
+1. **State commit conflicts**: No conflict resolution for concurrent state updates
+2. **No state migrations**: No automated schema migration between versions
+3. **No distributed state**: State is local file-based only
+4. **No authentication refresh**: GitHub token must be valid for entire session
+5. **No rate limiting**: No built-in rate limit handling for GitHub APIs
+6. **Synchronous execution**: No async/await support in orchestrator
+7. **Single repository**: Can only operate on one repository per instance
 
 ### Dependencies on External Systems
 
-1. **OpenAI API**: OpenAI provider requires internet access and valid API key
-2. **GitHub API**: GitHub client requires internet access and valid token
-3. **File system**: State manager requires write access to storage directory
-4. **Git (optional)**: State auto-commit requires git CLI in PATH
+1. **GitHub API**: GitHub client requires internet access and valid token
+2. **File system**: State manager requires write access to storage directory
+3. **Git (optional)**: State auto-commit requires git CLI in PATH
 
 ### Configuration Requirements
 

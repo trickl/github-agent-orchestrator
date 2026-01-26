@@ -80,6 +80,57 @@ def list_open_pull_requests_raw(
         params={"state": "open", "per_page": per_page, "sort": "updated", "direction": "desc"},
     )
 
+def list_workflow_runs_for_head_sha(
+    settings: ServerSettings,
+    *,
+    repository: str,
+    head_sha: str,
+    limit: int = 10,
+) -> list[dict[str, Any]]:
+    params = {"per_page": str(max(1, min(limit, 100))), "head_sha": head_sha}
+    data = _github_get_json(
+        settings,
+        url=_repo_api_url(settings, repository=repository, path="actions/runs"),
+        params=params,
+    )
+    runs = data.get("workflow_runs")
+    if not isinstance(runs, list):
+        return []
+    return [r for r in runs if isinstance(r, dict)]
+
+
+def list_workflow_jobs_for_run(
+    settings: ServerSettings,
+    *,
+    repository: str,
+    run_id: int,
+) -> list[dict[str, Any]]:
+    data = _github_get_json(
+        settings,
+        url=_repo_api_url(settings, repository=repository, path=f"actions/runs/{run_id}/jobs"),
+        params={"per_page": "100"},
+    )
+    jobs = data.get("jobs")
+    if not isinstance(jobs, list):
+        return []
+    return [j for j in jobs if isinstance(j, dict)]
+
+
+def download_workflow_job_logs(
+    settings: ServerSettings,
+    *,
+    repository: str,
+    job_id: int,
+) -> bytes:
+    url = _repo_api_url(settings, repository=repository, path=f"actions/jobs/{job_id}/logs")
+    resp = requests.get(url, headers=_github_headers(settings), timeout=30, allow_redirects=True)
+    if resp.status_code >= 400:
+        raise HTTPException(
+            status_code=resp.status_code,
+            detail=f"GitHub API request failed with HTTP {resp.status_code} for {url}.",
+        )
+    return resp.content
+
 
 def get_pull_request(
     settings: ServerSettings, *, repository: str, pr_number: int

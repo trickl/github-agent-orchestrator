@@ -8,7 +8,6 @@ GitHub Agent Orchestrator aims to be the leading solution for autonomous, long-r
 
 ### Completed ✅
 - [x] Project structure and configuration
-- [x] Pluggable LLM layer (OpenAI + LLaMA)
 - [x] GitHub integration for PRs and Issues
 - [x] Repo-backed persistent state management
 - [x] Type-safe configuration with Pydantic
@@ -52,13 +51,6 @@ GitHub Agent Orchestrator aims to be the leading solution for autonomous, long-r
 - [ ] Dependency resolution
 - [ ] Dynamic replanning
 - [ ] Resource allocation
-
-### LLM Enhancements
-- [ ] Multi-model ensembling
-- [ ] Context window management
-- [ ] Prompt optimization
-- [ ] Fine-tuning support
-- [ ] Cost tracking and optimization
 
 ### Monitoring and Observability
 - [ ] Execution metrics dashboard

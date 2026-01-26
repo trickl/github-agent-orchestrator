@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import io
+import zipfile
 from pathlib import Path
 from typing import Any
 
@@ -52,6 +54,18 @@ def _dual_patch(monkeypatch: Any, attr_name: str, value: Any) -> None:
         monkeypatch.setattr(dashboard_router, attr_name, value)
 
 
+def _repo_text_with_target_state(path_map: dict[str, tuple[str, str]]) -> Any:
+    def _fake_get_repo_text_file(*_args, **kwargs):
+        path = kwargs.get("path")
+        if path == ".agent-orchestrator/state/target_state.md":
+            return "# Target state\n", "sha-target"
+        if path in path_map:
+            return path_map[path]
+        raise FileNotFoundError(str(path))
+
+    return _fake_get_repo_text_file
+
+
 def test_loop_status_waits_for_target_state(monkeypatch, tmp_path: Path) -> None:
     planning = tmp_path / ".agent-orchestrator"
     agent_state = tmp_path / "agent_state"
@@ -100,16 +114,23 @@ def test_loop_status_endpoint(monkeypatch, tmp_path: Path) -> None:
 
     _dual_patch(monkeypatch, "_list_repo_markdown_files_under", fake_list_repo_md)
 
-    # Provide file contents so /api/loop can read the first line title.
-    def fake_get_repo_text_file(*_args, **kwargs):
-        path = kwargs.get("path")
-        if path == ".agent-orchestrator/issue_queue/pending/dev-1.md":
-            return "Dev: One\n\nBody\n", "sha-1"
-        if path == ".agent-orchestrator/issue_queue/pending/nested/dev-2.md":
-            return "Dev: Two\n\nBody\n", "sha-2"
-        raise FileNotFoundError(str(path))
+    _dual_patch(monkeypatch, "_get_repo_text_file", _repo_text_with_target_state({}))
 
-    _dual_patch(monkeypatch, "_get_repo_text_file", fake_get_repo_text_file)
+    _dual_patch(monkeypatch, "_get_repo_text_file", _repo_text_with_target_state({}))
+
+    _dual_patch(
+        monkeypatch,
+        "_get_repo_text_file",
+        _repo_text_with_target_state(
+            {
+                ".agent-orchestrator/issue_queue/pending/dev-1.md": ("Dev: One\n\nBody\n", "sha-1"),
+                ".agent-orchestrator/issue_queue/pending/nested/dev-2.md": (
+                    "Dev: Two\n\nBody\n",
+                    "sha-2",
+                ),
+            }
+        ),
+    )
 
     # No open issues => pending files cannot match any issue => Step B
     _dual_patch(monkeypatch, "_list_open_issues_raw", lambda *_a, **_k: [])
@@ -142,6 +163,7 @@ def test_loop_status_review_mode_stage_1a_focus_review_issue(monkeypatch, tmp_pa
 
 
     _dual_patch(monkeypatch, "_list_repo_markdown_files_under", lambda *_a, **_k: [])
+    _dual_patch(monkeypatch, "_get_repo_text_file", _repo_text_with_target_state({}))
     _dual_patch(monkeypatch, "_list_open_pull_requests_raw", lambda *_a, **_k: [])
     _dual_patch(monkeypatch, "_list_issue_timeline_raw", lambda *_a, **_k: [])
     _dual_patch(monkeypatch, "_get_pull_request", lambda *_a, **_k: {})
@@ -180,6 +202,7 @@ def test_loop_status_review_mode_stage_1b_focus_includes_pr(monkeypatch, tmp_pat
 
 
     _dual_patch(monkeypatch, "_list_repo_markdown_files_under", lambda *_a, **_k: [])
+    _dual_patch(monkeypatch, "_get_repo_text_file", _repo_text_with_target_state({}))
     _dual_patch(monkeypatch, "_list_open_pull_requests_raw", lambda *_a, **_k: [])
 
     def fake_issue_timeline(*_a, **kwargs):
@@ -258,13 +281,18 @@ def test_loop_status_review_mode_stage_2a_focus_review_queue_item(
 
     _dual_patch(monkeypatch, "_list_repo_markdown_files_under", fake_list_repo_md)
 
-    def fake_get_repo_text_file(*_a, **kwargs):
-        path = kwargs.get("path")
-        if path == ".agent-orchestrator/issue_queue/pending/review-2026-01-05.md":
-            return "Review: One\n\nBody\n", "sha-review-1"
-        raise FileNotFoundError(str(path))
-
-    _dual_patch(monkeypatch, "_get_repo_text_file", fake_get_repo_text_file)
+    _dual_patch(
+        monkeypatch,
+        "_get_repo_text_file",
+        _repo_text_with_target_state(
+            {
+                ".agent-orchestrator/issue_queue/pending/review-2026-01-05.md": (
+                    "Review: One\n\nBody\n",
+                    "sha-review-1",
+                )
+            }
+        ),
+    )
 
     _dual_patch(monkeypatch, "_list_open_issues_raw", lambda *_a, **_k: [])
     _dual_patch(monkeypatch, "_list_open_pull_requests_raw", lambda *_a, **_k: [])
@@ -301,13 +329,13 @@ def test_loop_status_stage_c_when_issue_exists_but_no_pr(monkeypatch, tmp_path: 
 
     _dual_patch(monkeypatch, "_list_repo_markdown_files_under", fake_list_repo_md)
 
-    def fake_get_repo_text_file(*_args, **kwargs):
-        path = kwargs.get("path")
-        if path == ".agent-orchestrator/issue_queue/pending/dev-1.md":
-            return "Dev: One\n\nBody\n", "sha-1"
-        raise FileNotFoundError(str(path))
-
-    _dual_patch(monkeypatch, "_get_repo_text_file", fake_get_repo_text_file)
+    _dual_patch(
+        monkeypatch,
+        "_get_repo_text_file",
+        _repo_text_with_target_state(
+            {".agent-orchestrator/issue_queue/pending/dev-1.md": ("Dev: One\n\nBody\n", "sha-1")}
+        ),
+    )
 
     # Open issue matches the pending file title, but no PR cross-references exist.
     _dual_patch(
@@ -328,6 +356,111 @@ def test_loop_status_stage_c_when_issue_exists_but_no_pr(monkeypatch, tmp_path: 
     assert loop["counts"]["openIssues"] == 1
     assert loop["counts"]["unpromotedPending"] == 0
     assert loop["counts"]["pendingDevelopmentWithoutPr"] == 1
+
+
+def test_loop_status_includes_copilot_job_error_warning(
+    monkeypatch, tmp_path: Path
+) -> None:
+    planning = tmp_path / ".agent-orchestrator"
+    agent_state = tmp_path / "agent_state"
+
+    monkeypatch.setenv("ORCHESTRATOR_PLANNING_ROOT", str(planning))
+    monkeypatch.setenv("AGENT_STATE_PATH", str(agent_state))
+    monkeypatch.setenv("ORCHESTRATOR_UI_DIST", str(tmp_path / "ui" / "dist"))
+    monkeypatch.setenv("ORCHESTRATOR_DEFAULT_REPO", "acme/repo")
+    monkeypatch.setenv("ORCHESTRATOR_INCLUDE_COPILOT_JOB_ERRORS", "true")
+    monkeypatch.setenv("ORCHESTRATOR_COPILOT_JOB_ERROR_MAX_LINES", "2")
+
+    def fake_list_repo_md(*_args, **kwargs):
+        dir_path = kwargs.get("dir_path")
+        if dir_path == ".agent-orchestrator/issue_queue/pending":
+            return [".agent-orchestrator/issue_queue/pending/dev-1.md"]
+        if dir_path in {
+            ".agent-orchestrator/issue_queue/processed",
+            ".agent-orchestrator/issue_queue/complete",
+        }:
+            return []
+        return []
+
+    _dual_patch(monkeypatch, "_list_repo_markdown_files_under", fake_list_repo_md)
+    _dual_patch(
+        monkeypatch,
+        "_get_repo_text_file",
+        _repo_text_with_target_state(
+            {".agent-orchestrator/issue_queue/pending/dev-1.md": ("Dev: One\n\nBody\n", "sha-1")}
+        ),
+    )
+    _dual_patch(
+        monkeypatch,
+        "_list_open_issues_raw",
+        lambda *_a, **_k: [{"number": 101, "title": "Dev: One", "state": "open"}],
+    )
+    _dual_patch(monkeypatch, "_list_open_pull_requests_raw", lambda *_a, **_k: [])
+    _dual_patch(
+        monkeypatch,
+        "_list_issue_timeline_raw",
+        lambda *_a, **_k: [
+            {
+                "event": "cross-referenced",
+                "source": {"issue": {"number": 5, "pull_request": {}}},
+            }
+        ],
+    )
+    _dual_patch(
+        monkeypatch,
+        "_get_pull_request",
+        lambda *_a, **_k: {
+            "number": 5,
+            "state": "open",
+            "draft": False,
+            "title": "Dev: One",
+            "requested_reviewers": [],
+            "requested_teams": [],
+            "mergeable_state": "clean",
+            "head": {"sha": "abc123"},
+        },
+    )
+
+    _dual_patch(
+        monkeypatch,
+        "_list_workflow_runs_for_head_sha",
+        lambda *_a, **_k: [
+            {
+                "id": 77,
+                "status": "completed",
+                "conclusion": "failure",
+                "run_started_at": "2024-01-01T00:00:00Z",
+            }
+        ],
+    )
+    _dual_patch(
+        monkeypatch,
+        "_list_workflow_jobs_for_run",
+        lambda *_a, **_k: [
+            {
+                "id": 88,
+                "name": "Copilot SWE Agent",
+                "status": "completed",
+                "conclusion": "failure",
+                "completed_at": "2024-01-01T01:00:00Z",
+            }
+        ],
+    )
+
+    def fake_download_logs(*_a, **_k):
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr("job.txt", "Step 1\nError: Something bad\n")
+        return buffer.getvalue()
+
+    _dual_patch(monkeypatch, "_download_workflow_job_logs", fake_download_logs)
+
+    client = TestClient(create_app())
+    loop = client.get("/api/loop").json()
+
+    warnings = loop.get("warnings", [])
+    assert any("Latest Copilot job failure" in warning for warning in warnings)
+    assert any("Something bad" in warning for warning in warnings)
 
 
 def test_loop_status_stage_d_when_processed_has_ready_pr(monkeypatch, tmp_path: Path) -> None:
@@ -352,13 +485,13 @@ def test_loop_status_stage_d_when_processed_has_ready_pr(monkeypatch, tmp_path: 
 
     _dual_patch(monkeypatch, "_list_repo_markdown_files_under", fake_list_repo_md)
 
-    def fake_get_repo_text_file(*_args, **kwargs):
-        path = kwargs.get("path")
-        if path == ".agent-orchestrator/issue_queue/processed/dev-1.md":
-            return "Dev: One\n\nBody\n", "sha-1"
-        raise FileNotFoundError(str(path))
-
-    _dual_patch(monkeypatch, "_get_repo_text_file", fake_get_repo_text_file)
+    _dual_patch(
+        monkeypatch,
+        "_get_repo_text_file",
+        _repo_text_with_target_state(
+            {".agent-orchestrator/issue_queue/processed/dev-1.md": ("Dev: One\n\nBody\n", "sha-1")}
+        ),
+    )
 
     # Open issue matches the queue file title.
     _dual_patch(
@@ -428,7 +561,9 @@ def test_loop_status_stage_d_when_processed_has_review_requested_event_even_with
     _dual_patch(
         monkeypatch,
         "_get_repo_text_file",
-        lambda *_a, **_k: ("Dev: One\n\nBody\n", "sha-1"),
+        _repo_text_with_target_state(
+            {".agent-orchestrator/issue_queue/processed/dev-1.md": ("Dev: One\n\nBody\n", "sha-1")}
+        ),
     )
 
     _dual_patch(
@@ -500,7 +635,9 @@ def test_loop_status_advances_when_pr_title_is_wip(monkeypatch, tmp_path: Path) 
     _dual_patch(
         monkeypatch,
         "_get_repo_text_file",
-        lambda *_a, **_k: ("Dev: One\n\nBody\n", "sha-1"),
+        _repo_text_with_target_state(
+            {".agent-orchestrator/issue_queue/processed/dev-1.md": ("Dev: One\n\nBody\n", "sha-1")}
+        ),
     )
     _dual_patch(
         monkeypatch,
@@ -561,6 +698,8 @@ def test_loop_status_stage_a_exposes_gap_pr_ready_for_merge(monkeypatch, tmp_pat
         return []
 
     _dual_patch(monkeypatch, "_list_repo_markdown_files_under", fake_list_repo_md)
+
+    _dual_patch(monkeypatch, "_get_repo_text_file", _repo_text_with_target_state({}))
 
     _dual_patch(
         monkeypatch,
@@ -636,6 +775,8 @@ def test_loop_status_stage_1c_when_gap_pr_is_draft_but_review_requested(
         "_list_repo_markdown_files_under",
         lambda *_a, **_k: [],
     )
+
+    _dual_patch(monkeypatch, "_get_repo_text_file", _repo_text_with_target_state({}))
 
     _dual_patch(
         monkeypatch,
@@ -721,7 +862,9 @@ def test_loop_status_stage_e_when_open_update_capability_issue_exists(
     _dual_patch(
         monkeypatch,
         "_get_repo_text_file",
-        lambda *_a, **_k: ("Dev: One\n\nBody\n", "sha-1"),
+        _repo_text_with_target_state(
+            {".agent-orchestrator/issue_queue/pending/dev-1.md": ("Dev: One\n\nBody\n", "sha-1")}
+        ),
     )
 
     # Both a development issue and an Update Capability issue are open; capability should win.
@@ -809,7 +952,11 @@ def test_loop_status_stage_g_when_open_update_capability_issue_has_ready_pr(
         fake_list_repo_md,
     )
 
-    _dual_patch(monkeypatch, "_get_repo_text_file", lambda *_a, **_k: ("", "sha"))
+    _dual_patch(
+        monkeypatch,
+        "_get_repo_text_file",
+        _repo_text_with_target_state({".agent-orchestrator/issue_queue/pending/dev-1.md": ("", "sha")}),
+    )
 
     _dual_patch(
         monkeypatch,

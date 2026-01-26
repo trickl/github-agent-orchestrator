@@ -10,6 +10,7 @@ Welcome to GitHub Agent Orchestrator's documentation!
    architecture
    api
    usage
+   known_issues
    contributing
 
 Overview

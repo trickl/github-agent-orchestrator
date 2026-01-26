@@ -640,6 +640,8 @@ def _review_consumption_issue_produced_queue_output(
         ".agent-orchestrator/issue_queue/complete",
     )
 
+    normalized_review_path = _normalize_repo_path_candidate(review_path)
+
     candidates: list[str] = []
     for d in queue_dirs:
         try:
@@ -700,7 +702,12 @@ def _review_consumption_issue_produced_queue_output(
             queue_id=queue_id,
             queue_content=content,
         )
-        if extracted_review_path == review_path:
+        normalized_extracted = (
+            _normalize_repo_path_candidate(extracted_review_path)
+            if extracted_review_path is not None
+            else None
+        )
+        if normalized_extracted and normalized_extracted == normalized_review_path:
             return True
     return False
 

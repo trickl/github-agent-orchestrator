@@ -250,11 +250,11 @@ Update the README.md if your changes:
 
 Use conventional commits format:
 
-- `feat: add support for Claude AI provider`
-- `fix: resolve token counting issue in LLaMA provider`
+- `feat: add queue promotion status view`
+- `fix: resolve queue healing edge case`
 - `docs: update installation instructions`
 - `test: add tests for state manager`
-- `refactor: simplify LLM factory logic`
+- `refactor: simplify dashboard loop helpers`
 
 ### PR Description
 

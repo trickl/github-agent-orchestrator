@@ -101,9 +101,6 @@ from github_agent_orchestrator.server.dashboard.queue_helpers import (
 from github_agent_orchestrator.server.dashboard.text_utilities import (
     _first_markdown_line_as_title,
 )
-from github_agent_orchestrator.server.dashboard.llm_clients import (
-    generate_chat_completion as _generate_chat_completion,
-)
 from github_agent_orchestrator.server.local_templates import load_local_template_or_raise
 
 ERR_UNEXPECTED_GITHUB_CREATE_ISSUE_RESPONSE = "Unexpected GitHub create issue response"
@@ -177,79 +174,6 @@ _REVIEW_QUEUE_ACTIONS_RE = re.compile(r"^\s*review\s+actions\s*:\s*(.+?)\s*$", r
 _REVIEW_QUEUE_ID_DATE_RE = re.compile(r"\breview-(\d{4}-\d{2}-\d{2})\b", re.IGNORECASE)
 
 
-def _normalize_cognitive_mode(mode: str) -> str:
-    return (mode or "").strip().lower()
-
-
-def _strip_code_fences(text: str) -> str:
-    if "```" not in text:
-        return text.strip()
-    lines = [line for line in text.splitlines() if not line.strip().startswith("```")]
-    return "\n".join(lines).strip()
-
-
-def _gap_analysis_prompt(*, target_state: str, current_state: str) -> tuple[str, str]:
-    system_prompt = (
-        "You are a careful planning analyst. Your job is to compare a target state to the "
-        "current state and decide whether one concrete development task is needed."
-    )
-    user_prompt = (
-        "Compare the target state to the current state. If the system already satisfies the target, "
-        "respond with exactly 'NO_ACTION'. Otherwise, produce the full markdown content for exactly "
-        "one development task file that will be placed into /.agent-orchestrator/issue_queue/pending/.\n\n"
-        "Rules:\n"
-        "- Output ONLY the file contents or 'NO_ACTION'.\n"
-        "- The first line must be a short, friendly task title.\n"
-        "- The task must be concrete, necessary, and limited in scope.\n"
-        "- Do not propose multiple tasks.\n\n"
-        "Target state (desired):\n"
-        "---\n"
-        f"{target_state.strip()}\n"
-        "---\n\n"
-        "Current state (actual):\n"
-        "---\n"
-        f"{current_state.strip()}\n"
-        "---\n"
-    )
-    return system_prompt, user_prompt
-
-
-def _capability_update_prompt(
-    *,
-    current_state: str,
-    pr_number: int,
-    pr_title: str,
-    pr_body: str,
-    discussion_markdown: str,
-) -> tuple[str, str]:
-    system_prompt = (
-        "You are updating the current_state.md document for a software system. "
-        "Only describe demonstrated capabilities, constraints, and behaviors."
-    )
-    user_prompt = (
-        "Update /.agent-orchestrator/state/current_state.md to reflect the changes in the merged PR. "
-        "Return the FULL updated markdown document. Do not add commentary outside the document.\n\n"
-        "Rules:\n"
-        "- Use the existing document as the base.\n"
-        "- Only describe capabilities confirmed by the PR or existing doc.\n"
-        "- Do not speculate or describe future work.\n\n"
-        f"Merged PR #{pr_number}: {pr_title}\n\n"
-        "PR description:\n"
-        "---\n"
-        f"{pr_body.strip() or '(no PR description)'}\n"
-        "---\n\n"
-        "PR comments and discussion (chronological):\n"
-        "---\n"
-        f"{discussion_markdown.strip() or '(no PR comments)'}\n"
-        "---\n\n"
-        "Current current_state.md content:\n"
-        "---\n"
-        f"{current_state.strip()}\n"
-        "---\n"
-    )
-    return system_prompt, user_prompt
-
-
 def _ensure_gap_analysis_state_documents(
     *, settings: ServerSettings, repo: str, branch: str
 ) -> tuple[str, str]:
@@ -301,118 +225,6 @@ def _ensure_gap_analysis_state_documents(
         current_state = baseline
 
     return target_state, current_state
-
-
-def _run_gap_analysis_with_model(*, settings: ServerSettings, repo: str) -> dict[str, object]:
-    if not settings.github_token.strip():
-        raise HTTPException(
-            status_code=409,
-            detail="ORCHESTRATOR_GITHUB_TOKEN is required to write gap analysis outputs",
-        )
-
-    branch = _get_default_branch(settings, repository=repo)
-    target_state, current_state = _ensure_gap_analysis_state_documents(
-        settings=settings,
-        repo=repo,
-        branch=branch,
-    )
-
-    system_prompt, user_prompt = _gap_analysis_prompt(
-        target_state=target_state,
-        current_state=current_state,
-    )
-    raw = _generate_chat_completion(
-        settings=settings,
-        mode=_normalize_cognitive_mode(settings.gap_analysis_mode),
-        system_prompt=system_prompt,
-        user_prompt=user_prompt,
-    )
-    cleaned = _strip_code_fences(raw)
-    if cleaned.strip().upper() == "NO_ACTION":
-        return {
-            "created": False,
-            "queuePath": None,
-            "summary": "Gap analysis model returned NO_ACTION",
-        }
-
-    first_line = cleaned.strip().splitlines()[0] if cleaned.strip() else ""
-    if not first_line:
-        raise HTTPException(status_code=502, detail="Gap analysis model returned empty output")
-
-    queue_id = f"dev-{int(time.time())}-gap-analysis.md"
-    queue_path = f".agent-orchestrator/issue_queue/pending/{queue_id}"
-    _ensure_repo_text_file_present(
-        settings,
-        repository=repo,
-        path=queue_path,
-        content_text=cleaned.rstrip() + "\n",
-        branch=branch,
-        message=f"Add gap analysis output {queue_id}",
-    )
-    return {
-        "created": True,
-        "queuePath": queue_path,
-        "summary": f"Gap analysis model created {queue_id}",
-    }
-
-
-def _run_capability_update_with_model(
-    *,
-    settings: ServerSettings,
-    repo: str,
-    branch: str,
-    pr_number: int,
-    pr_title: str,
-    pr_body: str,
-    discussion_markdown: str,
-) -> dict[str, object]:
-    if not settings.github_token.strip():
-        raise HTTPException(
-            status_code=409,
-            detail="ORCHESTRATOR_GITHUB_TOKEN is required to write current_state.md",
-        )
-
-    try:
-        current_state, _ = _get_repo_text_file(
-            settings,
-            repository=repo,
-            path=".agent-orchestrator/state/current_state.md",
-            ref=branch,
-        )
-    except HTTPException:
-        current_state = "# Current State\n\n"
-
-    system_prompt, user_prompt = _capability_update_prompt(
-        current_state=current_state,
-        pr_number=pr_number,
-        pr_title=pr_title,
-        pr_body=pr_body,
-        discussion_markdown=discussion_markdown,
-    )
-    raw = _generate_chat_completion(
-        settings=settings,
-        mode=_normalize_cognitive_mode(settings.capability_update_mode),
-        system_prompt=system_prompt,
-        user_prompt=user_prompt,
-    )
-    cleaned = _strip_code_fences(raw)
-    if not cleaned.strip():
-        raise HTTPException(status_code=502, detail="Capability update model returned empty output")
-
-    _ensure_repo_text_file_present(
-        settings,
-        repository=repo,
-        path=".agent-orchestrator/state/current_state.md",
-        content_text=cleaned.rstrip() + "\n",
-        branch=branch,
-        message=f"Update current_state.md from PR #{pr_number}",
-    )
-
-    return {
-        "created": True,
-        "path": ".agent-orchestrator/state/current_state.md",
-        "summary": f"Updated current_state.md from PR #{pr_number} via model",
-    }
 
 
 def _settings(request: Request) -> ServerSettings:
@@ -728,9 +540,6 @@ def _ensure_gap_analysis_issue_exists(*, settings: ServerSettings, repo: str) ->
     The gap analysis task remains "cognitive" (it produces a queue artefact), but this helper
     can automatically open + assign the issue so the overall cycle can keep moving.
     """
-
-    if _normalize_cognitive_mode(settings.gap_analysis_mode) != "copilot":
-        return _run_gap_analysis_with_model(settings=settings, repo=repo)
 
     branch = _get_default_branch(settings, repository=repo)
     _ensure_gap_analysis_state_documents(settings=settings, repo=repo, branch=branch)
@@ -2137,23 +1946,6 @@ def _ensure_followup_issue_after_development_merge(
         if not isinstance(num, int):
             raise HTTPException(status_code=502, detail=ERR_UNEXPECTED_GITHUB_CREATE_ISSUE_RESPONSE)
         return num, True, follow_issue_label
-
-    if _normalize_cognitive_mode(settings.capability_update_mode) != "copilot":
-        discussion_md = _get_pull_request_discussion_markdown(
-            settings,
-            repository=repo,
-            pr_number=pr_number,
-        )
-        _run_capability_update_with_model(
-            settings=settings,
-            repo=repo,
-            branch=branch,
-            pr_number=pr_number,
-            pr_title=pr_title,
-            pr_body=pr_body,
-            discussion_markdown=discussion_md,
-        )
-        return None, None, None
 
     follow_issue_label = LABEL_UPDATE_CAPABILITY
     marker = f"{_CAPABILITY_UPDATE_FROM_PR_MARKER_PREFIX} {repo}#{pr_number}"
