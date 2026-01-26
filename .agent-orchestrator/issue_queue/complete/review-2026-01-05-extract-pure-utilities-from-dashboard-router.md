@@ -1,7 +1,7 @@
 Extract pure utility functions from dashboard_router.py into a dedicated utilities module
 
 ## Context
-This task addresses a focused subset of **Review Item A** from review `planning/reviews/review-2026-01-05-refactor-large-files.md`.
+This task addresses a focused subset of **Review Item A** from review `.agent-orchestrator/reviews/review-2026-01-05-refactor-large-files.md`.
 
 The review identified that `dashboard_router.py` (4746 lines) is acting as a "god-module" that mixes HTTP route declarations with extensive supporting logic. A previous attempt (PR #12) to extract multiple modules from dashboard_router.py was deferred due to circular import issues and tightly-coupled test mocking.
 
@@ -152,3 +152,4 @@ After this task is complete, future tasks can:
 2. Use the utilities module from other dashboard modules
 3. Continue incremental extraction following the same move-first, patch-second pattern
 4. Address the remaining aspects of Review Item A when architectural changes enable safer extraction
+

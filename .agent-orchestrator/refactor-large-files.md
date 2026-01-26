@@ -359,3 +359,4 @@ This plan targets the current `radarlint-python` buckets in a way that preserves
 - Do not “optimize” logic while extracting; move code verbatim where possible.
 - Each PR should reduce complexity by extracting one coherent helper cluster (timeline parsing,
   auto-link, loop actions, etc.), matching the existing file-by-file plan.
+

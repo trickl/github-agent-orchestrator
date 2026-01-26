@@ -12,7 +12,7 @@ from github_agent_orchestrator.server.app import create_app
 def test_loop_status_auto_resumes_copilot_from_issue_events_fallback(
     monkeypatch, tmp_path: Path
 ) -> None:
-    planning = tmp_path / "planning"
+    planning = tmp_path / ".agent-orchestrator"
     agent_state = tmp_path / "agent_state"
 
     monkeypatch.setenv("ORCHESTRATOR_PLANNING_ROOT", str(planning))
@@ -29,11 +29,11 @@ def test_loop_status_auto_resumes_copilot_from_issue_events_fallback(
 
     def fake_list_repo_md(*_args, **kwargs):
         dir_path = kwargs.get("dir_path")
-        if dir_path == "planning/issue_queue/pending":
+        if dir_path == ".agent-orchestrator/issue_queue/pending":
             return []
-        if dir_path == "planning/issue_queue/processed":
-            return ["planning/issue_queue/processed/dev-1.md"]
-        if dir_path == "planning/issue_queue/complete":
+        if dir_path == ".agent-orchestrator/issue_queue/processed":
+            return [".agent-orchestrator/issue_queue/processed/dev-1.md"]
+        if dir_path == ".agent-orchestrator/issue_queue/complete":
             return []
         return []
 
@@ -154,7 +154,7 @@ def test_loop_status_auto_resumes_copilot_from_issue_events_fallback(
 
 
 def test_loop_status_auto_resume_copilot_respects_nudge_budget(monkeypatch, tmp_path: Path) -> None:
-    planning = tmp_path / "planning"
+    planning = tmp_path / ".agent-orchestrator"
     agent_state = tmp_path / "agent_state"
 
     monkeypatch.setenv("ORCHESTRATOR_PLANNING_ROOT", str(planning))
@@ -173,11 +173,11 @@ def test_loop_status_auto_resume_copilot_respects_nudge_budget(monkeypatch, tmp_
 
     def fake_list_repo_md(*_args, **kwargs):
         dir_path = kwargs.get("dir_path")
-        if dir_path == "planning/issue_queue/pending":
+        if dir_path == ".agent-orchestrator/issue_queue/pending":
             return []
-        if dir_path == "planning/issue_queue/processed":
-            return ["planning/issue_queue/processed/dev-1.md"]
-        if dir_path == "planning/issue_queue/complete":
+        if dir_path == ".agent-orchestrator/issue_queue/processed":
+            return [".agent-orchestrator/issue_queue/processed/dev-1.md"]
+        if dir_path == ".agent-orchestrator/issue_queue/complete":
             return []
         return []
 

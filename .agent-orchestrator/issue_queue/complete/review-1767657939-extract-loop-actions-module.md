@@ -2,7 +2,7 @@ Extract loop action helpers from dashboard_router.py (promote, merge, gap-analys
 
 ## Context
 
-This task addresses **Review Item A.4** from `planning/reviews/review-2026-01-05-refactor-large-files.md`.
+This task addresses **Review Item A.4** from `review-2026-01-05-refactor-large-files.md`.
 
 The review identified that `dashboard_router.py` (currently 3667 lines after prior extractions) is still acting as a god-module mixing HTTP route declarations with lots of supporting logic. The review recommends continuing the incremental extraction process that has already successfully reduced the file from 4746 lines through multiple PRs.
 
@@ -296,7 +296,8 @@ The existing test file `tests/unit/test_dashboard_api_loop_actions.py` was speci
 
 ## References
 
-- Source review: `planning/reviews/review-2026-01-05-refactor-large-files.md`
-- Review actions: `planning/reviews/review-2026-01-05-refactor-large-files.actions.md`
+- Source review: `.agent-orchestrator/reviews/review-2026-01-05-refactor-large-files.md`
+- Review actions: `.agent-orchestrator/reviews/review-2026-01-05-refactor-large-files.actions.md`
 - Related PRs: #30 (text utilities), #36 (github operations), #42 (automation modules)
 - Test coverage: `tests/unit/test_dashboard_api_loop_actions.py` (10 tests, 707 lines)
+

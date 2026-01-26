@@ -61,8 +61,7 @@ The extracted module will need to import helper functions from existing dashboar
 
 **From `github_issue_pr_helpers.py`:**
 - `best_match_issue_number()`, `issue_has_label()`
-- `linked_pr_numbers_from_issue_timeline()`
-- `pull_request_has_review_request()`, `pull_request_has_review_request_history()`
+- `linked_pr_numbers_from_issue_timeline()`, `pull_request_has_review_request()`, `pull_request_has_review_request_history()`
 - `pull_request_is_merge_candidate()`
 
 **From `queue_helpers.py`:**
@@ -202,3 +201,4 @@ These constraints from the review consumption template MUST be followed:
   - Basic utility functions that don't fit elsewhere
 - The lazy import pattern (importing dashboard_router inside functions) is the established solution for circular dependencies
 - Follow the dual-patching pattern from PR #48 for test compatibility
+

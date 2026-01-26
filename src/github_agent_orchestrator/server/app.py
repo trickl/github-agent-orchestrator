@@ -25,6 +25,9 @@ from github_agent_orchestrator.server.dashboard.loop_actions import (
     _promote_next_unpromoted_capability_queue_item,
     _promote_next_unpromoted_development_queue_item,
 )
+from github_agent_orchestrator.server.dashboard.github_operations import (
+    get_repo_text_file as _get_repo_text_file,
+)
 from github_agent_orchestrator.server.dashboard.loop_status import _loop_status_for_repo
 from github_agent_orchestrator.server.dashboard_router import (
     _ensure_review_consumption_issue_exists,
@@ -108,6 +111,25 @@ def _auto_promotion_runner(
 
     while not stop.is_set():
         try:
+            target_state_exists = True
+            try:
+                _get_repo_text_file(
+                    settings,
+                    repository=repo,
+                    path=".agent-orchestrator/state/target_state.md",
+                    ref="",
+                )
+            except Exception:
+                target_state_exists = False
+
+            if not target_state_exists:
+                logger.warning(
+                    "Target state missing; auto progression paused",
+                    extra={"repo": repo, "path": ".agent-orchestrator/state/target_state.md"},
+                )
+                stop.wait(max(60.0, interval))
+                continue
+
             status = _loop_status_for_repo(settings=settings, active_repo=repo, ref="")
             stage, open_gap_issues = _extract_stage_and_open_gap_issues(status)
             _perform_auto_action_for_stage(

@@ -40,7 +40,7 @@ Before producing any queue artefact, answer this question:
 - Do not produce multiple tasks.
 
 ### Output
-- Create **exactly one** new file in `/planning/issue_queue/pending/`.
+- Create **exactly one** new file in `/.agent-orchestrator/issue_queue/pending/`.
 - Filename must start with `review-`.
 - The file’s first line must be a friendly task name.
 - Clearly list which review items this task intends to address and give detailed,
@@ -62,3 +62,4 @@ If the resulting task involves refactoring or moving code across files:
 
 ### Tone
 Faithful to the review, pragmatic, and neutral. No new ideas beyond the review.
+

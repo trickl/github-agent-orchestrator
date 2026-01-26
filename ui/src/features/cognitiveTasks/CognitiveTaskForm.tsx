@@ -82,7 +82,7 @@ export function CognitiveTaskForm(props: {
 
       <TextField
         label="Target folder"
-        helperText="Folder path under planning/issue_queue/pending (opaque label)"
+        helperText="Folder path under .agent-orchestrator/issue_queue/pending (opaque label)"
         value={v.targetFolder}
         onChange={(e) => set('targetFolder', e.target.value)}
         disabled={props.readOnly}

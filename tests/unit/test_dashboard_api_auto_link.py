@@ -10,7 +10,7 @@ from github_agent_orchestrator.server.app import create_app
 
 
 def test_loop_status_auto_links_focused_issue_to_likely_pr(monkeypatch, tmp_path: Path) -> None:
-    planning = tmp_path / "planning"
+    planning = tmp_path / ".agent-orchestrator"
     agent_state = tmp_path / "agent_state"
 
     monkeypatch.setenv("ORCHESTRATOR_PLANNING_ROOT", str(planning))
@@ -29,8 +29,8 @@ def test_loop_status_auto_links_focused_issue_to_likely_pr(monkeypatch, tmp_path
         dashboard_router,
         "_list_repo_markdown_files_under",
         lambda *_a, **kwargs: (
-            ["planning/issue_queue/processed/restore-drag-and-drop.md"]
-            if kwargs.get("dir_path") == "planning/issue_queue/processed"
+            [".agent-orchestrator/issue_queue/processed/restore-drag-and-drop.md"]
+            if kwargs.get("dir_path") == ".agent-orchestrator/issue_queue/processed"
             else []
         ),
     )
@@ -38,8 +38,8 @@ def test_loop_status_auto_links_focused_issue_to_likely_pr(monkeypatch, tmp_path
         loop_status,
         "_list_repo_markdown_files_under",
         lambda *_a, **kwargs: (
-            ["planning/issue_queue/processed/restore-drag-and-drop.md"]
-            if kwargs.get("dir_path") == "planning/issue_queue/processed"
+            [".agent-orchestrator/issue_queue/processed/restore-drag-and-drop.md"]
+            if kwargs.get("dir_path") == ".agent-orchestrator/issue_queue/processed"
             else []
         ),
     )
@@ -135,7 +135,7 @@ def test_loop_status_auto_links_focused_issue_to_likely_pr(monkeypatch, tmp_path
 def test_loop_status_auto_links_when_pr_branch_is_copilot_prefixed(
     monkeypatch, tmp_path: Path
 ) -> None:
-    planning = tmp_path / "planning"
+    planning = tmp_path / ".agent-orchestrator"
     agent_state = tmp_path / "agent_state"
 
     monkeypatch.setenv("ORCHESTRATOR_PLANNING_ROOT", str(planning))
@@ -154,8 +154,8 @@ def test_loop_status_auto_links_when_pr_branch_is_copilot_prefixed(
         dashboard_router,
         "_list_repo_markdown_files_under",
         lambda *_a, **kwargs: (
-            ["planning/issue_queue/processed/restore-drag-and-drop.md"]
-            if kwargs.get("dir_path") == "planning/issue_queue/processed"
+            [".agent-orchestrator/issue_queue/processed/restore-drag-and-drop.md"]
+            if kwargs.get("dir_path") == ".agent-orchestrator/issue_queue/processed"
             else []
         ),
     )
@@ -163,8 +163,8 @@ def test_loop_status_auto_links_when_pr_branch_is_copilot_prefixed(
         loop_status,
         "_list_repo_markdown_files_under",
         lambda *_a, **kwargs: (
-            ["planning/issue_queue/processed/restore-drag-and-drop.md"]
-            if kwargs.get("dir_path") == "planning/issue_queue/processed"
+            [".agent-orchestrator/issue_queue/processed/restore-drag-and-drop.md"]
+            if kwargs.get("dir_path") == ".agent-orchestrator/issue_queue/processed"
             else []
         ),
     )
@@ -260,7 +260,7 @@ def test_loop_status_auto_links_when_pr_branch_is_copilot_prefixed(
 def test_auto_link_ignores_closing_keyword_inside_unclosed_code_fence(
     monkeypatch, tmp_path: Path
 ) -> None:
-    planning = tmp_path / "planning"
+    planning = tmp_path / ".agent-orchestrator"
     agent_state = tmp_path / "agent_state"
 
     monkeypatch.setenv("ORCHESTRATOR_PLANNING_ROOT", str(planning))
@@ -278,8 +278,8 @@ def test_auto_link_ignores_closing_keyword_inside_unclosed_code_fence(
         dashboard_router,
         "_list_repo_markdown_files_under",
         lambda *_a, **kwargs: (
-            ["planning/issue_queue/processed/restore-drag-and-drop.md"]
-            if kwargs.get("dir_path") == "planning/issue_queue/processed"
+            [".agent-orchestrator/issue_queue/processed/restore-drag-and-drop.md"]
+            if kwargs.get("dir_path") == ".agent-orchestrator/issue_queue/processed"
             else []
         ),
     )
@@ -287,8 +287,8 @@ def test_auto_link_ignores_closing_keyword_inside_unclosed_code_fence(
         loop_status,
         "_list_repo_markdown_files_under",
         lambda *_a, **kwargs: (
-            ["planning/issue_queue/processed/restore-drag-and-drop.md"]
-            if kwargs.get("dir_path") == "planning/issue_queue/processed"
+            [".agent-orchestrator/issue_queue/processed/restore-drag-and-drop.md"]
+            if kwargs.get("dir_path") == ".agent-orchestrator/issue_queue/processed"
             else []
         ),
     )

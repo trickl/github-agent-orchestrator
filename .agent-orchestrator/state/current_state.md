@@ -1,6 +1,6 @@
-# Current System Capabilities
+# Current State
 
-This document describes the concrete capabilities of the GitHub Agent Orchestrator system as implemented in version 0.1.0.
+This document describes the concrete current state of the GitHub Agent Orchestrator system as implemented in version 0.1.0.
 
 ## Core Components
 

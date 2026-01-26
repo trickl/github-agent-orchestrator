@@ -218,7 +218,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     gap_cycle.add_argument(
         "--template",
-        default=str(Path("planning/issue_templates/gap-analysis.md")),
+        default=str(Path(".agent-orchestrator/issue_templates/gap-analysis.md")),
         help="Path to the gap analysis issue body template",
     )
     gap_cycle.add_argument(
@@ -277,7 +277,7 @@ def build_parser() -> argparse.ArgumentParser:
     promote_queue = subparsers.add_parser(
         "promote-issue-queue",
         help=(
-            "Promote the next file in planning/issue_queue/pending into a GitHub issue, "
+            "Promote the next file in .agent-orchestrator/issue_queue/pending into a GitHub issue, "
             "assign it to Copilot, then move the file to processed/"
         ),
     )
@@ -290,12 +290,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     promote_queue.add_argument(
         "--pending-dir",
-        default=str(Path("planning/issue_queue/pending")),
+        default=str(Path(".agent-orchestrator/issue_queue/pending")),
         help="Directory containing pending queue files",
     )
     promote_queue.add_argument(
         "--processed-dir",
-        default=str(Path("planning/issue_queue/processed")),
+        default=str(Path(".agent-orchestrator/issue_queue/processed")),
         help="Directory where processed queue files are moved",
     )
     promote_queue.add_argument(
@@ -346,7 +346,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sys_caps_after_merge.add_argument(
         "--template",
-        default=str(Path("planning/issue_templates/system-capabilities-after-pr-merge.md")),
+        default=str(Path(".agent-orchestrator/issue_templates/system-capabilities-after-pr-merge.md")),
         help="Path to the system capabilities after-merge issue body template",
     )
     sys_caps_after_merge.add_argument(
@@ -409,12 +409,12 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         help=(
             "Path to the queue file in the target repo, e.g. "
-            "planning/issue_queue/pending/dev-20250101.md"
+            ".agent-orchestrator/issue_queue/pending/dev-20250101.md"
         ),
     )
     complete_queue_item.add_argument(
         "--complete-dir",
-        default="planning/issue_queue/complete",
+        default=".agent-orchestrator/issue_queue/complete",
         help="Destination directory for completed items",
     )
     complete_queue_item.add_argument(

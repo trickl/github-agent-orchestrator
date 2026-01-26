@@ -1,6 +1,6 @@
 # Gap Analysis Issue Template
 
-## Plan Alignment Analysis (Target State → Next Development Step)
+## Plan Alignment Analysis (Target → Current → Next Development Step)
 
 ### Purpose
 Determine whether the current system **fully satisfies the intended target state**.  
@@ -22,8 +22,9 @@ It is valid—and expected—for this task to conclude that **no further work is
 ---
 
 ### Inputs
-- `/planning/vision/goal.md`
-- `/planning/state/system_capabilities.md`
+- `/.agent-orchestrator/vision/goal.md`
+- `/.agent-orchestrator/state/target_state.md`
+- `/.agent-orchestrator/state/current_state.md`
 - Any other relevant planning or architectural documents
 
 ---
@@ -47,7 +48,7 @@ according to the current system capabilities.
 ### Completion Check (Mandatory)
 Before proposing any task, answer the following question:
 
-> **Does the current system, as described in `system_capabilities.md`, fully and adequately satisfy the target state defined in `goal.md`?**
+> **Does the current system, as described in `current_state.md`, fully and adequately satisfy the target state defined in `target_state.md` (and the goal)?**
 
 - If **YES**:
   - **Do not create any file**
@@ -65,6 +66,11 @@ Before proposing any task, answer the following question:
 3. Ensure the task is:
    - Necessary (not optional)
    - Clearly scoped
+  - Achievable within a **single pull request**
+  - Decomposed to the **smallest viable step** if the target requirement is complex
+
+If the ideal next step is too large for a single PR, **split it** into a smaller, self-contained task
+that still advances the system toward the target state.
 
 ---
 
@@ -74,11 +80,12 @@ Before proposing any task, answer the following question:
 - Do not propose multiple tasks
 - Do not solve the task
 - Do not restate or re-document existing capabilities
+- Do not propose work that cannot reasonably be completed in a single PR
 
 ---
 
 ### Output (Only if a task is required)
-- Create **one** new file in `/planning/issue_queue/pending/`
+- Create **one** new file in `/.agent-orchestrator/issue_queue/pending/`
 - The file must clearly and verbosely describe the proposed development task in as much detail as possible
 - The **first line** of the file must be a short, friendly task name
 

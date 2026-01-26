@@ -1,7 +1,7 @@
 Split dashboard_router.py and test_dashboard_api.py into focused modules
 
 ## Context
-This task addresses items **A** and **B** from review `planning/reviews/review-2026-01-05-refactor-large-files.md`.
+This task addresses items **A** and **B** from review `.agent-orchestrator/reviews/review-2026-01-05-refactor-large-files.md`.
 
 The review identified that `dashboard_router.py` (4746 lines) and `tests/unit/test_dashboard_api.py` (2109 lines) are acting as "god-modules" that mix too many concerns. This makes safe changes harder and increases the chance of accidental coupling.
 
@@ -113,3 +113,4 @@ Key guidelines:
 - No behavior changes in the API
 - All files pass linting (ruff, black, isort, mypy)
 - No circular import issues
+

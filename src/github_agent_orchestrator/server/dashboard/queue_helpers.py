@@ -69,8 +69,8 @@ def _is_gap_analysis_issue_title(title: str) -> bool:
 
 
 _GAP_ANALYSIS_TEMPLATE_PATHS: tuple[str, ...] = (
-    "planning/issue_templates/gap-analysis.md",
-    "planning/issue_templates/gap_analysis.md",
+    ".agent-orchestrator/issue_templates/gap-analysis.md",
+    ".agent-orchestrator/issue_templates/gap_analysis.md",
 )
 
 
@@ -135,8 +135,8 @@ def _load_gap_analysis_template_or_raise(
         status_code=502,
         detail=(
             "Unable to load local gap analysis template. "
-            "Expected one of: planning/issue_templates/gap-analysis.md or "
-            "planning/issue_templates/gap_analysis.md. "
+            "Expected one of: .agent-orchestrator/issue_templates/gap-analysis.md or "
+            ".agent-orchestrator/issue_templates/gap_analysis.md. "
             f"Attempts: {tried}{more}"
         ),
     )
@@ -152,8 +152,8 @@ def _gap_analysis_issue_body_looks_unsafe(body: str) -> bool:
     lowered = body.lower()
     forbidden = (
         "open a pr that adds exactly one new file",
-        "open a pr that adds exactly one new file under /planning/issue_queue/pending/",
-        "create one development task in planning/issue_queue/pending/",
+        "open a pr that adds exactly one new file under /.agent-orchestrator/issue_queue/pending/",
+        "create one development task in .agent-orchestrator/issue_queue/pending/",
     )
     return any(tok in lowered for tok in forbidden)
 

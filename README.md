@@ -84,8 +84,8 @@ Concretely:
 
 The system continuously iterates over two explicit states:
 
-- **Target state**: `/planning/vision/goal.md`
-- **Current state**: `/planning/state/system_capabilities.md`
+- **Target state**: `/.agent-orchestrator/state/target_state.md`
+- **Current state**: `/.agent-orchestrator/state/current_state.md`
 
 Each loop:
 
@@ -102,17 +102,17 @@ There is **no growing prompt comtext**.
 
 ```mermaid
 flowchart TD
-    Goal["Target State<br/>goal.md"]
-    Cap["Current State<br/>system_capabilities.md"]
+    Goal["Target State<br/>target_state.md"]
+    Cap["Current State<br/>current_state.md"]
 
     Gap["Gap Analysis<br/>(bounded context)"]
 
-    Queue["Task Artefact<br/>/planning/issue_queue/pending"]
+    Queue["Task Artefact<br/>/.agent-orchestrator/issue_queue/pending"]
     Issue["GitHub Issue"]
     PR["PR + Review"]
     Merge["Merge"]
 
-    Update["Update Capabilities<br/>system_capabilities.md"]
+    Update["Update Current State<br/>current_state.md"]
 
     Goal --> Gap
     Cap --> Gap
@@ -133,11 +133,12 @@ flowchart TD
 The entire loop is driven by a small, explicit set of Git-tracked artefacts:
 
 ```text
-/planning
+/.agent-orchestrator
     /vision
         goal.md
     /state
-        system_capabilities.md
+        target_state.md
+        current_state.md
     /reviews
         review-YYYY-MM-DD.md
     /issue_queue
@@ -146,7 +147,7 @@ The entire loop is driven by a small, explicit set of Git-tracked artefacts:
         complete/
 ```
 
-The `/planning/issue_queue` directory is the handoff boundary between Copilot’s reasoning and the orchestrator’s
+The `/.agent-orchestrator/issue_queue` directory is the handoff boundary between Copilot’s reasoning and the orchestrator’s
 control.
 
 ---
@@ -157,14 +158,14 @@ These are never mixed.
 
 ### 1. Gap analysis
 
-- Compares goal vs capabilities
+- Compares target vs current
 - Produces exactly one task artefact
 - No code changes
 
 ### 2. Development task
 
 - Implements one concrete change
-- Updates `system_capabilities.md`
+- Updates `current_state.md` when a capability refresh is requested
 
 ### 3. Review task
 
@@ -200,10 +201,11 @@ It runs linting, formatting checks, type checking, and tests.
 
 ## User role
 
-The user owns exactly one artefact:
+The user owns two artefacts:
 
 ```text
-/planning/vision/goal.md
+/.agent-orchestrator/vision/goal.md
+/.agent-orchestrator/state/target_state.md
 ```
 
 Everything else is derived.
@@ -251,10 +253,10 @@ orchestrator-server --loop-mode review
 
 In review mode:
 
-- Step 1 consumes the next review file under `planning/reviews/review-*.md` and produces exactly one queue artefact.
+- Step 1 consumes the next review file under `.agent-orchestrator/reviews/review-*.md` and produces exactly one queue artefact.
 - Step 2 executes queued work (both `review-*.md` and `dev-*.md` artefacts are eligible).
-- Step 3 creates an “Update Review” issue that updates `planning/reviews/review-YYYY-MM-DD.actions.md` with what was resolved.
-- Review mode does **not** create “Update Capability” issues (i.e., it does not update `planning/state/system_capabilities.md`).
+- Step 3 creates an “Update Review” issue that updates `.agent-orchestrator/reviews/review-YYYY-MM-DD.actions.md` with what was resolved.
+- Review mode does **not** create “Update Capability” issues (i.e., it does not update `.agent-orchestrator/state/current_state.md`).
 
 - OpenAPI: http://127.0.0.1:8000/api/openapi.json
 - Swagger UI: http://127.0.0.1:8000/api/docs

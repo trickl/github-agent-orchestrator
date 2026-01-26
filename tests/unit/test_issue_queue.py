@@ -1,4 +1,4 @@
-"""Unit tests for planning issue-queue promotion helpers."""
+"""Unit tests for .agent-orchestrator issue-queue promotion helpers."""
 
 from __future__ import annotations
 
@@ -80,7 +80,7 @@ def test_create_issue_from_queue_is_idempotent_by_queue_id(tmp_path: Path) -> No
 
     record = service.create_issue_from_queue(
         queue_id="dev-1.md",
-        queue_path="planning/issue_queue/pending/dev-1.md",
+        queue_path=".agent-orchestrator/issue_queue/pending/dev-1.md",
         title="Queue issue",
         body="Body",
         labels=None,
@@ -90,7 +90,7 @@ def test_create_issue_from_queue_is_idempotent_by_queue_id(tmp_path: Path) -> No
     with pytest.raises(IssueAlreadyExists):
         service.create_issue_from_queue(
             queue_id="dev-1.md",
-            queue_path="planning/issue_queue/pending/dev-1.md",
+            queue_path=".agent-orchestrator/issue_queue/pending/dev-1.md",
             title="Queue issue (updated title)",
             body="Body",
             labels=None,

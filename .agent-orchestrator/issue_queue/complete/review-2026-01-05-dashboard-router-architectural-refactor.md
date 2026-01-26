@@ -182,3 +182,4 @@ Following the review's "move-first, patch-second" constraint:
 - Take incremental steps and verify tests pass after each module extraction
 - If dependency injection proves too complex, an alternative is to consolidate shared operations into a single shared module that all extracted modules can import (but this is less clean)
 - Avoid the temptation to rewrite functions during extraction; keep moves verbatim per the review guidance
+

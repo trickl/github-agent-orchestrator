@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from github_agent_orchestrator.server.app import create_app
@@ -51,8 +52,32 @@ def _dual_patch(monkeypatch: Any, attr_name: str, value: Any) -> None:
         monkeypatch.setattr(dashboard_router, attr_name, value)
 
 
+def test_loop_status_waits_for_target_state(monkeypatch, tmp_path: Path) -> None:
+    planning = tmp_path / ".agent-orchestrator"
+    agent_state = tmp_path / "agent_state"
+
+    monkeypatch.setenv("ORCHESTRATOR_PLANNING_ROOT", str(planning))
+    monkeypatch.setenv("AGENT_STATE_PATH", str(agent_state))
+    monkeypatch.setenv("ORCHESTRATOR_UI_DIST", str(tmp_path / "ui" / "dist"))
+    monkeypatch.setenv("ORCHESTRATOR_DEFAULT_REPO", "acme/repo")
+
+    def fake_get_repo_text_file(*_args, **kwargs):
+        if kwargs.get("path") == ".agent-orchestrator/state/target_state.md":
+            raise HTTPException(status_code=502, detail="missing")
+        raise AssertionError("Unexpected file access")
+
+    _dual_patch(monkeypatch, "_get_repo_text_file", fake_get_repo_text_file)
+
+    client = TestClient(create_app())
+    loop = client.get("/api/loop").json()
+
+    assert loop["stage"] == "1a"
+    assert loop["stageReason"] == "waiting for target_state.md"
+    assert any("Target state is missing" in w for w in loop.get("warnings", []))
+
+
 def test_loop_status_endpoint(monkeypatch, tmp_path: Path) -> None:
-    planning = tmp_path / "planning"
+    planning = tmp_path / ".agent-orchestrator"
     agent_state = tmp_path / "agent_state"
 
     monkeypatch.setenv("ORCHESTRATOR_PLANNING_ROOT", str(planning))
@@ -62,14 +87,14 @@ def test_loop_status_endpoint(monkeypatch, tmp_path: Path) -> None:
 
     def fake_list_repo_md(*_args, **kwargs):
         dir_path = kwargs.get("dir_path")
-        if dir_path == "planning/issue_queue/pending":
+        if dir_path == ".agent-orchestrator/issue_queue/pending":
             return [
-                "planning/issue_queue/pending/dev-1.md",
-                "planning/issue_queue/pending/nested/dev-2.md",
+                ".agent-orchestrator/issue_queue/pending/dev-1.md",
+                ".agent-orchestrator/issue_queue/pending/nested/dev-2.md",
             ]
-        if dir_path == "planning/issue_queue/processed":
+        if dir_path == ".agent-orchestrator/issue_queue/processed":
             return []
-        if dir_path == "planning/issue_queue/complete":
+        if dir_path == ".agent-orchestrator/issue_queue/complete":
             return []
         return []
 
@@ -78,9 +103,9 @@ def test_loop_status_endpoint(monkeypatch, tmp_path: Path) -> None:
     # Provide file contents so /api/loop can read the first line title.
     def fake_get_repo_text_file(*_args, **kwargs):
         path = kwargs.get("path")
-        if path == "planning/issue_queue/pending/dev-1.md":
+        if path == ".agent-orchestrator/issue_queue/pending/dev-1.md":
             return "Dev: One\n\nBody\n", "sha-1"
-        if path == "planning/issue_queue/pending/nested/dev-2.md":
+        if path == ".agent-orchestrator/issue_queue/pending/nested/dev-2.md":
             return "Dev: Two\n\nBody\n", "sha-2"
         raise FileNotFoundError(str(path))
 
@@ -106,7 +131,7 @@ def test_loop_status_endpoint(monkeypatch, tmp_path: Path) -> None:
 
 
 def test_loop_status_review_mode_stage_1a_focus_review_issue(monkeypatch, tmp_path: Path) -> None:
-    planning = tmp_path / "planning"
+    planning = tmp_path / ".agent-orchestrator"
     agent_state = tmp_path / "agent_state"
 
     monkeypatch.setenv("ORCHESTRATOR_PLANNING_ROOT", str(planning))
@@ -144,7 +169,7 @@ def test_loop_status_review_mode_stage_1a_focus_review_issue(monkeypatch, tmp_pa
 
 
 def test_loop_status_review_mode_stage_1b_focus_includes_pr(monkeypatch, tmp_path: Path) -> None:
-    planning = tmp_path / "planning"
+    planning = tmp_path / ".agent-orchestrator"
     agent_state = tmp_path / "agent_state"
 
     monkeypatch.setenv("ORCHESTRATOR_PLANNING_ROOT", str(planning))
@@ -210,7 +235,7 @@ def test_loop_status_review_mode_stage_1b_focus_includes_pr(monkeypatch, tmp_pat
 def test_loop_status_review_mode_stage_2a_focus_review_queue_item(
     monkeypatch, tmp_path: Path
 ) -> None:
-    planning = tmp_path / "planning"
+    planning = tmp_path / ".agent-orchestrator"
     agent_state = tmp_path / "agent_state"
 
     monkeypatch.setenv("ORCHESTRATOR_PLANNING_ROOT", str(planning))
@@ -222,9 +247,12 @@ def test_loop_status_review_mode_stage_2a_focus_review_queue_item(
 
     def fake_list_repo_md(*_args, **kwargs):
         dir_path = kwargs.get("dir_path")
-        if dir_path == "planning/issue_queue/pending":
-            return ["planning/issue_queue/pending/review-2026-01-05.md"]
-        if dir_path in {"planning/issue_queue/processed", "planning/issue_queue/complete"}:
+        if dir_path == ".agent-orchestrator/issue_queue/pending":
+            return [".agent-orchestrator/issue_queue/pending/review-2026-01-05.md"]
+        if dir_path in {
+            ".agent-orchestrator/issue_queue/processed",
+            ".agent-orchestrator/issue_queue/complete",
+        }:
             return []
         return []
 
@@ -232,7 +260,7 @@ def test_loop_status_review_mode_stage_2a_focus_review_queue_item(
 
     def fake_get_repo_text_file(*_a, **kwargs):
         path = kwargs.get("path")
-        if path == "planning/issue_queue/pending/review-2026-01-05.md":
+        if path == ".agent-orchestrator/issue_queue/pending/review-2026-01-05.md":
             return "Review: One\n\nBody\n", "sha-review-1"
         raise FileNotFoundError(str(path))
 
@@ -252,7 +280,7 @@ def test_loop_status_review_mode_stage_2a_focus_review_queue_item(
 
 
 def test_loop_status_stage_c_when_issue_exists_but_no_pr(monkeypatch, tmp_path: Path) -> None:
-    planning = tmp_path / "planning"
+    planning = tmp_path / ".agent-orchestrator"
     agent_state = tmp_path / "agent_state"
 
     monkeypatch.setenv("ORCHESTRATOR_PLANNING_ROOT", str(planning))
@@ -263,11 +291,11 @@ def test_loop_status_stage_c_when_issue_exists_but_no_pr(monkeypatch, tmp_path: 
 
     def fake_list_repo_md(*_args, **kwargs):
         dir_path = kwargs.get("dir_path")
-        if dir_path == "planning/issue_queue/pending":
-            return ["planning/issue_queue/pending/dev-1.md"]
-        if dir_path == "planning/issue_queue/processed":
+        if dir_path == ".agent-orchestrator/issue_queue/pending":
+            return [".agent-orchestrator/issue_queue/pending/dev-1.md"]
+        if dir_path == ".agent-orchestrator/issue_queue/processed":
             return []
-        if dir_path == "planning/issue_queue/complete":
+        if dir_path == ".agent-orchestrator/issue_queue/complete":
             return []
         return []
 
@@ -275,7 +303,7 @@ def test_loop_status_stage_c_when_issue_exists_but_no_pr(monkeypatch, tmp_path: 
 
     def fake_get_repo_text_file(*_args, **kwargs):
         path = kwargs.get("path")
-        if path == "planning/issue_queue/pending/dev-1.md":
+        if path == ".agent-orchestrator/issue_queue/pending/dev-1.md":
             return "Dev: One\n\nBody\n", "sha-1"
         raise FileNotFoundError(str(path))
 
@@ -303,7 +331,7 @@ def test_loop_status_stage_c_when_issue_exists_but_no_pr(monkeypatch, tmp_path: 
 
 
 def test_loop_status_stage_d_when_processed_has_ready_pr(monkeypatch, tmp_path: Path) -> None:
-    planning = tmp_path / "planning"
+    planning = tmp_path / ".agent-orchestrator"
     agent_state = tmp_path / "agent_state"
 
     monkeypatch.setenv("ORCHESTRATOR_PLANNING_ROOT", str(planning))
@@ -314,11 +342,11 @@ def test_loop_status_stage_d_when_processed_has_ready_pr(monkeypatch, tmp_path: 
 
     def fake_list_repo_md(*_args, **kwargs):
         dir_path = kwargs.get("dir_path")
-        if dir_path == "planning/issue_queue/pending":
+        if dir_path == ".agent-orchestrator/issue_queue/pending":
             return []
-        if dir_path == "planning/issue_queue/processed":
-            return ["planning/issue_queue/processed/dev-1.md"]
-        if dir_path == "planning/issue_queue/complete":
+        if dir_path == ".agent-orchestrator/issue_queue/processed":
+            return [".agent-orchestrator/issue_queue/processed/dev-1.md"]
+        if dir_path == ".agent-orchestrator/issue_queue/complete":
             return []
         return []
 
@@ -326,7 +354,7 @@ def test_loop_status_stage_d_when_processed_has_ready_pr(monkeypatch, tmp_path: 
 
     def fake_get_repo_text_file(*_args, **kwargs):
         path = kwargs.get("path")
-        if path == "planning/issue_queue/processed/dev-1.md":
+        if path == ".agent-orchestrator/issue_queue/processed/dev-1.md":
             return "Dev: One\n\nBody\n", "sha-1"
         raise FileNotFoundError(str(path))
 
@@ -377,7 +405,7 @@ def test_loop_status_stage_d_when_processed_has_ready_pr(monkeypatch, tmp_path: 
 def test_loop_status_stage_d_when_processed_has_review_requested_event_even_without_requested_reviewers(
     monkeypatch, tmp_path: Path
 ) -> None:
-    planning = tmp_path / "planning"
+    planning = tmp_path / ".agent-orchestrator"
     agent_state = tmp_path / "agent_state"
 
     monkeypatch.setenv("ORCHESTRATOR_PLANNING_ROOT", str(planning))
@@ -388,11 +416,11 @@ def test_loop_status_stage_d_when_processed_has_review_requested_event_even_with
 
     def fake_list_repo_md(*_args, **kwargs):
         dir_path = kwargs.get("dir_path")
-        if dir_path == "planning/issue_queue/pending":
+        if dir_path == ".agent-orchestrator/issue_queue/pending":
             return []
-        if dir_path == "planning/issue_queue/processed":
-            return ["planning/issue_queue/processed/dev-1.md"]
-        if dir_path == "planning/issue_queue/complete":
+        if dir_path == ".agent-orchestrator/issue_queue/processed":
+            return [".agent-orchestrator/issue_queue/processed/dev-1.md"]
+        if dir_path == ".agent-orchestrator/issue_queue/complete":
             return []
         return []
 
@@ -449,7 +477,7 @@ def test_loop_status_stage_d_when_processed_has_review_requested_event_even_with
 
 
 def test_loop_status_advances_when_pr_title_is_wip(monkeypatch, tmp_path: Path) -> None:
-    planning = tmp_path / "planning"
+    planning = tmp_path / ".agent-orchestrator"
     agent_state = tmp_path / "agent_state"
 
     monkeypatch.setenv("ORCHESTRATOR_PLANNING_ROOT", str(planning))
@@ -460,11 +488,11 @@ def test_loop_status_advances_when_pr_title_is_wip(monkeypatch, tmp_path: Path) 
 
     def fake_list_repo_md(*_args, **kwargs):
         dir_path = kwargs.get("dir_path")
-        if dir_path == "planning/issue_queue/pending":
+        if dir_path == ".agent-orchestrator/issue_queue/pending":
             return []
-        if dir_path == "planning/issue_queue/processed":
-            return ["planning/issue_queue/processed/dev-1.md"]
-        if dir_path == "planning/issue_queue/complete":
+        if dir_path == ".agent-orchestrator/issue_queue/processed":
+            return [".agent-orchestrator/issue_queue/processed/dev-1.md"]
+        if dir_path == ".agent-orchestrator/issue_queue/complete":
             return []
         return []
 
@@ -512,7 +540,7 @@ def test_loop_status_advances_when_pr_title_is_wip(monkeypatch, tmp_path: Path) 
 
 
 def test_loop_status_stage_a_exposes_gap_pr_ready_for_merge(monkeypatch, tmp_path: Path) -> None:
-    planning = tmp_path / "planning"
+    planning = tmp_path / ".agent-orchestrator"
     agent_state = tmp_path / "agent_state"
 
     monkeypatch.setenv("ORCHESTRATOR_PLANNING_ROOT", str(planning))
@@ -525,9 +553,9 @@ def test_loop_status_stage_a_exposes_gap_pr_ready_for_merge(monkeypatch, tmp_pat
     def fake_list_repo_md(*_args, **kwargs):
         dir_path = kwargs.get("dir_path")
         if dir_path in {
-            "planning/issue_queue/pending",
-            "planning/issue_queue/processed",
-            "planning/issue_queue/complete",
+            ".agent-orchestrator/issue_queue/pending",
+            ".agent-orchestrator/issue_queue/processed",
+            ".agent-orchestrator/issue_queue/complete",
         }:
             return []
         return []
@@ -593,7 +621,7 @@ def test_loop_status_stage_a_exposes_gap_pr_ready_for_merge(monkeypatch, tmp_pat
 def test_loop_status_stage_1c_when_gap_pr_is_draft_but_review_requested(
     monkeypatch, tmp_path: Path
 ) -> None:
-    planning = tmp_path / "planning"
+    planning = tmp_path / ".agent-orchestrator"
     agent_state = tmp_path / "agent_state"
 
     monkeypatch.setenv("ORCHESTRATOR_PLANNING_ROOT", str(planning))
@@ -665,7 +693,7 @@ def test_loop_status_stage_1c_when_gap_pr_is_draft_but_review_requested(
 def test_loop_status_stage_e_when_open_update_capability_issue_exists(
     monkeypatch, tmp_path: Path
 ) -> None:
-    planning = tmp_path / "planning"
+    planning = tmp_path / ".agent-orchestrator"
     agent_state = tmp_path / "agent_state"
 
     monkeypatch.setenv("ORCHESTRATOR_PLANNING_ROOT", str(planning))
@@ -676,11 +704,11 @@ def test_loop_status_stage_e_when_open_update_capability_issue_exists(
 
     def fake_list_repo_md(*_args, **kwargs):
         dir_path = kwargs.get("dir_path")
-        if dir_path == "planning/issue_queue/pending":
-            return ["planning/issue_queue/pending/dev-1.md"]
-        if dir_path == "planning/issue_queue/processed":
+        if dir_path == ".agent-orchestrator/issue_queue/pending":
+            return [".agent-orchestrator/issue_queue/pending/dev-1.md"]
+        if dir_path == ".agent-orchestrator/issue_queue/processed":
             return []
-        if dir_path == "planning/issue_queue/complete":
+        if dir_path == ".agent-orchestrator/issue_queue/complete":
             return []
         return []
 
@@ -756,7 +784,7 @@ def test_loop_status_stage_e_when_open_update_capability_issue_exists(
 def test_loop_status_stage_g_when_open_update_capability_issue_has_ready_pr(
     monkeypatch, tmp_path: Path
 ) -> None:
-    planning = tmp_path / "planning"
+    planning = tmp_path / ".agent-orchestrator"
     agent_state = tmp_path / "agent_state"
 
     monkeypatch.setenv("ORCHESTRATOR_PLANNING_ROOT", str(planning))
@@ -767,11 +795,11 @@ def test_loop_status_stage_g_when_open_update_capability_issue_has_ready_pr(
 
     def fake_list_repo_md(*_args, **kwargs):
         dir_path = kwargs.get("dir_path")
-        if dir_path == "planning/issue_queue/pending":
+        if dir_path == ".agent-orchestrator/issue_queue/pending":
             return []
-        if dir_path == "planning/issue_queue/processed":
+        if dir_path == ".agent-orchestrator/issue_queue/processed":
             return []
-        if dir_path == "planning/issue_queue/complete":
+        if dir_path == ".agent-orchestrator/issue_queue/complete":
             return []
         return []
 

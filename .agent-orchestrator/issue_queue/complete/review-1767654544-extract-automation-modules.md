@@ -2,7 +2,7 @@ Extract automation helper modules from dashboard_router.py (auto-link and auto-r
 
 ## Context
 
-This task addresses **Review Item A** from `planning/reviews/review-2026-01-05-refactor-large-files.md`.
+This task addresses **Review Item A** from `review-2026-01-05-refactor-large-files.md`.
 
 The review identified that `dashboard_router.py` (currently 4038 lines) is still acting as a god-module mixing HTTP route declarations with lots of supporting logic. The review recommends continuing the incremental extraction process that has already successfully reduced the file from 4746 lines to 4038 lines through earlier PRs.
 
@@ -184,3 +184,4 @@ After this PR:
 - Foundation is set for the remaining two extractions:
   - `loop_status.py` (~934 lines)
   - `loop_actions.py` (~2293 lines)
+

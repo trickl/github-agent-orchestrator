@@ -2,15 +2,22 @@
   "goal": {
     "key": "goal",
     "title": "Goal",
-    "path": "planning/vision/goal.md",
+    "path": ".agent-orchestrator/vision/goal.md",
     "lastUpdatedIso": "2025-12-01T09:00:00Z",
     "content": "# Goal\n\nBuild a transparent, debuggable orchestrator loop driven by planning artefacts.\n"
   },
-  "capabilities": {
-    "key": "capabilities",
-    "title": "System Capabilities",
-    "path": "planning/state/system_capabilities.md",
+  "targetState": {
+    "key": "targetState",
+    "title": "Target",
+    "path": ".agent-orchestrator/state/target_state.md",
     "lastUpdatedIso": "2025-12-15T09:00:00Z",
-    "content": "# System Capabilities\n\n- Creates issues from queued artefacts\n- Promotes one issue per cycle\n"
+    "content": "# Target State\n\n- Define the desired orchestration loop\n- Document guardrails and success criteria\n"
+  },
+  "currentState": {
+    "key": "currentState",
+    "title": "Current",
+    "path": ".agent-orchestrator/state/current_state.md",
+    "lastUpdatedIso": "2025-12-16T09:00:00Z",
+    "content": "# Current State\n\n- Creates issues from queued artefacts\n- Promotes one issue per cycle\n"
   }
 }

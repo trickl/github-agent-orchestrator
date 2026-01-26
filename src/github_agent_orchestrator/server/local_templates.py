@@ -2,7 +2,7 @@
 
 The dashboard server is intended to run from a local checkout of this repository.
 Issue templates used to drive Copilot tasks live in *this* repo under
-`planning/issue_templates/`.
+`.agent-orchestrator/issue_templates/`.
 
 These templates are intentionally NOT loaded from the target GitHub repository.
 The target repo is the work arena; templates are the orchestrator's behavior.
@@ -19,7 +19,7 @@ def _find_repo_root(start: Path | None = None) -> Path:
     """Best-effort locate the repository root directory.
 
     We walk upward looking for `pyproject.toml` (and prefer roots that also contain
-    a `planning/` directory).
+    a `.agent-orchestrator/` directory).
 
     Raises:
         HTTPException: if the repo root cannot be found.
@@ -33,7 +33,7 @@ def _find_repo_root(start: Path | None = None) -> Path:
         if not (p / "pyproject.toml").exists():
             continue
         best = p
-        if (p / "planning").exists():
+        if (p / ".agent-orchestrator").exists():
             return p
 
     if best is not None:
@@ -52,7 +52,7 @@ def load_local_template_or_raise(*, relative_path: str) -> str:
     """Load a UTF-8 template file from the local repository.
 
     Args:
-        relative_path: Path relative to repo root (e.g. "planning/issue_templates/gap-analysis.md").
+        relative_path: Path relative to repo root (e.g. ".agent-orchestrator/issue_templates/gap-analysis.md").
 
     Raises:
         HTTPException: if the file does not exist or cannot be read.

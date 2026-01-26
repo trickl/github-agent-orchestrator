@@ -5,7 +5,7 @@ This issue is automatically created after a pull request has been merged.
 The goal is to update the system capabilities document so that it accurately reflects what the system can do after this change.
 
 Target file:
-- /planning/state/system_capabilities.md
+- /.agent-orchestrator/state/current_state.md
 
 Instructions:
 - Review the merged pull request and its discussion.
@@ -29,3 +29,4 @@ PR comments and discussion (chronological):
 
 
 {{PR_COMMENTS}}
+

@@ -36,6 +36,23 @@ class ServerSettings(BaseSettings):
         ),
     )
 
+    prune_non_copilot_assignees: bool = Field(
+        default=True,
+        validation_alias="ORCHESTRATOR_PRUNE_NON_COPILOT_ASSIGNEES",
+        description=(
+            "If true, remove non-Copilot assignees when assigning issues unless the issue has an "
+            "allowed label (see ORCHESTRATOR_NON_COPILOT_ASSIGNEE_LABELS)."
+        ),
+    )
+
+    non_copilot_assignee_labels: str = Field(
+        default="Development",
+        validation_alias="ORCHESTRATOR_NON_COPILOT_ASSIGNEE_LABELS",
+        description=(
+            "Comma-separated labels for which non-Copilot assignees should be preserved."
+        ),
+    )
+
     auto_promote_enabled: bool = Field(
         default=False,
         validation_alias="ORCHESTRATOR_AUTO_PROMOTE_ENABLED",
@@ -57,7 +74,7 @@ class ServerSettings(BaseSettings):
         validation_alias="ORCHESTRATOR_AUTO_HEAL_ORPHANED_PROCESSED_QUEUE_ITEMS",
         description=(
             "If true, the server may attempt to automatically heal orphaned development queue artefacts "
-            "that are stuck under planning/issue_queue/processed with no associated open issue/PR. "
+            "that are stuck under .agent-orchestrator/issue_queue/processed with no associated open issue/PR. "
             "Healing is conservative: it only marks a processed artefact complete when it can prove a linked PR "
             "was merged; in build mode it will also ensure an 'Update Capability' follow-up issue exists."
         ),
@@ -129,6 +146,35 @@ class ServerSettings(BaseSettings):
         ),
     )
 
+    gap_analysis_mode: str = Field(
+        default="copilot",
+        validation_alias="ORCHESTRATOR_GAP_ANALYSIS_MODE",
+        description=(
+            "Execution mode for gap analysis: 'copilot' (create issue), 'openai', or 'ollama'."
+        ),
+    )
+
+    capability_update_mode: str = Field(
+        default="copilot",
+        validation_alias="ORCHESTRATOR_CAPABILITY_UPDATE_MODE",
+        description=(
+            "Execution mode for capability updates: 'copilot' (create issue), 'openai', or 'ollama'."
+        ),
+    )
+
+    openai_api_key: str = Field(default="", validation_alias="OPENAI_API_KEY")
+    openai_base_url: str = Field(
+        default="https://api.openai.com",
+        validation_alias="OPENAI_BASE_URL",
+    )
+    openai_model: str = Field(default="gpt-4o-mini", validation_alias="OPENAI_MODEL")
+
+    ollama_base_url: str = Field(
+        default="http://localhost:11434",
+        validation_alias="OLLAMA_BASE_URL",
+    )
+    ollama_model: str = Field(default="llama3.1", validation_alias="OLLAMA_MODEL")
+
     # Where the Vite build output lives when serving the UI from the backend.
     ui_dist_path: Path = Field(default=Path("ui/dist"), validation_alias="ORCHESTRATOR_UI_DIST")
 
@@ -148,6 +194,14 @@ class ServerSettings(BaseSettings):
         if mode in {"build", "review"}:
             return mode
         raise ValueError("ORCHESTRATOR_LOOP_MODE must be one of: build, review")
+
+    @field_validator("gap_analysis_mode", "capability_update_mode")
+    @classmethod
+    def _validate_cognitive_mode(cls, v: str) -> str:
+        mode = (v or "").strip().lower()
+        if mode in {"copilot", "openai", "ollama"}:
+            return mode
+        raise ValueError("Mode must be one of: copilot, openai, ollama")
 
     def parsed_cors_origins(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]

@@ -40,11 +40,12 @@ All “thinking” happens inside Copilot-authored PRs.
 These folders are the contract between the user, Copilot PR work, and the orchestrator:
 
 ```
-/planning
+/.agent-orchestrator
   /vision
     goal.md
   /state
-    system_capabilities.md
+    target_state.md
+    current_state.md
   /reviews
     review-YYYY-MM-DD.md
   /issue_queue
@@ -52,32 +53,32 @@ These folders are the contract between the user, Copilot PR work, and the orches
     processed/
 ```
 
-The `/planning/issue_queue` boundary is **the heart of the system**.
+The `/.agent-orchestrator/issue_queue` boundary is **the heart of the system**.
 
 ### The four canonical issue types (never mix)
 
 1) **Gap Analysis (Plan → Build)**
 
-- Purpose: compare `goal.md` vs `system_capabilities.md` and identify the next development step.
-- Output: exactly one file in `/planning/issue_queue/pending/dev-<timestamp>.md`.
+- Purpose: compare `target_state.md` vs `current_state.md` (and `goal.md`) and identify the next development step.
+- Output: exactly one file in `/.agent-orchestrator/issue_queue/pending/dev-<timestamp>.md`.
 - Constraints: **no code changes**, **no GitHub issue creation**, output is a **candidate task**, not a fix.
 
 2) **Development Task (Build Something)**
 
-- Input: a file from `/planning/issue_queue/pending/`.
-- Output: code + tests, and an updated `/planning/state/system_capabilities.md`.
+- Input: a file from `/.agent-orchestrator/issue_queue/pending/`.
+- Output: code + tests, and an updated `/.agent-orchestrator/state/current_state.md` when the issue requests a capability refresh.
 - Promotion: the orchestrator converts the queue file into a GitHub issue, assigns to Copilot, and moves the file to `processed/` (or archives it) after issue creation.
 
 3) **Review Task (Critique)**
 
 - Purpose: assess the system from one specific lens (architecture, correctness, mission alignment, capability completeness).
-- Output: exactly one file in `/planning/reviews/`.
+- Output: exactly one file in `/.agent-orchestrator/reviews/`.
 - Constraints: **analysis only**: no fixes and no new tasks.
 
 4) **Review Consumption (Critique → Action)**
 
 - Input: one specific review file.
-- Output: one or more files in `/planning/issue_queue/pending/review-<timestamp>-<n>.md`.
+- Output: one or more files in `/.agent-orchestrator/issue_queue/pending/review-<timestamp>-<n>.md`.
 - Each file must map to **one actionable concern**.
 
 ### One subtle but crucial rule
@@ -89,15 +90,16 @@ If you violate this, you reintroduce hidden intelligence and lose debuggability.
 ### Orchestrator loop (rate-limited)
 
 - One issue per cycle.
-- Scan `/planning/issue_queue/pending`.
+- Scan `/.agent-orchestrator/issue_queue/pending`.
 - If a file exists: promote the *next* file → issue → move to processed → assign to Copilot → **exit**.
 - If no file exists: optionally create a *meta-issue* (gap analysis, system state update, review) → sleep/poll.
 
 ### User role
 
-The user owns exactly one artefact:
+The user owns two artefacts:
 
-- `/planning/vision/goal.md`
+- `/.agent-orchestrator/vision/goal.md`
+- `/.agent-orchestrator/state/target_state.md`
 
 Everything else is derived.
 

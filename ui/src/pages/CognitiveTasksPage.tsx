@@ -35,7 +35,7 @@ export function CognitiveTasksPage(): React.JSX.Element {
       </Typography>
 
       <Alert severity="info" sx={{ mb: 2 }}>
-        Cognitive Tasks are read from <code>planning/issue_templates/</code> in the target GitHub repo.
+        Cognitive Tasks are read from <code>.agent-orchestrator/issue_templates/</code> in the target GitHub repo.
         This dashboard view is intentionally read-only.
       </Alert>
 

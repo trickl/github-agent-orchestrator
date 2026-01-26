@@ -457,7 +457,7 @@ All planned extractions completed:
 2. ✅ ~~`server/dashboard/automation_auto_link.py`~~ - Auto-link helpers (COMPLETED in PR #42)
 3. ✅ ~~`server/dashboard/automation_auto_resume.py`~~ - Auto-resume helpers (COMPLETED in PR #42)
 4. ✅ ~~`server/dashboard/loop_actions.py`~~ - Promote/merge helpers (COMPLETED in PR #48)
-5. ✅ ~~`server/dashboard/loop_status.py`~~ - Loop-stage computation helpers (COMPLETED in PR #54)
+5. ✅ ~~`server/dashboard/loop_status.py`~~ - Loop-stage computation helpers extracted (COMPLETED)
 
 **Target achieved**: `dashboard_router.py` reduced to 896 lines (81.1% reduction from original 4746 lines).
 
@@ -468,7 +468,7 @@ All planned extractions completed:
 - Request context helpers (`_settings()`, `_active_repo()`, `_make_github_issue_url()`)
 - Issue assignment logic (`_assign_issue_to_copilot()`)
 - Review consumption issue creation (`_ensure_review_consumption_issue_exists()`)
-- Queue path helpers for review actions (`_review_actions_path_for_review_path()`, `_pick_next_review_file()`, `_extract_review_paths_from_queue_content()`)
+- Queue path helpers for review actions (`_review_actions_path_for_review_path()`, `_pick_next_review_file()`, `_extract_review_paths_from_queue_content()`, `_render_review_actions_update_issue_body()`)
 - Legacy markers and constants
 
 These remaining functions are either:
@@ -633,3 +633,4 @@ All acceptance criteria met:
 - None for review items A, B, and C (all fully completed)
 - Optional: Further extract GitHub client helpers (URLs, pagination, parsing) if `client.py` grows beyond current size
 - Optional: Further reduce `dashboard_router.py` from 896 to ~600 lines if desired (remaining functions are mostly routing concerns and small utilities)
+

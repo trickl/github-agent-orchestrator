@@ -1163,22 +1163,93 @@ def _loop_status_for_repo(
     from github_agent_orchestrator.server import dashboard_router
 
     mode = getattr(settings, "loop_mode", "build")
+    target_state_missing = False
+    try:
+        _get_repo_text_file(
+            settings=settings,
+            repository=active_repo,
+            path=".agent-orchestrator/state/target_state.md",
+            ref=ref,
+        )
+    except HTTPException:
+        target_state_missing = True
+
+    if target_state_missing:
+        warnings = _base_warnings(mode)
+        warnings.append(
+            "Target state is missing. Create /.agent-orchestrator/state/target_state.md before the loop can run."
+        )
+        return {
+            "nowIso": _utc_now_iso(),
+            "repo": active_repo,
+            "ref": (ref or None),
+            "loopMode": mode,
+            "stage": "1a",
+            "stageLabel": "1a — Gap analysis issue",
+            "activeStep": 0,
+            "stageReason": "waiting for target_state.md",
+            "sources": {
+                "queueCounts": "github_git_tree",
+            },
+            "counts": {
+                "pending": 0,
+                "processed": 0,
+                "complete": 0,
+                "openIssues": 0,
+                "openPullRequests": 0,
+                "openGapAnalysisIssues": 0,
+                "openGapAnalysisIssuesWithPr": 0,
+                "openGapAnalysisIssuesReadyForReview": 0,
+                "openReviewConsumptionIssues": 0,
+                "openReviewUpdateIssues": 0,
+                "unpromotedPending": 0,
+                "pendingDevelopment": 0,
+                "pendingReview": 0,
+                "pendingCapabilityUpdates": 0,
+                "pendingExcluded": 0,
+                "pendingDevelopmentWithoutPr": 0,
+                "pendingDevelopmentWithPr": 0,
+                "pendingDevelopmentReadyForReview": 0,
+                "pendingReviewWithoutPr": 0,
+                "pendingReviewWithPr": 0,
+                "pendingReviewReadyForReview": 0,
+                "pendingCapabilityUpdatesWithoutPr": 0,
+                "pendingCapabilityUpdatesWithPr": 0,
+                "pendingCapabilityUpdatesReadyForReview": 0,
+                "openCapabilityUpdateIssues": 0,
+                "openCapabilityUpdateIssuesWithPr": 0,
+                "openCapabilityUpdateIssuesReadyForReview": 0,
+            },
+            "debug": {
+                "pendingQueueFilesSample": [],
+                "processedQueueFilesSample": [],
+                "completeQueueFilesSample": [],
+                "pendingExcludedPrefixes": list(_QUEUE_EXCLUDED_PREFIXES),
+                "gapAnalysisIssueTitles": list(_GAP_ANALYSIS_TITLES),
+                "issueTimelineLookups": 0,
+                "pullRequestLookups": 0,
+            },
+            "warnings": warnings,
+            "focus": None,
+            "runningJob": None,
+            "lastAction": None,
+        }
     pending_paths = _list_repo_markdown_files_under(
         settings=settings,
         repository=active_repo,
-        dir_path="planning/issue_queue/pending",
+        dir_path=".agent-orchestrator/issue_queue/pending",
         ref=ref,
     )
     processed_paths = _list_repo_markdown_files_under(
         settings=settings,
         repository=active_repo,
-        dir_path="planning/issue_queue/processed",
+        dir_path=".agent-orchestrator/issue_queue/processed",
         ref=ref,
     )
     complete_paths = _list_repo_markdown_files_under(
         settings=settings,
         repository=active_repo,
-        dir_path="planning/issue_queue/complete",
+        dir_path=".agent-orchestrator/issue_queue/complete",
         ref=ref,
     )
 

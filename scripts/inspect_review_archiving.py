@@ -3,10 +3,10 @@
 This script is intended for debugging review-mode termination.
 
 It will:
-- List active review sources under planning/reviews (excluding completed/ and *.actions.md)
+- List active review sources under .agent-orchestrator/reviews (excluding completed/ and *.actions.md)
 - For the first active review, evaluate whether the orchestrator would archive it
   (based on the most recent closed review-consumption issue + evidence of queue output)
-- Optionally perform the archive move into planning/reviews/completed/
+- Optionally perform the archive move into .agent-orchestrator/reviews/completed/
 
 Safety:
 - No writes are performed unless ORCHESTRATOR_CONFIRM_ARCHIVE=1.
@@ -41,7 +41,7 @@ def _active_review_sources(*, settings: ServerSettings, repo: str, branch: str) 
     paths = github_operations.list_repo_markdown_files_under(
         settings=settings,
         repository=repo,
-        dir_path="planning/reviews",
+        dir_path=".agent-orchestrator/reviews",
         ref=branch,
     )
 
@@ -62,9 +62,9 @@ def _active_review_sources(*, settings: ServerSettings, repo: str, branch: str) 
 def _queue_review_candidates(*, settings: ServerSettings, repo: str, branch: str) -> list[str]:
     out: list[str] = []
     for d in (
-        "planning/issue_queue/pending",
-        "planning/issue_queue/processed",
-        "planning/issue_queue/complete",
+        ".agent-orchestrator/issue_queue/pending",
+        ".agent-orchestrator/issue_queue/processed",
+        ".agent-orchestrator/issue_queue/complete",
     ):
         try:
             paths = github_operations.list_repo_markdown_files_under(
@@ -109,7 +109,7 @@ def main() -> int:
         print(f"  (+{len(queue_review) - 20} more)")
 
     if not sources:
-        print("No active review sources found under planning/reviews.")
+        print("No active review sources found under .agent-orchestrator/reviews.")
         return 0
 
     review_path = sources[0]

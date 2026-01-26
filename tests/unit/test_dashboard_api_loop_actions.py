@@ -13,18 +13,18 @@ from github_agent_orchestrator.server.app import create_app
 
 def _merge_endpoint_list_repo_md(*_a, **kwargs):
     dir_path = kwargs.get("dir_path")
-    if dir_path == "planning/issue_queue/pending":
+    if dir_path == ".agent-orchestrator/issue_queue/pending":
         return []
-    if dir_path == "planning/issue_queue/processed":
-        return ["planning/issue_queue/processed/dev-1.md"]
-    if dir_path == "planning/issue_queue/complete":
+    if dir_path == ".agent-orchestrator/issue_queue/processed":
+        return [".agent-orchestrator/issue_queue/processed/dev-1.md"]
+    if dir_path == ".agent-orchestrator/issue_queue/complete":
         return []
     return []
 
 
 def _merge_endpoint_get_repo_text_file(*_a, **kwargs):
     path = kwargs.get("path")
-    if path == "planning/issue_queue/processed/dev-1.md":
+    if path == ".agent-orchestrator/issue_queue/processed/dev-1.md":
         return "Dev: One\n\nBody\n", "sha-queue"
     raise FileNotFoundError(str(path))
 
@@ -33,7 +33,7 @@ def _merge_endpoint_put_json(*_a, **kwargs):
     url = str(kwargs.get("url") or "")
     if url.endswith("/pulls/5/merge"):
         return 200, {"merged": True, "sha": "abc123"}
-    if "/contents/planning/issue_queue/complete/" in url:
+    if "/contents/.agent-orchestrator/issue_queue/complete/" in url:
         return 201, {}
     return 500, {"message": "unexpected"}
 
@@ -54,7 +54,7 @@ def _merge_endpoint_post_json(*_a, **kwargs):
 
 
 def test_loop_promote_endpoint_promotes_one_file(monkeypatch, tmp_path: Path) -> None:
-    planning = tmp_path / "planning"
+    planning = tmp_path / ".agent-orchestrator"
     agent_state = tmp_path / "agent_state"
 
     monkeypatch.setenv("ORCHESTRATOR_PLANNING_ROOT", str(planning))
@@ -76,17 +76,17 @@ def test_loop_promote_endpoint_promotes_one_file(monkeypatch, tmp_path: Path) ->
     monkeypatch.setattr(
         dashboard_router,
         "_list_repo_markdown_files_under",
-        lambda *_a, **_k: ["planning/issue_queue/pending/dev-1.md"],
+        lambda *_a, **_k: [".agent-orchestrator/issue_queue/pending/dev-1.md"],
     )
     monkeypatch.setattr(
         loop_actions,
         "_list_repo_markdown_files_under",
-        lambda *_a, **_k: ["planning/issue_queue/pending/dev-1.md"],
+        lambda *_a, **_k: [".agent-orchestrator/issue_queue/pending/dev-1.md"],
     )
 
     def fake_get_repo_text_file(*_a, **kwargs):
         path = kwargs.get("path")
-        if path == "planning/issue_queue/pending/dev-1.md":
+        if path == ".agent-orchestrator/issue_queue/pending/dev-1.md":
             return "Dev: One\n\nBody\n", "sha-1"
         raise FileNotFoundError(str(path))
 
@@ -154,8 +154,8 @@ def test_loop_promote_endpoint_promotes_one_file(monkeypatch, tmp_path: Path) ->
     assert data["branch"] == "main"
     assert data["issueNumber"] == 123
     assert data["created"] is True
-    assert data["queuePath"].endswith("planning/issue_queue/pending/dev-1.md")
-    assert data["processedPath"].endswith("planning/issue_queue/processed/dev-1.md")
+    assert data["queuePath"].endswith(".agent-orchestrator/issue_queue/pending/dev-1.md")
+    assert data["processedPath"].endswith(".agent-orchestrator/issue_queue/processed/dev-1.md")
 
 
 def test_load_gap_analysis_template_is_local_not_github(monkeypatch) -> None:
@@ -188,6 +188,22 @@ def test_ensure_gap_analysis_issue_exists_creates_and_assigns(monkeypatch) -> No
     monkeypatch.setattr(loop_actions, "_get_default_branch", lambda *_a, **_k: "main")
     monkeypatch.setattr(dashboard_router, "_list_open_issues_raw", lambda *_a, **_k: [])
     monkeypatch.setattr(loop_actions, "_list_open_issues_raw", lambda *_a, **_k: [])
+    monkeypatch.setattr(
+        dashboard_router,
+        "_get_repo_text_file",
+        lambda *_a, **kwargs: (
+            "# Target State\n" if kwargs.get("path") == ".agent-orchestrator/state/target_state.md" else "",
+            "sha",
+        ),
+    )
+    monkeypatch.setattr(
+        loop_actions,
+        "_get_repo_text_file",
+        lambda *_a, **kwargs: (
+            "# Target State\n" if kwargs.get("path") == ".agent-orchestrator/state/target_state.md" else "",
+            "sha",
+        ),
+    )
     monkeypatch.setattr(
         dashboard_router,
         "_load_gap_analysis_template_or_raise",
@@ -263,6 +279,22 @@ def test_ensure_gap_analysis_issue_exists_assigns_existing_when_unassigned(monke
             }
         ],
     )
+    monkeypatch.setattr(
+        dashboard_router,
+        "_get_repo_text_file",
+        lambda *_a, **kwargs: (
+            "# Target State\n" if kwargs.get("path") == ".agent-orchestrator/state/target_state.md" else "",
+            "sha",
+        ),
+    )
+    monkeypatch.setattr(
+        loop_actions,
+        "_get_repo_text_file",
+        lambda *_a, **kwargs: (
+            "# Target State\n" if kwargs.get("path") == ".agent-orchestrator/state/target_state.md" else "",
+            "sha",
+        ),
+    )
 
     called: dict[str, object] = {}
 
@@ -283,8 +315,107 @@ def test_ensure_gap_analysis_issue_exists_assigns_existing_when_unassigned(monke
     assert called.get("issue_number") == 42
 
 
+def test_gap_analysis_mode_openai_writes_queue_item(monkeypatch) -> None:
+    monkeypatch.setenv("ORCHESTRATOR_GITHUB_TOKEN", "test-token")
+    monkeypatch.setenv("ORCHESTRATOR_GAP_ANALYSIS_MODE", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+
+    import github_agent_orchestrator.server.dashboard.loop_actions as loop_actions
+
+    monkeypatch.setattr(loop_actions, "_get_default_branch", lambda *_a, **_k: "main")
+
+    def fake_get_repo_text_file(*_a, **kwargs):
+        path = kwargs.get("path")
+        if path == ".agent-orchestrator/state/target_state.md":
+            return "# Target State\n\n- Target\n", "sha-target"
+        if path == ".agent-orchestrator/state/current_state.md":
+            return "# Current State\n\n- Current\n", "sha-current"
+        raise AssertionError(f"Unexpected path: {path}")
+
+    monkeypatch.setattr(loop_actions, "_get_repo_text_file", fake_get_repo_text_file)
+    monkeypatch.setattr(
+        loop_actions,
+        "_generate_chat_completion",
+        lambda **_k: "Dev: Improve gap analysis\n\n- Do the thing\n",
+    )
+
+    captured: dict[str, object] = {}
+
+    def fake_ensure_repo_text_file_present(*_a, **kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(loop_actions, "_ensure_repo_text_file_present", fake_ensure_repo_text_file_present)
+
+    out = loop_actions._ensure_gap_analysis_issue_exists(
+        settings=loop_actions.ServerSettings(),
+        repo="acme/repo",
+    )
+
+    assert out["created"] is True
+    assert isinstance(out.get("queuePath"), str)
+    assert captured.get("path") is not None
+    assert str(captured.get("path")).startswith(".agent-orchestrator/issue_queue/pending/")
+
+
+def test_gap_analysis_creates_baseline_current_state_when_missing(monkeypatch) -> None:
+    monkeypatch.setenv("ORCHESTRATOR_GITHUB_TOKEN", "test-token")
+    monkeypatch.setenv("ORCHESTRATOR_GAP_ANALYSIS_MODE", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+
+    import github_agent_orchestrator.server.dashboard.loop_actions as loop_actions
+
+    monkeypatch.setattr(loop_actions, "_get_default_branch", lambda *_a, **_k: "main")
+
+    def fake_get_repo_text_file(*_a, **kwargs):
+        path = kwargs.get("path")
+        if path == ".agent-orchestrator/state/target_state.md":
+            return "# Target State\n\n- Target\n", "sha-target"
+        if path == ".agent-orchestrator/state/current_state.md":
+            raise HTTPException(status_code=404, detail="missing")
+        raise AssertionError(f"Unexpected path: {path}")
+
+    monkeypatch.setattr(loop_actions, "_get_repo_text_file", fake_get_repo_text_file)
+    monkeypatch.setattr(
+        loop_actions,
+        "_generate_chat_completion",
+        lambda **_k: "Dev: Improve gap analysis\n\n- Do the thing\n",
+    )
+
+    calls: list[dict[str, object]] = []
+
+    def fake_ensure_repo_text_file_present(*_a, **kwargs):
+        calls.append(kwargs)
+
+    monkeypatch.setattr(loop_actions, "_ensure_repo_text_file_present", fake_ensure_repo_text_file_present)
+
+    out = loop_actions._ensure_gap_analysis_issue_exists(
+        settings=loop_actions.ServerSettings(),
+        repo="acme/repo",
+    )
+
+    assert out["created"] is True
+    init_calls = [c for c in calls if c.get("path") == ".agent-orchestrator/state/current_state.md"]
+    assert init_calls
+    expected = (
+        "# Current State\n\n"
+        "## Overview\n"
+        "This repository has no implemented capabilities yet. It is a clean starting point.\n\n"
+        "## Specification\n"
+        "The target specification is defined in `/.agent-orchestrator/state/target_state.md`.\n\n"
+        "## Implemented Capabilities\n"
+        "- None.\n\n"
+        "## In-Progress\n"
+        "- None.\n\n"
+        "## Known Gaps (High-Level)\n"
+        "- All implementation work remains.\n\n"
+        "## Notes\n"
+        "This document should be updated after each merged PR that changes capabilities.\n"
+    )
+    assert init_calls[0].get("content_text") == expected
+
+
 def test_loop_gap_analysis_ensure_endpoint_creates_and_assigns(monkeypatch, tmp_path: Path) -> None:
-    planning = tmp_path / "planning"
+    planning = tmp_path / ".agent-orchestrator"
     agent_state = tmp_path / "agent_state"
 
     monkeypatch.setenv("ORCHESTRATOR_PLANNING_ROOT", str(planning))
@@ -302,16 +433,16 @@ def test_loop_gap_analysis_ensure_endpoint_creates_and_assigns(monkeypatch, tmp_
     monkeypatch.setattr(dashboard_router, "_list_open_issues_raw", lambda *_a, **_k: [])
     monkeypatch.setattr(loop_actions, "_list_open_issues_raw", lambda *_a, **_k: [])
     # Templates are loaded locally; no GitHub file reads should be attempted for templates.
-    monkeypatch.setattr(
-        dashboard_router,
-        "_get_repo_text_file",
-        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("Unexpected GitHub file read")),
-    )
-    monkeypatch.setattr(
-        loop_actions,
-        "_get_repo_text_file",
-        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("Unexpected GitHub file read")),
-    )
+    def fake_get_repo_text_file(*_a, **kwargs):
+        path = kwargs.get("path")
+        if path == ".agent-orchestrator/state/target_state.md":
+            return "# Target State\n", "sha-target"
+        if path == ".agent-orchestrator/state/current_state.md":
+            return "", "sha-current"
+        raise AssertionError("Unexpected GitHub file read")
+
+    monkeypatch.setattr(dashboard_router, "_get_repo_text_file", fake_get_repo_text_file)
+    monkeypatch.setattr(loop_actions, "_get_repo_text_file", fake_get_repo_text_file)
 
     def fake_get_json(*_a, **kwargs):
         url = str(kwargs.get("url") or "")
@@ -349,6 +480,58 @@ def test_loop_gap_analysis_ensure_endpoint_creates_and_assigns(monkeypatch, tmp_
     assert data["issueNumber"] == 777
     assert data["created"] is True
     assert "summary" in data
+
+
+def test_capability_update_mode_openai_writes_current_state(monkeypatch) -> None:
+    monkeypatch.setenv("ORCHESTRATOR_GITHUB_TOKEN", "test-token")
+    monkeypatch.setenv("ORCHESTRATOR_CAPABILITY_UPDATE_MODE", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+
+    import github_agent_orchestrator.server.dashboard.loop_actions as loop_actions
+
+    monkeypatch.setattr(loop_actions, "_get_default_branch", lambda *_a, **_k: "main")
+    monkeypatch.setattr(
+        loop_actions,
+        "_get_pull_request_discussion_markdown",
+        lambda *_a, **_k: "Discussion",
+    )
+
+    def fake_get_repo_text_file(*_a, **kwargs):
+        path = kwargs.get("path")
+        if path == ".agent-orchestrator/state/current_state.md":
+            return "# Current State\n\n- Before\n", "sha-current"
+        raise AssertionError(f"Unexpected path: {path}")
+
+    monkeypatch.setattr(loop_actions, "_get_repo_text_file", fake_get_repo_text_file)
+    monkeypatch.setattr(
+        loop_actions,
+        "_generate_chat_completion",
+        lambda **_k: "# Current State\n\n- After\n",
+    )
+
+    captured: dict[str, object] = {}
+
+    def fake_ensure_repo_text_file_present(*_a, **kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(loop_actions, "_ensure_repo_text_file_present", fake_ensure_repo_text_file_present)
+
+    num, created, label = loop_actions._ensure_followup_issue_after_development_merge(
+        settings=loop_actions.ServerSettings(),
+        repo="acme/repo",
+        branch="main",
+        loop_mode="build",
+        pr_number=5,
+        pr_title="Add thing",
+        pr_body="Body",
+        queue_path=".agent-orchestrator/issue_queue/processed/dev-1.md",
+        queue_content="Dev: One",
+    )
+
+    assert num is None
+    assert created is None
+    assert label is None
+    assert captured.get("path") == ".agent-orchestrator/state/current_state.md"
 
 
 def test_ensure_gap_analysis_issue_exists_repairs_unsafe_existing_issue_before_assign(
@@ -428,7 +611,7 @@ def test_ensure_gap_analysis_issue_exists_repairs_unsafe_existing_issue_before_a
 def test_loop_merge_endpoint_merges_one_ready_pr_and_creates_capability_issue(
     monkeypatch, tmp_path: Path
 ) -> None:
-    planning = tmp_path / "planning"
+    planning = tmp_path / ".agent-orchestrator"
     agent_state = tmp_path / "agent_state"
 
     monkeypatch.setenv("ORCHESTRATOR_PLANNING_ROOT", str(planning))
@@ -553,7 +736,7 @@ def test_loop_merge_endpoint_merges_one_ready_pr_and_creates_capability_issue(
 def test_loop_heal_endpoint_moves_orphaned_processed_to_complete_and_ensures_followup_issue(
     monkeypatch, tmp_path: Path
 ) -> None:
-    planning = tmp_path / "planning"
+    planning = tmp_path / ".agent-orchestrator"
     agent_state = tmp_path / "agent_state"
 
     monkeypatch.setenv("ORCHESTRATOR_PLANNING_ROOT", str(planning))
@@ -571,8 +754,8 @@ def test_loop_heal_endpoint_moves_orphaned_processed_to_complete_and_ensures_fol
 
     def fake_list_repo_md(*_a, **kwargs):
         dir_path = kwargs.get("dir_path")
-        if dir_path == "planning/issue_queue/processed":
-            return ["planning/issue_queue/processed/dev-1.md"]
+        if dir_path == ".agent-orchestrator/issue_queue/processed":
+            return [".agent-orchestrator/issue_queue/processed/dev-1.md"]
         return []
 
     monkeypatch.setattr(dashboard_router, "_list_repo_markdown_files_under", fake_list_repo_md)
@@ -580,7 +763,7 @@ def test_loop_heal_endpoint_moves_orphaned_processed_to_complete_and_ensures_fol
 
     # Processed queue file exists.
     def fake_get_repo_text_file(*_a, **kwargs):
-        if kwargs.get("path") == "planning/issue_queue/processed/dev-1.md":
+        if kwargs.get("path") == ".agent-orchestrator/issue_queue/processed/dev-1.md":
             return "Dev: One\n\nBody\n", "sha-queue"
         raise FileNotFoundError(str(kwargs.get("path")))
 
@@ -695,14 +878,177 @@ def test_loop_heal_endpoint_moves_orphaned_processed_to_complete_and_ensures_fol
     assert data["repo"] == "acme/repo"
     assert data["branch"] == "main"
     assert data["healed"]
-    assert moved.get("complete_path") == "planning/issue_queue/complete/dev-1.md"
-    assert deleted.get("path") == "planning/issue_queue/processed/dev-1.md"
+    assert moved.get("complete_path") == ".agent-orchestrator/issue_queue/complete/dev-1.md"
+    assert deleted.get("path") == ".agent-orchestrator/issue_queue/processed/dev-1.md"
+
+
+def test_loop_heal_endpoint_closes_open_issue_when_pr_is_merged(
+    monkeypatch, tmp_path: Path
+) -> None:
+    planning = tmp_path / ".agent-orchestrator"
+    agent_state = tmp_path / "agent_state"
+
+    monkeypatch.setenv("ORCHESTRATOR_PLANNING_ROOT", str(planning))
+    monkeypatch.setenv("AGENT_STATE_PATH", str(agent_state))
+    monkeypatch.setenv("ORCHESTRATOR_UI_DIST", str(tmp_path / "ui" / "dist"))
+    monkeypatch.setenv("ORCHESTRATOR_DEFAULT_REPO", "acme/repo")
+    monkeypatch.setenv("ORCHESTRATOR_GITHUB_TOKEN", "test-token")
+    monkeypatch.setenv("COPILOT_ASSIGNEE", "copilot-swe-agent[bot]")
+
+    import github_agent_orchestrator.server.dashboard.loop_actions as loop_actions
+    import github_agent_orchestrator.server.dashboard_router as dashboard_router
+
+    monkeypatch.setattr(dashboard_router, "_get_default_branch", lambda *_a, **_k: "main")
+    monkeypatch.setattr(loop_actions, "_get_default_branch", lambda *_a, **_k: "main")
+
+    def fake_list_repo_md(*_a, **kwargs):
+        dir_path = kwargs.get("dir_path")
+        if dir_path == ".agent-orchestrator/issue_queue/processed":
+            return [".agent-orchestrator/issue_queue/processed/dev-1.md"]
+        return []
+
+    monkeypatch.setattr(dashboard_router, "_list_repo_markdown_files_under", fake_list_repo_md)
+    monkeypatch.setattr(loop_actions, "_list_repo_markdown_files_under", fake_list_repo_md)
+
+    def fake_get_repo_text_file(*_a, **kwargs):
+        if kwargs.get("path") == ".agent-orchestrator/issue_queue/processed/dev-1.md":
+            return "Dev: One\n\nBody\n", "sha-queue"
+        raise FileNotFoundError(str(kwargs.get("path")))
+
+    monkeypatch.setattr(dashboard_router, "_get_repo_text_file", fake_get_repo_text_file)
+    monkeypatch.setattr(loop_actions, "_get_repo_text_file", fake_get_repo_text_file)
+
+    # Open issue matches the queue title.
+    monkeypatch.setattr(
+        dashboard_router,
+        "_list_open_issues_raw",
+        lambda *_a, **_k: [{"number": 101, "title": "Dev: One", "state": "open"}],
+    )
+    monkeypatch.setattr(
+        loop_actions,
+        "_list_open_issues_raw",
+        lambda *_a, **_k: [{"number": 101, "title": "Dev: One", "state": "open"}],
+    )
+
+    def fail_queue_marker(*_a, **_k):
+        raise AssertionError("queue marker search not expected")
+
+    # Should not search by queue marker when open issue is matched.
+    monkeypatch.setattr(
+        dashboard_router,
+        "_search_issue_number_by_queue_marker",
+        fail_queue_marker,
+    )
+    monkeypatch.setattr(
+        loop_actions,
+        "_search_issue_number_by_queue_marker",
+        fail_queue_marker,
+    )
+
+    def fake_get_json(*_a, **kwargs):
+        url = str(kwargs.get("url") or "")
+        if url.endswith("/repos/acme/repo/issues/101"):
+            return {"number": 101, "state": "open", "title": "Dev: One", "body": "x"}
+        raise AssertionError(f"Unexpected GET url: {url}")
+
+    monkeypatch.setattr(dashboard_router, "_github_get_json", fake_get_json)
+    monkeypatch.setattr(loop_actions, "_github_get_json", fake_get_json)
+
+    monkeypatch.setattr(
+        dashboard_router,
+        "_list_issue_timeline_raw",
+        lambda *_a, **_k: [
+            {"event": "cross-referenced", "source": {"issue": {"number": 5, "pull_request": {}}}}
+        ],
+    )
+    monkeypatch.setattr(
+        loop_actions,
+        "_list_issue_timeline_raw",
+        lambda *_a, **_k: [
+            {"event": "cross-referenced", "source": {"issue": {"number": 5, "pull_request": {}}}}
+        ],
+    )
+
+    monkeypatch.setattr(
+        dashboard_router,
+        "_get_pull_request",
+        lambda *_a, **_k: {
+            "number": 5,
+            "state": "closed",
+            "merged_at": "2026-01-01T00:00:00Z",
+            "title": "Add undo/redo",
+            "body": "PR body",
+        },
+    )
+    monkeypatch.setattr(
+        loop_actions,
+        "_get_pull_request",
+        lambda *_a, **_k: {
+            "number": 5,
+            "state": "closed",
+            "merged_at": "2026-01-01T00:00:00Z",
+            "title": "Add undo/redo",
+            "body": "PR body",
+        },
+    )
+
+    # Close the open issue before healing.
+    def fake_patch_json(*_a, **kwargs):
+        url = str(kwargs.get("url") or "")
+        if url.endswith("/issues/101"):
+            return {"number": 101, "state": "closed"}
+        raise AssertionError(f"Unexpected PATCH url: {url}")
+
+    monkeypatch.setattr(dashboard_router, "_github_patch_json", fake_patch_json)
+    monkeypatch.setattr(loop_actions, "_github_patch_json", fake_patch_json)
+
+    monkeypatch.setattr(
+        dashboard_router, "_search_issue_number_by_body_marker", lambda *_a, **_k: None
+    )
+    monkeypatch.setattr(loop_actions, "_search_issue_number_by_body_marker", lambda *_a, **_k: None)
+    monkeypatch.setattr(dashboard_router, "_ensure_repo_label_exists", lambda *_a, **_k: None)
+    monkeypatch.setattr(loop_actions, "_ensure_repo_label_exists", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        loop_actions, "_get_pull_request_discussion_markdown", lambda *_a, **_k: "discussion"
+    )
+
+    def fake_post_json(*_a, **kwargs):
+        url = str(kwargs.get("url") or "")
+        if url.endswith("/issues"):
+            return {"number": 456}
+        if url.endswith("/issues/456/assignees"):
+            return {"assignees": [{"login": "copilot-swe-agent[bot]"}]}
+        raise AssertionError(f"Unexpected POST url: {url}")
+
+    monkeypatch.setattr(dashboard_router, "_github_post_json", fake_post_json)
+    monkeypatch.setattr(loop_actions, "_github_post_json", fake_post_json)
+
+    moved: dict[str, object] = {}
+    deleted: dict[str, object] = {}
+    monkeypatch.setattr(
+        loop_actions,
+        "_ensure_repo_file_present_in_complete",
+        lambda *_a, **kwargs: moved.update(kwargs),
+    )
+    monkeypatch.setattr(
+        loop_actions,
+        "_delete_repo_file_if_present",
+        lambda *_a, **kwargs: deleted.update(kwargs),
+    )
+
+    client = TestClient(create_app())
+    resp = client.post("/api/loop/heal")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["healed"]
+    assert moved.get("complete_path") == ".agent-orchestrator/issue_queue/complete/dev-1.md"
+    assert deleted.get("path") == ".agent-orchestrator/issue_queue/processed/dev-1.md"
 
 
 def test_loop_merge_endpoint_merges_ready_capability_pr_and_closes_issue(
     monkeypatch, tmp_path: Path
 ) -> None:
-    planning = tmp_path / "planning"
+    planning = tmp_path / ".agent-orchestrator"
     agent_state = tmp_path / "agent_state"
 
     monkeypatch.setenv("ORCHESTRATOR_PLANNING_ROOT", str(planning))
@@ -773,7 +1119,7 @@ def test_loop_merge_endpoint_merges_ready_capability_pr_and_closes_issue(
             "requested_teams": [],
             "mergeable_state": "clean",
             "title": "Update capabilities",
-            "body": "Update system_capabilities.md",
+            "body": "Update current_state.md",
             "head": {"ref": "feature/caps", "repo": {"full_name": "acme/repo"}},
         },
     )
@@ -788,7 +1134,7 @@ def test_loop_merge_endpoint_merges_ready_capability_pr_and_closes_issue(
             "requested_teams": [],
             "mergeable_state": "clean",
             "title": "Update capabilities",
-            "body": "Update system_capabilities.md",
+            "body": "Update current_state.md",
             "head": {"ref": "feature/caps", "repo": {"full_name": "acme/repo"}},
         },
     )
@@ -849,12 +1195,12 @@ def test_promote_next_unpromoted_capability_queue_item_promotes_one_file(
     monkeypatch.setattr(
         dashboard_router,
         "_list_repo_markdown_files_under",
-        lambda *_a, **_k: ["planning/issue_queue/pending/system-1.md"],
+        lambda *_a, **_k: [".agent-orchestrator/issue_queue/pending/system-1.md"],
     )
     monkeypatch.setattr(
         loop_actions,
         "_list_repo_markdown_files_under",
-        lambda *_a, **_k: ["planning/issue_queue/pending/system-1.md"],
+        lambda *_a, **_k: [".agent-orchestrator/issue_queue/pending/system-1.md"],
     )
     monkeypatch.setattr(
         dashboard_router,
@@ -908,12 +1254,14 @@ def test_promote_next_unpromoted_capability_queue_item_promotes_one_file(
         repo="acme/repo",
     )
     assert out["issueNumber"] == 321
-    assert str(out["queuePath"]).endswith("planning/issue_queue/pending/system-1.md")
-    assert str(out["processedPath"]).endswith("planning/issue_queue/processed/system-1.md")
+    assert str(out["queuePath"]).endswith(".agent-orchestrator/issue_queue/pending/system-1.md")
+    assert str(out["processedPath"]).endswith(
+        ".agent-orchestrator/issue_queue/processed/system-1.md"
+    )
 
 
 def test_loop_merge_endpoint_fails_cleanly_when_pr_stays_draft(monkeypatch, tmp_path: Path) -> None:
-    planning = tmp_path / "planning"
+    planning = tmp_path / ".agent-orchestrator"
     agent_state = tmp_path / "agent_state"
 
     monkeypatch.setenv("ORCHESTRATOR_PLANNING_ROOT", str(planning))
@@ -933,11 +1281,11 @@ def test_loop_merge_endpoint_fails_cleanly_when_pr_stays_draft(monkeypatch, tmp_
 
     def fake_list_repo_md(*_a, **kwargs):
         dir_path = kwargs.get("dir_path")
-        if dir_path == "planning/issue_queue/pending":
+        if dir_path == ".agent-orchestrator/issue_queue/pending":
             return []
-        if dir_path == "planning/issue_queue/processed":
-            return ["planning/issue_queue/processed/dev-1.md"]
-        if dir_path == "planning/issue_queue/complete":
+        if dir_path == ".agent-orchestrator/issue_queue/processed":
+            return [".agent-orchestrator/issue_queue/processed/dev-1.md"]
+        if dir_path == ".agent-orchestrator/issue_queue/complete":
             return []
         return []
 
@@ -1045,7 +1393,7 @@ def test_loop_merge_endpoint_fails_cleanly_when_pr_stays_draft(monkeypatch, tmp_
 def test_loop_merge_endpoint_merges_ready_gap_analysis_pr_and_closes_issue(
     monkeypatch, tmp_path: Path
 ) -> None:
-    planning = tmp_path / "planning"
+    planning = tmp_path / ".agent-orchestrator"
     agent_state = tmp_path / "agent_state"
 
     monkeypatch.setenv("ORCHESTRATOR_PLANNING_ROOT", str(planning))
@@ -1192,23 +1540,23 @@ def test_ensure_review_consumption_archives_completed_review_when_issue_closed(m
     monkeypatch.setenv("ORCHESTRATOR_DEFAULT_REPO", "acme/repo")
 
     # Repo has one active review + its actions file.
-    review_path = "planning/reviews/review-2026-01-05-refactor-large-files.md"
-    actions_path = "planning/reviews/review-2026-01-05-refactor-large-files.actions.md"
+    review_path = ".agent-orchestrator/reviews/review-2026-01-05-refactor-large-files.md"
+    actions_path = ".agent-orchestrator/reviews/review-2026-01-05-refactor-large-files.actions.md"
 
-    # The ensure function re-lists planning/reviews after archiving.
+    # The ensure function re-lists .agent-orchestrator/reviews after archiving.
     # Simulate the move by returning completed/ paths after we "write" the archive.
     archived = {"done": False}
 
     def fake_list_repo_md(*_a, **_k):
         dir_path = str(_k.get("dir_path") or "")
-        # The archiving logic scans both planning/reviews and the issue_queue.
+        # The archiving logic scans both .agent-orchestrator/reviews and the issue_queue.
         # For this test, ensure there are no review queue artefacts, so the review is archived.
-        if "planning/issue_queue/" in dir_path:
+        if ".agent-orchestrator/issue_queue/" in dir_path:
             return []
         if archived["done"]:
             return [
-                "planning/reviews/completed/review-2026-01-05-refactor-large-files.md",
-                "planning/reviews/completed/review-2026-01-05-refactor-large-files.actions.md",
+                ".agent-orchestrator/reviews/completed/review-2026-01-05-refactor-large-files.md",
+                ".agent-orchestrator/reviews/completed/review-2026-01-05-refactor-large-files.actions.md",
             ]
         return [review_path, actions_path]
 
@@ -1260,7 +1608,7 @@ def test_ensure_review_consumption_archives_completed_review_when_issue_closed(m
     def fake_put_json(*_a, **kwargs):
         url = str(kwargs.get("url") or "")
         written.append(url)
-        if "contents/planning/reviews/completed/" in url:
+        if "contents/.agent-orchestrator/reviews/completed/" in url:
             archived["done"] = True
         return 201, {}
 
@@ -1283,13 +1631,15 @@ def test_ensure_review_consumption_archives_completed_review_when_issue_closed(m
     assert exc.value.status_code == 409
     assert "No uncompleted review files" in str(exc.value.detail)
 
-    # Review and actions were archived to planning/reviews/completed/ and removed from original paths.
+    # Review and actions were archived to .agent-orchestrator/reviews/completed/ and removed from original paths.
     assert any(
-        "contents/planning/reviews/completed/review-2026-01-05-refactor-large-files.md" in u
+        "contents/.agent-orchestrator/reviews/completed/review-2026-01-05-refactor-large-files.md"
+        in u
         for u in written
     )
     assert any(
-        "contents/planning/reviews/completed/review-2026-01-05-refactor-large-files.actions.md" in u
+        "contents/.agent-orchestrator/reviews/completed/review-2026-01-05-refactor-large-files.actions.md"
+        in u
         for u in written
     )
     assert any(f"contents/{review_path}" in u for u in deleted)
@@ -1310,17 +1660,17 @@ def test_ensure_review_consumption_does_not_archive_when_closed_issue_produced_q
     monkeypatch.setenv("ORCHESTRATOR_GITHUB_TOKEN", "ghp_test")
     monkeypatch.setenv("ORCHESTRATOR_DEFAULT_REPO", "acme/repo")
 
-    review_path = "planning/reviews/review-2026-01-05-refactor-large-files.md"
-    actions_path = "planning/reviews/review-2026-01-05-refactor-large-files.actions.md"
-    queue_path = "planning/issue_queue/pending/review-2026-01-09-sample.md"
+    review_path = ".agent-orchestrator/reviews/review-2026-01-05-refactor-large-files.md"
+    actions_path = ".agent-orchestrator/reviews/review-2026-01-05-refactor-large-files.actions.md"
+    queue_path = ".agent-orchestrator/issue_queue/pending/review-2026-01-09-sample.md"
 
     def fake_list_repo_md(*_a, **_k):
         dir_path = str(_k.get("dir_path") or "")
-        if dir_path.rstrip("/") == "planning/reviews":
+        if dir_path.rstrip("/") == ".agent-orchestrator/reviews":
             return [review_path, actions_path]
-        if dir_path.rstrip("/") == "planning/issue_queue/pending":
+        if dir_path.rstrip("/") == ".agent-orchestrator/issue_queue/pending":
             return [queue_path]
-        if "planning/issue_queue/" in dir_path:
+        if ".agent-orchestrator/issue_queue/" in dir_path:
             return []
         return []
 
@@ -1408,7 +1758,7 @@ def test_ensure_review_consumption_does_not_archive_when_queue_has_source_review
 
       ## Source Review
 
-      `planning/reviews/review-...md`
+    `.agent-orchestrator/reviews/review-...md`
 
     rather than a single-line "Source review:" field. We must still detect this as output,
     otherwise Step 1a will incorrectly archive an in-progress review.
@@ -1419,20 +1769,20 @@ def test_ensure_review_consumption_does_not_archive_when_queue_has_source_review
     monkeypatch.setenv("ORCHESTRATOR_GITHUB_TOKEN", "ghp_test")
     monkeypatch.setenv("ORCHESTRATOR_DEFAULT_REPO", "acme/repo")
 
-    review_path = "planning/reviews/review-2026-01-05-refactor-large-files.md"
-    actions_path = "planning/reviews/review-2026-01-05-refactor-large-files.actions.md"
+    review_path = ".agent-orchestrator/reviews/review-2026-01-05-refactor-large-files.md"
+    actions_path = ".agent-orchestrator/reviews/review-2026-01-05-refactor-large-files.actions.md"
     # When a review-consumption run has produced output but it has not yet been promoted/merged,
     # the queue artefact will still be in pending/processed. Those items are strong evidence of
     # current work and must prevent the review being archived.
-    queue_path = "planning/issue_queue/pending/review-pixijs-removal-milestone-0-react-setup.md"
+    queue_path = ".agent-orchestrator/issue_queue/pending/review-pixijs-removal-milestone-0-react-setup.md"
 
     def fake_list_repo_md(*_a, **_k):
         dir_path = str(_k.get("dir_path") or "")
-        if dir_path.rstrip("/") == "planning/reviews":
+        if dir_path.rstrip("/") == ".agent-orchestrator/reviews":
             return [review_path, actions_path]
-        if dir_path.rstrip("/") == "planning/issue_queue/pending":
+        if dir_path.rstrip("/") == ".agent-orchestrator/issue_queue/pending":
             return [queue_path]
-        if "planning/issue_queue/" in dir_path:
+        if ".agent-orchestrator/issue_queue/" in dir_path:
             return []
         return []
 
@@ -1518,15 +1868,16 @@ def test_review_consumption_ignores_non_timestamped_complete_when_issue_has_time
 
     import github_agent_orchestrator.server.dashboard_router as dashboard_router
 
-    review_path = "planning/reviews/review-2026-01-05-refactor-large-files.md"
-    queue_path = "planning/issue_queue/complete/review-pixijs-removal-milestone-0-react-setup.md"
+    review_path = ".agent-orchestrator/reviews/review-2026-01-05-refactor-large-files.md"
+    queue_path = ".agent-orchestrator/issue_queue/complete/review-pixijs-removal-milestone-0-react-setup.md"
 
     monkeypatch.setattr(
         dashboard_router,
         "_list_repo_markdown_files_under",
         lambda *_a, **kwargs: (
             [queue_path]
-            if str(kwargs.get("dir_path") or "").rstrip("/") == "planning/issue_queue/complete"
+            if str(kwargs.get("dir_path") or "").rstrip("/")
+            == ".agent-orchestrator/issue_queue/complete"
             else []
         ),
     )

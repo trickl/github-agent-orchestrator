@@ -1,7 +1,7 @@
 Complete test_dashboard_api.py split into focused test files
 
 ## Context
-This task completes review item **B** from `planning/reviews/review-2026-01-05-refactor-large-files.md`.
+This task completes review item **B** from `review-2026-01-05-refactor-large-files.md`.
 
 The review identified that `tests/unit/test_dashboard_api.py` (2109 lines) is doing too much - it covers multiple independent concerns in a single file, making it difficult to navigate when refactoring production code.
 
@@ -144,6 +144,7 @@ Follow this exact approach:
 
 ## Reference
 
-- Source review: `planning/reviews/review-2026-01-05-refactor-large-files.md`
-- Actions tracking: `planning/reviews/review-2026-01-05-refactor-large-files.actions.md`
+- Source review: `.agent-orchestrator/reviews/review-2026-01-05-refactor-large-files.md`
+- Actions tracking: `.agent-orchestrator/reviews/review-2026-01-05-refactor-large-files.actions.md`
 - Prior PR: #12 (merged 2026-01-05) - established the pattern for test file splits
+

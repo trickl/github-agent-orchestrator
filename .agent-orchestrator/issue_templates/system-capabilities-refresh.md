@@ -6,7 +6,7 @@
 This repository maintains an explicit description of what the system currently does.
 This description is used as an input for planning, reviews, and gap analysis.
 
-The file `/planning/state/system_capabilities.md` is either missing, outdated, or no longer
+The file `/.agent-orchestrator/state/current_state.md` is either missing, outdated, or no longer
 accurately reflects the system.
 
 ### Inputs
@@ -28,9 +28,10 @@ accurately reflects the system.
 - Do not describe how the system *should* work — only how it *does* work.
 
 ### Output
-- Create or update `/planning/state/system_capabilities.md`.
+- Create or update `/.agent-orchestrator/state/current_state.md`.
 - The document should reflect the system as it exists at the time of writing.
 - The first line must be a friendly, human-readable title.
 
 ### Tone
 Factual, neutral, and precise. This is a snapshot of reality, not a roadmap.
+

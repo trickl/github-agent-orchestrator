@@ -12,7 +12,8 @@ type Health = { ok: true; version: string; repoName: string };
 
 type DocsFixture = {
   goal: PlanningDoc;
-  capabilities: PlanningDoc;
+  targetState: PlanningDoc;
+  currentState: PlanningDoc;
 };
 
 const cognitiveTasksFixtureTyped = cognitiveTasksFixture as unknown as CognitiveTask[];
@@ -148,8 +149,8 @@ export const handlers = [
     return HttpResponse.json({
       repo: 'acme/repo',
       branch: 'main',
-      queuePath: 'planning/issue_queue/pending/dev-1.md',
-      processedPath: 'planning/issue_queue/processed/dev-1.md',
+      queuePath: '.agent-orchestrator/issue_queue/pending/dev-1.md',
+      processedPath: '.agent-orchestrator/issue_queue/processed/dev-1.md',
       issueNumber: 123,
       issueUrl: 'https://github.com/acme/repo/issues/123',
       created: true,
@@ -191,8 +192,8 @@ export const handlers = [
       branch: 'main',
       merged: true,
       mergeCommitSha: 'deadbeef',
-      queuePath: 'planning/issue_queue/processed/dev-1.md',
-      completePath: 'planning/issue_queue/complete/dev-1.md',
+      queuePath: '.agent-orchestrator/issue_queue/processed/dev-1.md',
+      completePath: '.agent-orchestrator/issue_queue/complete/dev-1.md',
       developmentIssueNumber: 123,
       pullNumber: 5,
       approved: true,
@@ -237,9 +238,28 @@ export const handlers = [
     return HttpResponse.json(docs.goal);
   }),
 
-  http.get('*/docs/capabilities', async () => {
+  http.get('*/docs/target-state', async () => {
     await delay(150);
-    return HttpResponse.json(docs.capabilities);
+    return HttpResponse.json(docs.targetState);
+  }),
+
+  http.get('*/docs/current-state', async () => {
+    await delay(150);
+    return HttpResponse.json(docs.currentState);
+  }),
+
+  http.post('*/docs/target-state', async ({ request }) => {
+    await delay(150);
+    const body = (await request.json().catch(() => null)) as { content?: string } | null;
+    const content = typeof body?.content === 'string' ? body.content : '';
+    docs = {
+      ...docs,
+      targetState: {
+        ...docs.targetState,
+        content: content || docs.targetState.content,
+      },
+    };
+    return HttpResponse.json({ ok: true, message: 'Target saved.' });
   }),
 
   http.get('*/cognitive-tasks', async () => {

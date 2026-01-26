@@ -11,6 +11,7 @@ the "read side" status computation in loop_status.py.
 from __future__ import annotations
 
 import re
+import time
 from contextlib import suppress
 from typing import Any
 
@@ -58,6 +59,9 @@ from github_agent_orchestrator.server.dashboard.github_operations import (
     delete_repo_file_if_present as _delete_repo_file_if_present,
 )
 from github_agent_orchestrator.server.dashboard.github_operations import (
+    ensure_repo_text_file_present as _ensure_repo_text_file_present,
+)
+from github_agent_orchestrator.server.dashboard.github_operations import (
     ensure_repo_file_present_in_complete as _ensure_repo_file_present_in_complete,
 )
 from github_agent_orchestrator.server.dashboard.github_operations import (
@@ -97,6 +101,9 @@ from github_agent_orchestrator.server.dashboard.queue_helpers import (
 from github_agent_orchestrator.server.dashboard.text_utilities import (
     _first_markdown_line_as_title,
 )
+from github_agent_orchestrator.server.dashboard.llm_clients import (
+    generate_chat_completion as _generate_chat_completion,
+)
 from github_agent_orchestrator.server.local_templates import load_local_template_or_raise
 
 ERR_UNEXPECTED_GITHUB_CREATE_ISSUE_RESPONSE = "Unexpected GitHub create issue response"
@@ -105,7 +112,7 @@ ERR_MISSING_GITHUB_TOKEN_FOR_MERGE = "ORCHESTRATOR_GITHUB_TOKEN is required to m
 ERR_DRAFT_PR_MISSING_NODE_ID = "Pull request is draft but is missing node_id; cannot mark ready"
 ERR_MERGE_DID_NOT_COMPLETE = "Merge did not complete (merged=false)"
 APPROVAL_REVIEW_BODY = "Approved by orchestrator automation."
-DEVELOPMENT_QUEUE_PENDING_DIR = "planning/issue_queue/pending"
+DEVELOPMENT_QUEUE_PENDING_DIR = ".agent-orchestrator/issue_queue/pending"
 
 MARK_READY_FOR_REVIEW_MUTATION = (
     "mutation($pullRequestId: ID!) {"
@@ -151,18 +158,261 @@ _CAPABILITY_ISSUE_BODY_SOURCE_PR_RE = re.compile(
 )
 
 _GAP_ANALYSIS_TEMPLATE_PATHS: tuple[str, ...] = (
-    "planning/issue_templates/gap-analysis.md",
-    "planning/issue_templates/gap_analysis.md",
+    ".agent-orchestrator/issue_templates/gap-analysis.md",
+    ".agent-orchestrator/issue_templates/gap_analysis.md",
+)
+
+_CURRENT_STATE_BASELINE_TEMPLATE_PATHS: tuple[str, ...] = (
+    ".agent-orchestrator/state_templates/current_state_baseline.md",
+    ".agent-orchestrator/state_templates/current-state-baseline.md",
 )
 
 _REVIEW_ACTIONS_AFTER_MERGE_TEMPLATE_PATHS: tuple[str, ...] = (
-    "planning/issue_templates/review-actions-after-pr-merge.md",
-    "planning/issue_templates/review_actions_after_pr_merge.md",
+    ".agent-orchestrator/issue_templates/review-actions-after-pr-merge.md",
+    ".agent-orchestrator/issue_templates/review_actions_after_pr_merge.md",
 )
 
 _REVIEW_QUEUE_SOURCE_RE = re.compile(r"^\s*source\s+review\s*:\s*(.+?)\s*$", re.IGNORECASE)
 _REVIEW_QUEUE_ACTIONS_RE = re.compile(r"^\s*review\s+actions\s*:\s*(.+?)\s*$", re.IGNORECASE)
 _REVIEW_QUEUE_ID_DATE_RE = re.compile(r"\breview-(\d{4}-\d{2}-\d{2})\b", re.IGNORECASE)
+
+
+def _normalize_cognitive_mode(mode: str) -> str:
+    return (mode or "").strip().lower()
+
+
+def _strip_code_fences(text: str) -> str:
+    if "```" not in text:
+        return text.strip()
+    lines = [line for line in text.splitlines() if not line.strip().startswith("```")]
+    return "\n".join(lines).strip()
+
+
+def _gap_analysis_prompt(*, target_state: str, current_state: str) -> tuple[str, str]:
+    system_prompt = (
+        "You are a careful planning analyst. Your job is to compare a target state to the "
+        "current state and decide whether one concrete development task is needed."
+    )
+    user_prompt = (
+        "Compare the target state to the current state. If the system already satisfies the target, "
+        "respond with exactly 'NO_ACTION'. Otherwise, produce the full markdown content for exactly "
+        "one development task file that will be placed into /.agent-orchestrator/issue_queue/pending/.\n\n"
+        "Rules:\n"
+        "- Output ONLY the file contents or 'NO_ACTION'.\n"
+        "- The first line must be a short, friendly task title.\n"
+        "- The task must be concrete, necessary, and limited in scope.\n"
+        "- Do not propose multiple tasks.\n\n"
+        "Target state (desired):\n"
+        "---\n"
+        f"{target_state.strip()}\n"
+        "---\n\n"
+        "Current state (actual):\n"
+        "---\n"
+        f"{current_state.strip()}\n"
+        "---\n"
+    )
+    return system_prompt, user_prompt
+
+
+def _capability_update_prompt(
+    *,
+    current_state: str,
+    pr_number: int,
+    pr_title: str,
+    pr_body: str,
+    discussion_markdown: str,
+) -> tuple[str, str]:
+    system_prompt = (
+        "You are updating the current_state.md document for a software system. "
+        "Only describe demonstrated capabilities, constraints, and behaviors."
+    )
+    user_prompt = (
+        "Update /.agent-orchestrator/state/current_state.md to reflect the changes in the merged PR. "
+        "Return the FULL updated markdown document. Do not add commentary outside the document.\n\n"
+        "Rules:\n"
+        "- Use the existing document as the base.\n"
+        "- Only describe capabilities confirmed by the PR or existing doc.\n"
+        "- Do not speculate or describe future work.\n\n"
+        f"Merged PR #{pr_number}: {pr_title}\n\n"
+        "PR description:\n"
+        "---\n"
+        f"{pr_body.strip() or '(no PR description)'}\n"
+        "---\n\n"
+        "PR comments and discussion (chronological):\n"
+        "---\n"
+        f"{discussion_markdown.strip() or '(no PR comments)'}\n"
+        "---\n\n"
+        "Current current_state.md content:\n"
+        "---\n"
+        f"{current_state.strip()}\n"
+        "---\n"
+    )
+    return system_prompt, user_prompt
+
+
+def _ensure_gap_analysis_state_documents(
+    *, settings: ServerSettings, repo: str, branch: str
+) -> tuple[str, str]:
+    try:
+        target_state, _ = _get_repo_text_file(
+            settings,
+            repository=repo,
+            path=".agent-orchestrator/state/target_state.md",
+            ref=branch,
+        )
+    except HTTPException as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Target state is missing. Create /.agent-orchestrator/state/target_state.md "
+                "before running gap analysis."
+            ),
+        ) from exc
+
+    try:
+        current_state, _ = _get_repo_text_file(
+            settings,
+            repository=repo,
+            path=".agent-orchestrator/state/current_state.md",
+            ref=branch,
+        )
+    except HTTPException:
+        if not settings.github_token.strip():
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "ORCHESTRATOR_GITHUB_TOKEN is required to initialize "
+                    "/.agent-orchestrator/state/current_state.md"
+                ),
+            )
+        baseline = _load_current_state_baseline_or_raise(
+            settings=settings,
+            repo=repo,
+            branch=branch,
+        )
+        _ensure_repo_text_file_present(
+            settings=settings,
+            repository=repo,
+            path=".agent-orchestrator/state/current_state.md",
+            content_text=baseline.rstrip() + "\n",
+            branch=branch,
+            message="Initialize current_state.md",
+        )
+        current_state = baseline
+
+    return target_state, current_state
+
+
+def _run_gap_analysis_with_model(*, settings: ServerSettings, repo: str) -> dict[str, object]:
+    if not settings.github_token.strip():
+        raise HTTPException(
+            status_code=409,
+            detail="ORCHESTRATOR_GITHUB_TOKEN is required to write gap analysis outputs",
+        )
+
+    branch = _get_default_branch(settings, repository=repo)
+    target_state, current_state = _ensure_gap_analysis_state_documents(
+        settings=settings,
+        repo=repo,
+        branch=branch,
+    )
+
+    system_prompt, user_prompt = _gap_analysis_prompt(
+        target_state=target_state,
+        current_state=current_state,
+    )
+    raw = _generate_chat_completion(
+        settings=settings,
+        mode=_normalize_cognitive_mode(settings.gap_analysis_mode),
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+    )
+    cleaned = _strip_code_fences(raw)
+    if cleaned.strip().upper() == "NO_ACTION":
+        return {
+            "created": False,
+            "queuePath": None,
+            "summary": "Gap analysis model returned NO_ACTION",
+        }
+
+    first_line = cleaned.strip().splitlines()[0] if cleaned.strip() else ""
+    if not first_line:
+        raise HTTPException(status_code=502, detail="Gap analysis model returned empty output")
+
+    queue_id = f"dev-{int(time.time())}-gap-analysis.md"
+    queue_path = f".agent-orchestrator/issue_queue/pending/{queue_id}"
+    _ensure_repo_text_file_present(
+        settings,
+        repository=repo,
+        path=queue_path,
+        content_text=cleaned.rstrip() + "\n",
+        branch=branch,
+        message=f"Add gap analysis output {queue_id}",
+    )
+    return {
+        "created": True,
+        "queuePath": queue_path,
+        "summary": f"Gap analysis model created {queue_id}",
+    }
+
+
+def _run_capability_update_with_model(
+    *,
+    settings: ServerSettings,
+    repo: str,
+    branch: str,
+    pr_number: int,
+    pr_title: str,
+    pr_body: str,
+    discussion_markdown: str,
+) -> dict[str, object]:
+    if not settings.github_token.strip():
+        raise HTTPException(
+            status_code=409,
+            detail="ORCHESTRATOR_GITHUB_TOKEN is required to write current_state.md",
+        )
+
+    try:
+        current_state, _ = _get_repo_text_file(
+            settings,
+            repository=repo,
+            path=".agent-orchestrator/state/current_state.md",
+            ref=branch,
+        )
+    except HTTPException:
+        current_state = "# Current State\n\n"
+
+    system_prompt, user_prompt = _capability_update_prompt(
+        current_state=current_state,
+        pr_number=pr_number,
+        pr_title=pr_title,
+        pr_body=pr_body,
+        discussion_markdown=discussion_markdown,
+    )
+    raw = _generate_chat_completion(
+        settings=settings,
+        mode=_normalize_cognitive_mode(settings.capability_update_mode),
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+    )
+    cleaned = _strip_code_fences(raw)
+    if not cleaned.strip():
+        raise HTTPException(status_code=502, detail="Capability update model returned empty output")
+
+    _ensure_repo_text_file_present(
+        settings,
+        repository=repo,
+        path=".agent-orchestrator/state/current_state.md",
+        content_text=cleaned.rstrip() + "\n",
+        branch=branch,
+        message=f"Update current_state.md from PR #{pr_number}",
+    )
+
+    return {
+        "created": True,
+        "path": ".agent-orchestrator/state/current_state.md",
+        "summary": f"Updated current_state.md from PR #{pr_number} via model",
+    }
 
 
 def _settings(request: Request) -> ServerSettings:
@@ -295,8 +545,8 @@ def _load_gap_analysis_template_or_raise(
         status_code=502,
         detail=(
             "Unable to load local gap analysis template. "
-            "Expected one of: planning/issue_templates/gap-analysis.md or "
-            "planning/issue_templates/gap_analysis.md. "
+            "Expected one of: .agent-orchestrator/issue_templates/gap-analysis.md or "
+            ".agent-orchestrator/issue_templates/gap_analysis.md. "
             f"Attempts: {tried}{more}"
         ),
     )
@@ -322,7 +572,33 @@ def _load_review_actions_after_merge_template_or_raise(
         status_code=502,
         detail=(
             "Unable to load local review actions-after-merge template. "
-            "Expected planning/issue_templates/review-actions-after-pr-merge.md. "
+            "Expected .agent-orchestrator/issue_templates/review-actions-after-pr-merge.md. "
+            f"Attempts: {tried}{more}"
+        ),
+    )
+
+
+def _load_current_state_baseline_or_raise(
+    *, settings: ServerSettings, repo: str, branch: str
+) -> str:
+    """Load the baseline current_state.md template from the local repository."""
+
+    _ = (settings, repo, branch)
+
+    attempts: list[str] = []
+    for template_path in _CURRENT_STATE_BASELINE_TEMPLATE_PATHS:
+        try:
+            return load_local_template_or_raise(relative_path=template_path)
+        except HTTPException as e:
+            attempts.append(f"{template_path}: {getattr(e, 'detail', '')}")
+
+    tried = "; ".join(attempts[:3])
+    more = "" if len(attempts) <= 3 else f" (+{len(attempts) - 3} more)"
+    raise HTTPException(
+        status_code=502,
+        detail=(
+            "Unable to load local current_state baseline template. "
+            "Expected .agent-orchestrator/state_templates/current_state_baseline.md. "
             f"Attempts: {tried}{more}"
         ),
     )
@@ -453,7 +729,11 @@ def _ensure_gap_analysis_issue_exists(*, settings: ServerSettings, repo: str) ->
     can automatically open + assign the issue so the overall cycle can keep moving.
     """
 
+    if _normalize_cognitive_mode(settings.gap_analysis_mode) != "copilot":
+        return _run_gap_analysis_with_model(settings=settings, repo=repo)
+
     branch = _get_default_branch(settings, repository=repo)
+    _ensure_gap_analysis_state_documents(settings=settings, repo=repo, branch=branch)
 
     raw_issues = _list_open_issues_raw(settings, repository=repo)
     existing = _find_open_gap_analysis_issue(raw_issues)
@@ -540,7 +820,7 @@ def ensure_gap_analysis_issue(request: Request) -> dict[str, object]:
     # Keep shape similar to other action endpoints.
     created = bool(out.get("created"))
     num = out.get("issueNumber")
-    summary = "Gap analysis issue ensured"
+    summary = out.get("summary") if isinstance(out.get("summary"), str) else "Gap analysis issue ensured"
     if isinstance(num, int):
         summary = f"{'Created' if created else 'Ensured'} gap analysis issue #{num}"
     return {
@@ -577,7 +857,7 @@ def heal_orphaned_processed_queue_items(request: Request) -> dict[str, object]:
     """Heal orphaned processed queue artefacts.
 
     This addresses a common "broken loop" scenario:
-    - A queue artefact exists under planning/issue_queue/processed/
+    - A queue artefact exists under .agent-orchestrator/issue_queue/processed/
     - There are no open issues/PRs that match it (so the loop sits in Stage 2b forever)
 
     Healing is conservative:
@@ -615,7 +895,7 @@ def _heal_orphaned_processed_queue_items(
     processed_paths = _list_repo_markdown_files_under(
         settings=settings,
         repository=repo,
-        dir_path="planning/issue_queue/processed",
+        dir_path=".agent-orchestrator/issue_queue/processed",
         ref=branch,
     )
     if not processed_paths:
@@ -642,28 +922,24 @@ def _heal_orphaned_processed_queue_items(
         if title_norm:
             matched_open_issue = _best_match_issue_number(title_norm, open_issues_for_matching)
 
-        if isinstance(matched_open_issue, int):
-            skipped.append(
-                {
-                    "queueId": queue_id,
-                    "queuePath": processed_path,
-                    "reason": "queue artefact still matches an open issue (not orphaned)",
-                    "issueNumber": matched_open_issue,
-                }
+        open_issue_match = isinstance(matched_open_issue, int)
+        issue_num: int | None
+        if open_issue_match:
+            issue_num = matched_open_issue
+        else:
+            # Try to locate the historical issue by the queue marker.
+            issue_num = _search_issue_number_by_queue_marker(
+                settings, repository=repo, queue_id=queue_id
             )
-            continue
-
-        # Try to locate the historical issue by the queue marker.
-        issue_num = _search_issue_number_by_queue_marker(settings, repository=repo, queue_id=queue_id)
-        if not isinstance(issue_num, int):
-            skipped.append(
-                {
-                    "queueId": queue_id,
-                    "queuePath": processed_path,
-                    "reason": "no issue found containing the queue marker; refusing to auto-heal",
-                }
-            )
-            continue
+            if not isinstance(issue_num, int):
+                skipped.append(
+                    {
+                        "queueId": queue_id,
+                        "queuePath": processed_path,
+                        "reason": "no issue found containing the queue marker; refusing to auto-heal",
+                    }
+                )
+                continue
 
         try:
             issue_data = _github_get_json(
@@ -681,29 +957,32 @@ def _heal_orphaned_processed_queue_items(
             )
             continue
 
-        issue_state = issue_data.get("state") if isinstance(issue_data, dict) else None
-        if issue_state != "closed":
+        timeline = _list_issue_timeline_raw(settings, repository=repo, issue_number=issue_num)
+        pr_nums = _linked_pr_numbers_from_issue_timeline(timeline)
+        merged_pr_data: dict[str, Any] | None = None
+        merged_pr_number: int | None = None
+        open_pr_found = False
+        for pr_num in sorted(pr_nums):
+            with suppress(Exception):
+                pr_data = _get_pull_request(settings, repository=repo, pr_number=pr_num)
+                if pr_data.get("state") == "open":
+                    open_pr_found = True
+                if _pull_request_is_merged(pr_data):
+                    merged_pr_data = pr_data
+                    merged_pr_number = int(pr_num)
+                    if not open_pr_found:
+                        break
+
+        if open_pr_found:
             skipped.append(
                 {
                     "queueId": queue_id,
                     "queuePath": processed_path,
                     "issueNumber": issue_num,
-                    "reason": "issue containing queue marker is not closed; refusing to mark complete",
+                    "reason": "linked PR is still open; refusing to auto-heal",
                 }
             )
             continue
-
-        timeline = _list_issue_timeline_raw(settings, repository=repo, issue_number=issue_num)
-        pr_nums = _linked_pr_numbers_from_issue_timeline(timeline)
-        merged_pr_data: dict[str, Any] | None = None
-        merged_pr_number: int | None = None
-        for pr_num in sorted(pr_nums):
-            with suppress(Exception):
-                pr_data = _get_pull_request(settings, repository=repo, pr_number=pr_num)
-                if _pull_request_is_merged(pr_data):
-                    merged_pr_data = pr_data
-                    merged_pr_number = int(pr_num)
-                    break
 
         if merged_pr_data is None or merged_pr_number is None:
             skipped.append(
@@ -716,8 +995,29 @@ def _heal_orphaned_processed_queue_items(
             )
             continue
 
+        issue_state = issue_data.get("state") if isinstance(issue_data, dict) else None
+        if issue_state != "closed":
+            issue_closed, issue_close_error = _close_issue_best_effort(
+                settings=settings,
+                repo=repo,
+                issue_number=int(issue_num),
+            )
+            if not issue_closed:
+                skipped.append(
+                    {
+                        "queueId": queue_id,
+                        "queuePath": processed_path,
+                        "issueNumber": issue_num,
+                        "reason": (
+                            "issue is still open and could not be closed; refusing to mark complete"
+                            + (f" ({issue_close_error})" if issue_close_error else "")
+                        ),
+                    }
+                )
+                continue
+
         # Case A: we have proof a linked PR was merged -> mark artefact complete.
-        complete_path = f"planning/issue_queue/complete/{queue_id}"
+        complete_path = f".agent-orchestrator/issue_queue/complete/{queue_id}"
         _ensure_repo_file_present_in_complete(
             settings,
             repository=repo,
@@ -760,14 +1060,15 @@ def _heal_orphaned_processed_queue_items(
                     queue_content=content,
                 )
             )
-            follow_issue_assigned = _assign_issue_to_copilot(
-                settings,
-                repository=repo,
-                issue_number=follow_issue_number,
-                target_repo=repo,
-                base_branch=branch,
-                instructions="",
-            )
+            if isinstance(follow_issue_number, int):
+                follow_issue_assigned = _assign_issue_to_copilot(
+                    settings,
+                    repository=repo,
+                    issue_number=follow_issue_number,
+                    target_repo=repo,
+                    base_branch=branch,
+                    instructions="",
+                )
 
         healed.append(
             {
@@ -1469,7 +1770,7 @@ def _promote_next_unpromoted_development_queue_item(
         instructions="",
     )
 
-    processed_path = f"planning/issue_queue/processed/{queue_id}"
+    processed_path = f".agent-orchestrator/issue_queue/processed/{queue_id}"
     _ensure_repo_file_present_in_processed(
         settings,
         repository=repo,
@@ -1608,7 +1909,7 @@ def _promote_next_unpromoted_capability_queue_item(
         instructions="",
     )
 
-    processed_path = f"planning/issue_queue/processed/{queue_id}"
+    processed_path = f".agent-orchestrator/issue_queue/processed/{queue_id}"
     _ensure_repo_file_present_in_processed(
         settings,
         repository=repo,
@@ -1714,7 +2015,7 @@ def _render_capability_update_issue_body(
         "This issue is automatically created after a pull request has been merged.\n\n"
         "The goal is to update the system capabilities document so that it accurately reflects "
         "what the system can do after this change.\n\n"
-        "Target file:\n- /planning/state/system_capabilities.md\n\n"
+        "Target file:\n- /.agent-orchestrator/state/current_state.md\n\n"
         "Instructions:\n"
         "- Review the merged pull request and its discussion.\n"
         "- Identify any new, changed, or removed capabilities introduced by this PR.\n"
@@ -1798,7 +2099,7 @@ def _ensure_followup_issue_after_development_merge(
     pr_body: str,
     queue_path: str,
     queue_content: str,
-) -> tuple[int, bool, str]:
+) -> tuple[int | None, bool | None, str | None]:
     if loop_mode == "review":
         follow_issue_label = LABEL_UPDATE_REVIEW
         marker = f"{_REVIEW_UPDATE_FROM_PR_MARKER_PREFIX} {repo}#{pr_number}"
@@ -1836,6 +2137,23 @@ def _ensure_followup_issue_after_development_merge(
         if not isinstance(num, int):
             raise HTTPException(status_code=502, detail=ERR_UNEXPECTED_GITHUB_CREATE_ISSUE_RESPONSE)
         return num, True, follow_issue_label
+
+    if _normalize_cognitive_mode(settings.capability_update_mode) != "copilot":
+        discussion_md = _get_pull_request_discussion_markdown(
+            settings,
+            repository=repo,
+            pr_number=pr_number,
+        )
+        _run_capability_update_with_model(
+            settings=settings,
+            repo=repo,
+            branch=branch,
+            pr_number=pr_number,
+            pr_title=pr_title,
+            pr_body=pr_body,
+            discussion_markdown=discussion_md,
+        )
+        return None, None, None
 
     follow_issue_label = LABEL_UPDATE_CAPABILITY
     marker = f"{_CAPABILITY_UPDATE_FROM_PR_MARKER_PREFIX} {repo}#{pr_number}"
@@ -1893,7 +2211,7 @@ def _merge_next_ready_development_pull_request(
     processed_paths = _list_repo_markdown_files_under(
         settings=settings,
         repository=repo,
-        dir_path="planning/issue_queue/processed",
+        dir_path=".agent-orchestrator/issue_queue/processed",
         ref=branch,
     )
     inflight_paths = list(pending_paths) + list(processed_paths)
@@ -1936,7 +2254,7 @@ def _merge_next_ready_development_pull_request(
     )
 
     # Move the queue file to complete/ to avoid lingering processed artefacts keeping the loop in C.
-    complete_path = f"planning/issue_queue/complete/{queue_id}"
+    complete_path = f".agent-orchestrator/issue_queue/complete/{queue_id}"
     _ensure_repo_file_present_in_complete(
         settings,
         repository=repo,
@@ -1976,14 +2294,16 @@ def _merge_next_ready_development_pull_request(
         )
     )
 
-    assigned = _assign_issue_to_copilot(
-        settings,
-        repository=repo,
-        issue_number=follow_issue_number,
-        target_repo=repo,
-        base_branch=branch,
-        instructions="",
-    )
+    assigned: list[str] = []
+    if isinstance(follow_issue_number, int):
+        assigned = _assign_issue_to_copilot(
+            settings,
+            repository=repo,
+            issue_number=follow_issue_number,
+            target_repo=repo,
+            base_branch=branch,
+            instructions="",
+        )
 
     return {
         "repo": repo,
@@ -1999,7 +2319,11 @@ def _merge_next_ready_development_pull_request(
         "headBranchDeleted": branch_deleted,
         "capabilityIssueNumber": follow_issue_number,
         "capabilityIssueCreated": follow_issue_created,
-        "capabilityIssueUrl": _make_github_issue_url(repo, follow_issue_number),
+        "capabilityIssueUrl": (
+            _make_github_issue_url(repo, follow_issue_number)
+            if isinstance(follow_issue_number, int)
+            else None
+        ),
         "capabilityIssueAssigned": assigned,
         "summary": (
             f"Merged PR #{pr_number}; created {follow_issue_label.lower()} issue #{follow_issue_number}"

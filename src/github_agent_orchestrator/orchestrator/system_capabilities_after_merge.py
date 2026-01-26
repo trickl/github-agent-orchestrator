@@ -1,10 +1,10 @@
 """Create post-merge system-capabilities update issues.
 
 This module renders a GitHub issue body that captures a merged PR's intent and discussion,
-so Copilot can update `/planning/state/system_capabilities.md` without speculating.
+so Copilot can update `/.agent-orchestrator/state/current_state.md` without speculating.
 
 The canonical body template lives in:
-- planning/issue_templates/system-capabilities-after-pr-merge.md
+- .agent-orchestrator/issue_templates/system-capabilities-after-pr-merge.md
 """
 
 from __future__ import annotations

@@ -15,6 +15,7 @@ from typing import Any
 
 import requests
 from fastapi import APIRouter, HTTPException, Query, Request
+from pydantic import BaseModel
 
 from github_agent_orchestrator import __version__
 from github_agent_orchestrator.github_labels import (
@@ -102,6 +103,11 @@ from github_agent_orchestrator.server.dashboard.text_utilities import (
 from github_agent_orchestrator.server.local_templates import load_local_template_or_raise
 
 router = APIRouter()
+
+
+class TargetStateWriteRequest(BaseModel):
+    content: str
+    message: str | None = None
 
 
 # --- Compatibility shims (tests + intra-module monkeypatching) ---
@@ -304,20 +310,20 @@ def _active_ref(request: Request) -> str:
 
 
 _GAP_ANALYSIS_TEMPLATE_PATHS: tuple[str, ...] = (
-    "planning/issue_templates/gap-analysis.md",
-    "planning/issue_templates/gap_analysis.md",
+    ".agent-orchestrator/issue_templates/gap-analysis.md",
+    ".agent-orchestrator/issue_templates/gap_analysis.md",
 )
 
 
 _REVIEW_CONSUMPTION_TEMPLATE_PATHS: tuple[str, ...] = (
-    "planning/issue_templates/review-consumption.md",
-    "planning/issue_templates/review_consumption.md",
+    ".agent-orchestrator/issue_templates/review-consumption.md",
+    ".agent-orchestrator/issue_templates/review_consumption.md",
 )
 
 
 _REVIEW_ACTIONS_AFTER_MERGE_TEMPLATE_PATHS: tuple[str, ...] = (
-    "planning/issue_templates/review-actions-after-pr-merge.md",
-    "planning/issue_templates/review_actions_after_pr_merge.md",
+    ".agent-orchestrator/issue_templates/review-actions-after-pr-merge.md",
+    ".agent-orchestrator/issue_templates/review_actions_after_pr_merge.md",
 )
 
 
@@ -341,7 +347,7 @@ def _load_review_consumption_template_or_raise(
         status_code=502,
         detail=(
             "Unable to load local review consumption template. "
-            "Expected planning/issue_templates/review-consumption.md. "
+            "Expected .agent-orchestrator/issue_templates/review-consumption.md. "
             f"Attempts: {tried}{more}"
         ),
     )
@@ -433,9 +439,9 @@ def _review_consumption_issue_has_linked_pull_requests(*, timeline: list[dict[st
 def _archive_review_and_actions_if_present(
     *, settings: ServerSettings, repo: str, branch: str, review_path: str
 ) -> None:
-    """Move a review artefact and its actions file (if present) into planning/reviews/completed/."""
+    """Move a review artefact and its actions file (if present) into .agent-orchestrator/reviews/completed/."""
 
-    completed_dir = "planning/reviews/completed"
+    completed_dir = ".agent-orchestrator/reviews/completed"
     actions_path = _review_actions_path_for_review_path(review_path)
 
     for src_path in [review_path, actions_path]:
@@ -475,18 +481,18 @@ def _pick_next_review_file(*, settings: ServerSettings, repo: str, branch: str) 
     """Pick a review document to consume (stable ordering).
 
     We intentionally keep this deterministic and low-intelligence: choose the lexicographically
-    first `review-*.md` file in `/planning/reviews/`, excluding `*.actions.md`.
+    first `review-*.md` file in `/.agent-orchestrator/reviews/`, excluding `*.actions.md`.
     """
 
     paths = _list_repo_markdown_files_under(
         settings=settings,
         repository=repo,
-        dir_path="planning/reviews",
+        dir_path=".agent-orchestrator/reviews",
         ref=branch,
     )
     candidates: list[str] = []
     for p in paths:
-        # Reviews under planning/reviews/completed/ are archived and must be ignored.
+        # Reviews under .agent-orchestrator/reviews/completed/ are archived and must be ignored.
         norm = p.replace("\\", "/")
         if "/completed/" in norm:
             continue
@@ -629,9 +635,9 @@ def _review_consumption_issue_produced_queue_output(
     """
 
     queue_dirs = (
-        "planning/issue_queue/pending",
-        "planning/issue_queue/processed",
-        "planning/issue_queue/complete",
+        ".agent-orchestrator/issue_queue/pending",
+        ".agent-orchestrator/issue_queue/processed",
+        ".agent-orchestrator/issue_queue/complete",
     )
 
     candidates: list[str] = []
@@ -662,8 +668,8 @@ def _review_consumption_issue_produced_queue_output(
             if issue_created_epoch is not None or issue_closed_epoch is not None:
                 norm = queue_path.replace("\\", "/")
                 if (
-                    "/planning/issue_queue/pending/" in f"/{norm}"
-                    or "/planning/issue_queue/processed/" in f"/{norm}"
+                    "/.agent-orchestrator/issue_queue/pending/" in f"/{norm}"
+                    or "/.agent-orchestrator/issue_queue/processed/" in f"/{norm}"
                 ):
                     return True, None
                 return False, None
@@ -712,7 +718,7 @@ def _select_next_review_consumption_target_or_raise(
             raise HTTPException(
                 status_code=409,
                 detail=(
-                    "No uncompleted review files found under planning/reviews "
+                    "No uncompleted review files found under .agent-orchestrator/reviews "
                     "(expected review-*.md)"
                 ),
             )
@@ -750,7 +756,7 @@ def _ensure_review_consumption_issue_exists(
     """Ensure there is exactly one open review-consumption issue (best-effort).
 
     In review mode, Step 1a is "review consumption": read a review artefact and produce the
-    next concrete work item in `/planning/issue_queue/pending/`.
+    next concrete work item in `/.agent-orchestrator/issue_queue/pending/`.
     """
 
     branch = _get_default_branch(settings, repository=repo)
@@ -875,7 +881,69 @@ def _assign_issue_to_copilot(
             login = a.get("login")
             if isinstance(login, str) and login.strip():
                 returned.append(login)
+    returned = _prune_non_copilot_assignees_if_needed(
+        settings=settings,
+        repository=repository,
+        issue_number=issue_number,
+        assignees=returned,
+    )
     return returned
+
+
+def _parse_label_allowlist(raw: str) -> set[str]:
+    return {label.strip() for label in (raw or "").split(",") if label.strip()}
+
+
+def _issue_has_any_label(issue: dict[str, Any], allowed: set[str]) -> bool:
+    if not allowed:
+        return False
+    labels = issue.get("labels")
+    if not isinstance(labels, list):
+        return False
+    for label in labels:
+        name: str | None = None
+        if isinstance(label, dict):
+            raw = label.get("name")
+            name = raw if isinstance(raw, str) else None
+        elif isinstance(label, str):
+            name = label
+        if name and name.strip() in allowed:
+            return True
+    return False
+
+
+def _prune_non_copilot_assignees_if_needed(
+    *,
+    settings: ServerSettings,
+    repository: str,
+    issue_number: int,
+    assignees: list[str],
+) -> list[str]:
+    if not settings.prune_non_copilot_assignees:
+        return assignees
+
+    allowed = _parse_label_allowlist(settings.non_copilot_assignee_labels)
+    try:
+        issue = _github_get_json(
+            settings,
+            url=_repo_api_url(settings, repository=repository, path=f"issues/{issue_number}"),
+        )
+    except Exception:
+        return assignees
+
+    if _issue_has_any_label(issue, allowed):
+        return assignees
+
+    non_copilot = [a for a in assignees if "copilot" not in a.lower()]
+    if not non_copilot:
+        return assignees
+
+    _github_delete_json(
+        settings,
+        url=_repo_api_url(settings, repository=repository, path=f"issues/{issue_number}/assignees"),
+        payload={"assignees": non_copilot},
+    )
+    return [a for a in assignees if a not in non_copilot]
 
 
 def _enforce_safe_assignment_or_raise(
@@ -977,7 +1045,7 @@ def _scan_review_paths_in_queue_lines(queue_content: str) -> tuple[str | None, s
     # Example:
     #   ## Source Review
     #
-    #   `planning/reviews/review-...md`
+    #   `.agent-orchestrator/reviews/review-...md`
     expecting_review_path = False
     expecting_actions_path = False
 
@@ -1041,7 +1109,7 @@ def _extract_review_paths_from_queue_content(
         m = _REVIEW_QUEUE_ID_DATE_RE.search(queue_id or "")
         if m:
             date = (m.group(1) or "").strip()
-            review_path = f"planning/reviews/review-{date}.md"
+            review_path = f".agent-orchestrator/reviews/review-{date}.md"
     if actions_path is None and review_path is not None:
         actions_path = _review_actions_path_for_review_path(review_path)
 
@@ -1068,7 +1136,7 @@ def _render_review_actions_update_issue_body(
     )
 
     # Robust fallback: do not depend on LLM-authored queue artefact structure.
-    # If we cannot infer the review context, default to the next review file under planning/reviews.
+    # If we cannot infer the review context, default to the next review file under .agent-orchestrator/reviews.
     if review_path is None:
         fallback_review = _pick_next_review_file(settings=settings, repo=repo, branch=branch)
         if isinstance(fallback_review, str) and fallback_review.strip():
@@ -1129,7 +1197,7 @@ def _load_repo_cognitive_task_templates(
     from github_agent_orchestrator.server.local_templates import _find_repo_root
 
     root = _find_repo_root()
-    template_dir = root / "planning" / "issue_templates"
+    template_dir = root / ".agent-orchestrator" / "issue_templates"
     if not template_dir.exists() or not template_dir.is_dir():
         raise HTTPException(
             status_code=502,
@@ -1153,7 +1221,7 @@ def _load_repo_cognitive_task_templates(
                 "category": _template_category_from_filename(name),
                 "enabled": True,
                 "promptText": content,
-                "targetFolder": "planning/issue_queue/pending",
+                "targetFolder": ".agent-orchestrator/issue_queue/pending",
                 "trigger": {"kind": "MANUAL_ONLY"},
                 "editable": False,
             }
@@ -1185,13 +1253,13 @@ def doc_goal(request: Request) -> dict[str, object]:
     content, sha = _get_repo_text_file(
         settings,
         repository=repo,
-        path="planning/vision/goal.md",
+        path=".agent-orchestrator/vision/goal.md",
         ref=ref,
     )
     return {
         "key": "goal",
         "title": "Goal",
-        "path": "planning/vision/goal.md",
+        "path": ".agent-orchestrator/vision/goal.md",
         "lastUpdatedIso": _utc_now_iso(),
         "sha": sha,
         "repo": repo,
@@ -1200,26 +1268,85 @@ def doc_goal(request: Request) -> dict[str, object]:
     }
 
 
-@router.get("/docs/capabilities")
-def doc_capabilities(request: Request) -> dict[str, object]:
+@router.get("/docs/target-state")
+def doc_target_state(request: Request) -> dict[str, object]:
     settings = _settings(request)
     repo = _active_repo(request, settings)
     ref = _active_ref(request)
     content, sha = _get_repo_text_file(
         settings,
         repository=repo,
-        path="planning/state/system_capabilities.md",
+        path=".agent-orchestrator/state/target_state.md",
         ref=ref,
     )
     return {
-        "key": "capabilities",
-        "title": "System Capabilities",
-        "path": "planning/state/system_capabilities.md",
+        "key": "targetState",
+        "title": "Target",
+        "path": ".agent-orchestrator/state/target_state.md",
         "lastUpdatedIso": _utc_now_iso(),
         "sha": sha,
         "repo": repo,
         "ref": (ref or None),
         "content": content,
+    }
+
+
+@router.get("/docs/current-state")
+def doc_current_state(request: Request) -> dict[str, object]:
+    settings = _settings(request)
+    repo = _active_repo(request, settings)
+    ref = _active_ref(request)
+    content, sha = _get_repo_text_file(
+        settings,
+        repository=repo,
+        path=".agent-orchestrator/state/current_state.md",
+        ref=ref,
+    )
+    return {
+        "key": "currentState",
+        "title": "Current",
+        "path": ".agent-orchestrator/state/current_state.md",
+        "lastUpdatedIso": _utc_now_iso(),
+        "sha": sha,
+        "repo": repo,
+        "ref": (ref or None),
+        "content": content,
+    }
+
+
+@router.post("/docs/target-state")
+def write_target_state(request: Request, payload: TargetStateWriteRequest) -> dict[str, object]:
+    settings = _settings(request)
+    if not settings.github_token.strip():
+        raise HTTPException(
+            status_code=409,
+            detail="ORCHESTRATOR_GITHUB_TOKEN is required to write target state",
+        )
+
+    content = payload.content.strip()
+    if not content:
+        raise HTTPException(status_code=422, detail="Target state content is required")
+
+    repo = _active_repo(request, settings)
+    ref = _active_ref(request)
+    branch = ref or _get_default_branch(settings, repository=repo)
+    message = payload.message or "chore: update target_state.md"
+
+    _ensure_repo_text_file_present(
+        settings=settings,
+        repo=repo,
+        branch=branch,
+        path=".agent-orchestrator/state/target_state.md",
+        content_text=payload.content,
+        message=message,
+    )
+
+    return {
+        "ok": True,
+        "repo": repo,
+        "branch": branch,
+        "path": ".agent-orchestrator/state/target_state.md",
+        "message": message,
     }
 
 
@@ -1253,7 +1380,7 @@ def _timeline_entry_from_commit(c: object) -> dict[str, object] | None:
         "tsIso": ts,
         "kind": "GIT_COMMIT",
         "summary": summary,
-        "typePath": "planning",
+        "typePath": ".agent-orchestrator",
         "links": ([{"label": "Commit", "url": link}] if link else None),
     }
 
@@ -1266,11 +1393,11 @@ def list_timeline(
     repo = _active_repo(request, settings)
     ref = _active_ref(request)
 
-    # A lightweight, repo-derived timeline: show recent commits that touched planning/.
+    # A lightweight, repo-derived timeline: show recent commits that touched .agent-orchestrator/.
     # This avoids any local persistence.
     params: dict[str, str] = {
         "per_page": str(min(limit, 100)),
-        "path": "planning",
+        "path": ".agent-orchestrator",
     }
     if ref:
         params["sha"] = ref

@@ -155,8 +155,8 @@ const buildSteps: Array<{
     subtitle: 'Work happens on the gap-analysis issue; a PR may be opened.',
     details: (
       <Typography variant="body2" color="text.secondary">
-        Operator/Copilot compares <code>goal.md</code> vs <code>system_capabilities.md</code> and produces the
-        next actionable development artefact.
+        Operator/Copilot compares <code>target_state.md</code> vs <code>current_state.md</code> and produces
+        the next actionable development artefact.
       </Typography>
     ),
   },
@@ -214,7 +214,7 @@ const buildSteps: Array<{
   {
     key: '3b',
     title: 'Step 3b — Capability update execution',
-    subtitle: 'Copilot updates system_capabilities.md. Issue is closed.',
+    subtitle: 'Copilot updates current_state.md. Issue is closed.',
     details: (
       <Typography variant="body2" color="text.secondary">
         After this, declared capabilities match reality again.

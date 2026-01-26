@@ -1,7 +1,7 @@
 Extract CLI subcommand handlers and GitHub client helpers into focused modules
 
 ## Context
-This task addresses **Review Item C** from review `planning/reviews/review-2026-01-05-refactor-large-files.md`.
+This task addresses **Review Item C** from review `.agent-orchestrator/reviews/review-2026-01-05-refactor-large-files.md`.
 
 The review identified that:
 - `orchestrator/main.py` (1135 lines) contains extensive CLI wiring and a long command dispatch chain
@@ -180,7 +180,7 @@ Expected result:
    ```bash
    orchestrator --help
    ```
-
+   
 3. **Check imports** throughout the codebase:
    - Ensure all imports of dataclasses are updated
    - Ensure no circular import issues
@@ -259,3 +259,4 @@ Expected result:
 - All files pass linting (ruff, black, isort, mypy)
 - No circular import issues
 - Clear separation of concerns: CLI wiring vs. command logic vs. GitHub operations
+

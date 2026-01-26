@@ -144,6 +144,11 @@ def _github_get_json(
                 "Repository or path not found. If the repo is private, GitHub may return 404 when the "
                 "token lacks access."
             )
+        elif status == 409:
+            hint = (
+                "Repository may be empty or the branch does not exist yet. Push an initial commit or "
+                "create the branch, or pass ?ref=branch on requests that accept it."
+            )
 
         raise HTTPException(
             status_code=502,

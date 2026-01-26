@@ -371,6 +371,45 @@ def ensure_repo_file_present_in_complete(
     )
 
 
+def ensure_repo_text_file_present(
+    settings: ServerSettings,
+    *,
+    repository: str,
+    path: str,
+    content_text: str,
+    branch: str,
+    message: str,
+) -> None:
+    """Ensure a text file exists at an arbitrary repository path."""
+
+    norm = path.lstrip("/")
+    url = _repo_api_url(settings, repository=repository, path=f"contents/{norm}")
+    encoded = base64.b64encode(content_text.encode("utf-8")).decode("utf-8")
+
+    payload: dict[str, Any] = {
+        "message": message,
+        "content": encoded,
+        "branch": branch,
+    }
+
+    status, body = _github_put_json(settings, url=url, payload=payload)
+    if status == 201:
+        return
+    if status == 422:
+        existing = _github_get_json(settings, url=url, params={"ref": branch})
+        sha = existing.get("sha")
+        if isinstance(sha, str) and sha.strip():
+            payload["sha"] = sha
+            status2, _body2 = _github_put_json(settings, url=url, payload=payload)
+            if status2 in {200, 201}:
+                return
+
+    raise HTTPException(
+        status_code=502,
+        detail=f"Failed to write repo file (HTTP {status}) at {path}: {body}",
+    )
+
+
 def delete_repo_file_if_present(
     settings: ServerSettings,
     *,
