@@ -38,6 +38,9 @@ from github_agent_orchestrator.server.dashboard.github_operations import (
     ensure_repo_label_exists as _ensure_repo_label_exists,
 )
 from github_agent_orchestrator.server.dashboard.github_operations import (
+    ensure_branch_exists as _ensure_branch_exists,
+)
+from github_agent_orchestrator.server.dashboard.github_operations import (
     get_default_branch as _get_default_branch,
 )
 from github_agent_orchestrator.server.dashboard.github_operations import (
@@ -307,6 +310,40 @@ def _active_repo(request: Request, settings: ServerSettings) -> str:
 
 def _active_ref(request: Request) -> str:
     return request.query_params.get("ref", "").strip()
+
+
+def _work_branch_name(*, prefix: str, issue_number: int) -> str:
+    cleaned = (prefix or "").strip().strip("/")
+    if not cleaned:
+        cleaned = "orchestrator/work"
+    return f"{cleaned}/issue-{issue_number}"
+
+
+def _resolve_assignment_base_branch(
+    *,
+    settings: ServerSettings,
+    target_repo: str,
+    issue_number: int,
+    base_branch_override: str,
+) -> str:
+    base_branch = settings.target_base_branch.strip() or base_branch_override.strip()
+    if not base_branch:
+        base_branch = _get_default_branch(settings, repository=target_repo)
+
+    if settings.create_work_branch:
+        work_branch = _work_branch_name(
+            prefix=settings.work_branch_prefix,
+            issue_number=issue_number,
+        )
+        _ensure_branch_exists(
+            settings=settings,
+            repository=target_repo,
+            branch=work_branch,
+            base_branch=base_branch,
+        )
+        return work_branch
+
+    return base_branch
 
 
 _GAP_ANALYSIS_TEMPLATE_PATHS: tuple[str, ...] = (
@@ -856,19 +893,26 @@ def _assign_issue_to_copilot(
     base_branch: str,
     instructions: str,
 ) -> list[str]:
+    resolved_base_branch = _resolve_assignment_base_branch(
+        settings=settings,
+        target_repo=target_repo,
+        issue_number=issue_number,
+        base_branch_override=base_branch,
+    )
+
     _enforce_safe_assignment_or_raise(
         settings=settings,
         repository=repository,
         issue_number=issue_number,
-        base_branch=base_branch,
+        base_branch=resolved_base_branch,
     )
 
     payload: dict[str, Any] = {"assignees": [settings.copilot_assignee]}
     agent_assignment: dict[str, str] = {}
     if target_repo.strip():
         agent_assignment["target_repository"] = target_repo.strip()
-    if base_branch.strip():
-        agent_assignment["base_branch"] = base_branch.strip()
+    if resolved_base_branch.strip():
+        agent_assignment["base_branch"] = resolved_base_branch.strip()
     if instructions.strip():
         agent_assignment["additional_instructions"] = instructions.strip()
     if agent_assignment:

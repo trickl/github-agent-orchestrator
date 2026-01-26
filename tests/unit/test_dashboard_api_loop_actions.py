@@ -11,6 +11,11 @@ from fastapi.testclient import TestClient
 from github_agent_orchestrator.server.app import create_app
 
 
+@pytest.fixture(autouse=True)
+def _disable_work_branch_creation(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ORCHESTRATOR_CREATE_WORK_BRANCH", "false")
+
+
 def _merge_endpoint_list_repo_md(*_a, **kwargs):
     dir_path = kwargs.get("dir_path")
     if dir_path == ".agent-orchestrator/issue_queue/pending":

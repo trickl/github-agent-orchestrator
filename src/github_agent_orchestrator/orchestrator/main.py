@@ -33,6 +33,7 @@ HELP_REASSIGN = "Unassign Copilot (if present) then assign again to retrigger th
 HELP_POLL_SECONDS = "Polling interval in seconds"
 HELP_TIMEOUT_SECONDS = "Timeout in seconds (0 means no timeout)"
 HELP_MERGE_METHOD = "Merge method: merge | squash | rebase"
+HELP_ENV_PATH = "Path to the .env file (default: .env)"
 
 
 def _parse_labels(value: str | None) -> list[str] | None:
@@ -54,6 +55,27 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    init_cmd = subparsers.add_parser("init", help="Initialize local config and state")
+    init_cmd.add_argument("--repo", default="", help=HELP_REPOSITORY)
+    init_cmd.add_argument(
+        "--loop-mode",
+        default="build",
+        choices=["build", "review"],
+        help="Default loop mode (build or review)",
+    )
+    init_cmd.add_argument("--env-path", default=".env", help=HELP_ENV_PATH)
+    init_cmd.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite existing values in the .env file",
+    )
+
+    auth_cmd = subparsers.add_parser("auth", help="Authentication helpers")
+    auth_sub = auth_cmd.add_subparsers(dest="auth_provider", required=True)
+    auth_github = auth_sub.add_parser("github", help="Configure GitHub token")
+    auth_github.add_argument("--token", default="", help="GitHub token")
+    auth_github.add_argument("--env-path", default=".env", help=HELP_ENV_PATH)
 
     create_issue = subparsers.add_parser("create-issue", help="Create a GitHub issue")
     create_issue.add_argument(
@@ -522,6 +544,26 @@ def build_parser() -> argparse.ArgumentParser:
         help="Maximum number of open PRs to consider (default 100)",
     )
 
+    status = subparsers.add_parser("status", help="Show loop status for a repo")
+    status.add_argument("--repo", default="", help=HELP_REPOSITORY)
+    status.add_argument("--ref", default="", help="Optional git ref")
+    status.add_argument("--pretty", action="store_true", help="Pretty-print JSON output")
+
+    run = subparsers.add_parser("run", help="Run a single loop action")
+    run.add_argument("--repo", default="", help=HELP_REPOSITORY)
+    run.add_argument("--ref", default="", help="Optional git ref")
+    run.add_argument(
+        "--heal-orphans",
+        action="store_true",
+        help="Allow healing orphaned processed queue items during stage 2b",
+    )
+
+    reset = subparsers.add_parser("reset", help="Reset local workflow state")
+    reset.add_argument("--yes", action="store_true", help="Confirm reset")
+
+    cost = subparsers.add_parser("cost", help="Show conservative cost estimates")
+    cost.add_argument("--pretty", action="store_true", help="Pretty-print JSON output")
+
     return parser
 
 
@@ -533,8 +575,16 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
+    allow_missing_token = args.command in {
+        "init",
+        "status",
+        "run",
+        "reset",
+        "cost",
+    } or (args.command == "auth" and getattr(args, "auth_provider", "") == "github")
+
     try:
-        settings = OrchestratorSettings()
+        settings = OrchestratorSettings(require_github_token=not allow_missing_token)
     except ValidationError as e:
         print("Configuration error (check your .env):", file=sys.stderr)
         print(e, file=sys.stderr)

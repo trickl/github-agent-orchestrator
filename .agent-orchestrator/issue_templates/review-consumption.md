@@ -32,6 +32,9 @@ Before producing any queue artefact, answer this question:
        be done at the same time without conflict. 
 	 - Avoid a grab-bag of unrelated changes.
 4. Produce one queue artefact describing the task.
+5. Ensure the resulting development PR includes tests. The queue artefact must specify which
+	tests to add or update and how to run them. Only allow a no-test PR when tests are truly
+	impossible, and require an explicit justification.
 
 ### Constraints
 - Do not modify code.

@@ -13,6 +13,7 @@ from github_agent_orchestrator.orchestrator.github.issue_service import (
     IssueService,
     IssueStore,
 )
+from github_agent_orchestrator.orchestrator.branching import resolve_assignment_branch
 from github_agent_orchestrator.orchestrator.utils import parse_labels
 
 logger = logging.getLogger(__name__)
@@ -41,12 +42,21 @@ def handle_gap_analysis_cycle(args: argparse.Namespace, settings: OrchestratorSe
             print(f"Issue already exists: #{record.issue_number} '{record.title}'")
 
         target_repo = args.target_repo or args.repository
+        base_branch = resolve_assignment_branch(
+            github=github,
+            repository=target_repo,
+            issue_number=record.issue_number,
+            base_branch_override=args.base_branch,
+            target_base_branch=settings.target_base_branch,
+            create_work_branch=settings.create_work_branch,
+            work_branch_prefix=settings.work_branch_prefix,
+        )
         if args.reassign:
             service.reassign_issue_to_copilot(
                 issue_number=record.issue_number,
                 copilot_assignee=settings.copilot_assignee,
                 target_repo=target_repo,
-                base_branch=args.base_branch,
+                base_branch=base_branch,
                 custom_instructions=args.instructions,
             )
         else:
@@ -54,7 +64,7 @@ def handle_gap_analysis_cycle(args: argparse.Namespace, settings: OrchestratorSe
                 issue_number=record.issue_number,
                 copilot_assignee=settings.copilot_assignee,
                 target_repo=target_repo,
-                base_branch=args.base_branch,
+                base_branch=base_branch,
                 custom_instructions=args.instructions,
             )
 

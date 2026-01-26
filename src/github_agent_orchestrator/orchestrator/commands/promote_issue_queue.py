@@ -9,6 +9,7 @@ from pathlib import Path
 from github_agent_orchestrator.orchestrator.config import OrchestratorSettings
 from github_agent_orchestrator.orchestrator.github.client import GitHubClient
 from github_agent_orchestrator.orchestrator.github.issue_service import IssueService, IssueStore
+from github_agent_orchestrator.orchestrator.branching import resolve_assignment_branch
 from github_agent_orchestrator.orchestrator.planning.issue_queue import (
     QUEUE_MARKER_PREFIX,
     discover_pending_items,
@@ -70,12 +71,21 @@ def handle_promote_issue_queue(args: argparse.Namespace, settings: OrchestratorS
             raise RuntimeError("Expected an issue record to be created or discovered")
 
         target_repo = args.target_repo or args.repository
+        base_branch = resolve_assignment_branch(
+            github=github,
+            repository=target_repo,
+            issue_number=queue_record.issue_number,
+            base_branch_override=args.base_branch,
+            target_base_branch=settings.target_base_branch,
+            create_work_branch=settings.create_work_branch,
+            work_branch_prefix=settings.work_branch_prefix,
+        )
         if args.reassign:
             service.reassign_issue_to_copilot(
                 issue_number=queue_record.issue_number,
                 copilot_assignee=settings.copilot_assignee,
                 target_repo=target_repo,
-                base_branch=args.base_branch,
+                base_branch=base_branch,
                 custom_instructions=args.instructions,
             )
         else:
@@ -85,7 +95,7 @@ def handle_promote_issue_queue(args: argparse.Namespace, settings: OrchestratorS
                     issue_number=queue_record.issue_number,
                     copilot_assignee=settings.copilot_assignee,
                     target_repo=target_repo,
-                    base_branch=args.base_branch,
+                    base_branch=base_branch,
                     custom_instructions=args.instructions,
                 )
 

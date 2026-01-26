@@ -214,6 +214,22 @@ Everything else is derived.
 
 ## Quick start
 
+### CLI-first quickstart
+
+```bash
+orchestrator init --repo owner/repo
+orchestrator auth github --token ghp_...
+orchestrator run --repo owner/repo
+```
+
+For ongoing operation:
+
+```bash
+orchestrator status --repo owner/repo --pretty
+orchestrator run --repo owner/repo
+orchestrator cost --pretty
+```
+
 ### Installation
 
 ```bash
@@ -235,6 +251,9 @@ ORCHESTRATOR_GITHUB_TOKEN=ghp_...
 COPILOT_ASSIGNEE=copilot-swe-agent[bot]
 LOG_LEVEL=INFO
 ORCHESTRATOR_LOOP_MODE=build  # or: review
+ORCHESTRATOR_TARGET_BASE_BRANCH=  # optional explicit base branch
+ORCHESTRATOR_CREATE_WORK_BRANCH=true  # create per-issue work branches (safer default)
+ORCHESTRATOR_WORK_BRANCH_PREFIX=orchestrator/work
 ```
 
 ---

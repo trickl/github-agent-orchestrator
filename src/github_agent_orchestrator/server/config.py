@@ -163,6 +163,51 @@ class ServerSettings(BaseSettings):
         ),
     )
 
+    target_base_branch: str = Field(
+        default="",
+        validation_alias="ORCHESTRATOR_TARGET_BASE_BRANCH",
+        description=(
+            "Optional explicit base branch for Copilot work in the target repo. "
+            "If empty, the repository default branch is used."
+        ),
+    )
+
+    create_work_branch: bool = Field(
+        default=True,
+        validation_alias="ORCHESTRATOR_CREATE_WORK_BRANCH",
+        description=(
+            "If true, create a dedicated work branch per issue (derived from the base branch) and "
+            "assign Copilot to work against that branch."
+        ),
+    )
+
+    work_branch_prefix: str = Field(
+        default="orchestrator/work",
+        validation_alias="ORCHESTRATOR_WORK_BRANCH_PREFIX",
+        description="Prefix used when creating per-issue work branches.",
+    )
+
+    premium_request_cost_usd: float = Field(
+        default=0.04,
+        validation_alias="ORCHESTRATOR_PREMIUM_REQUEST_COST_USD",
+        description="Conservative cost per premium request (USD).",
+        ge=0.0,
+    )
+
+    estimated_premium_requests_per_pr: int = Field(
+        default=1,
+        validation_alias="ORCHESTRATOR_ESTIMATED_PREMIUM_REQUESTS_PER_PR",
+        description="Conservative estimate of premium requests per PR.",
+        ge=0,
+    )
+
+    estimated_prs_per_iteration: int = Field(
+        default=3,
+        validation_alias="ORCHESTRATOR_ESTIMATED_PRS_PER_ITERATION",
+        description="Conservative estimate of PRs per iteration.",
+        ge=0,
+    )
+
     # Where the Vite build output lives when serving the UI from the backend.
     ui_dist_path: Path = Field(default=Path("ui/dist"), validation_alias="ORCHESTRATOR_UI_DIST")
 

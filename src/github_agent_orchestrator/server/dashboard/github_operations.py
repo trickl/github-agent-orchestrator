@@ -25,6 +25,7 @@ from github_agent_orchestrator.server.dashboard.github_api import (
     _github_get_list,
     _github_get_list_with_headers,
     _github_headers,
+    _github_post_json,
     _github_put_json,
     _repo_api_url,
 )
@@ -186,6 +187,40 @@ def get_branch_head_commit_sha(settings: ServerSettings, *, repository: str, bra
     if not isinstance(sha, str) or not sha.strip():
         raise HTTPException(status_code=502, detail="Unexpected GitHub ref response (sha)")
     return sha
+
+
+def ensure_branch_exists(
+    settings: ServerSettings,
+    *,
+    repository: str,
+    branch: str,
+    base_branch: str,
+) -> None:
+    """Ensure a branch exists, creating it from a base branch if needed."""
+
+    if not branch.strip():
+        raise HTTPException(status_code=422, detail="branch is required")
+    if not base_branch.strip():
+        raise HTTPException(status_code=422, detail="base_branch is required")
+
+    try:
+        get_branch_head_commit_sha(settings, repository=repository, branch=branch)
+        return
+    except HTTPException:
+        pass
+
+    base_sha = get_branch_head_commit_sha(settings, repository=repository, branch=base_branch)
+    try:
+        _github_post_json(
+            settings,
+            url=_repo_api_url(settings, repository=repository, path="git/refs"),
+            payload={"ref": f"refs/heads/{branch}", "sha": base_sha},
+        )
+        return
+    except HTTPException:
+        # Race-safe: if another actor created the branch, treat as success.
+        get_branch_head_commit_sha(settings, repository=repository, branch=branch)
+        return
 
 
 def get_commit_tree_sha(settings: ServerSettings, *, repository: str, commit_sha: str) -> str:

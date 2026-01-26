@@ -68,6 +68,9 @@ Before proposing any task, answer the following question:
    - Clearly scoped
   - Achievable within a **single pull request**
   - Decomposed to the **smallest viable step** if the target requirement is complex
+  - Explicitly requires tests: the resulting PR must add or update tests, and the task must
+    specify what tests to add and how to run them. Only allow a no-test PR if it is truly
+    impossible, and the task includes a clear, explicit justification.
 
 If the ideal next step is too large for a single PR, **split it** into a smaller, self-contained task
 that still advances the system toward the target state.

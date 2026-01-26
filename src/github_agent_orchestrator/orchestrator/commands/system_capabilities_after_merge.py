@@ -13,6 +13,7 @@ from github_agent_orchestrator.orchestrator.github.issue_service import (
     IssueService,
     IssueStore,
 )
+from github_agent_orchestrator.orchestrator.branching import resolve_assignment_branch
 from github_agent_orchestrator.orchestrator.system_capabilities_after_merge import (
     render_issue_body,
 )
@@ -58,12 +59,21 @@ def handle_system_capabilities_after_merge(
             print(f"Issue already exists: #{record.issue_number} '{record.title}'")
 
         target_repo = args.target_repo or args.repository
+        base_branch = resolve_assignment_branch(
+            github=github,
+            repository=target_repo,
+            issue_number=record.issue_number,
+            base_branch_override=args.base_branch,
+            target_base_branch=settings.target_base_branch,
+            create_work_branch=settings.create_work_branch,
+            work_branch_prefix=settings.work_branch_prefix,
+        )
         if args.reassign:
             service.reassign_issue_to_copilot(
                 issue_number=record.issue_number,
                 copilot_assignee=settings.copilot_assignee,
                 target_repo=target_repo,
-                base_branch=args.base_branch,
+                base_branch=base_branch,
                 custom_instructions=args.instructions,
                 custom_agent=args.custom_agent,
                 model=args.model,
@@ -73,7 +83,7 @@ def handle_system_capabilities_after_merge(
                 issue_number=record.issue_number,
                 copilot_assignee=settings.copilot_assignee,
                 target_repo=target_repo,
-                base_branch=args.base_branch,
+                base_branch=base_branch,
                 custom_instructions=args.instructions,
                 custom_agent=args.custom_agent,
                 model=args.model,
