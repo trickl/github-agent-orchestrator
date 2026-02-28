@@ -101,36 +101,6 @@ Each loop:
 
 There is **no growing prompt comtext**.
 
-### Control-loop diagram
-
-```mermaid
-flowchart TD
-    Target["Target State<br/>target_state.md"]
-    Cap["Current State<br/>current_state.md"]
-
-    Gap["Gap Analysis<br/>(bounded context)"]
-
-    Queue["Task Artefact<br/>/.agent-orchestrator/issue_queue/pending"]
-    Issue["GitHub Issue"]
-    PR["PR + Review"]
-    Merge["Merge"]
-
-    Update["Update Current State<br/>current_state.md"]
-
-    Target --> Gap
-    Cap --> Gap
-    Gap --> Queue
-    Queue --> Issue
-    Issue --> PR
-    PR --> Merge
-    Merge --> Update
-    Update --> Cap
-
-    Cap -.->|"Next iteration<br/>(context resets)"| Gap
-```
-
----
-
 ## Canonical artefacts
 
 The entire loop is driven by a small, explicit set of Git-tracked artefacts:
