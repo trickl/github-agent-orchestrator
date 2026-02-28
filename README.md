@@ -2,8 +2,7 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-<img width="811" height="952" alt="github-agent-orchestrator-loop" src="https://github.com/user-attachments/assets/85284e2e-c7b2-4f43-a492-ad351695aee1" />
-
+<img width="1024" height="1024" alt="image" src="https://github.com/user-attachments/assets/d8e47929-945e-4e9c-92c5-aaaf8f4167c6" />
 
 A Git-native **control loop for long-horizon, AI-assisted software development**, built around
 **bounded context**, **explicit state**, and **Copilot-only cognition**.
@@ -68,6 +67,8 @@ This system is built on two principles:
 ---
 
 ## Mental model
+
+<img width="811" height="952" alt="github-agent-orchestrator-loop" src="https://github.com/user-attachments/assets/85284e2e-c7b2-4f43-a492-ad351695aee1" />
 
 - **Github Copilot**: does all reasoning and software development
 - **GitHub Target Repository**: comtains code plus orchestration state
