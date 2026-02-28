@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 512 512" role="img" aria-label="GitHub Agent Orchestrator logo">
+  <defs>
+    <style>
+      .label{font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; fill:#4b5563}
+      .t1{font-size:34px;font-weight:600}
+      .t2{font-size:28px;font-weight:600}
+      .t3{font-size:22px;font-weight:600}
+      .box{rx:14; ry:14; stroke-width:3}
+      .stroke-purple{stroke:#8b78d6}
+      .stroke-blue{stroke:#8fb0ea}
+      .stroke-orange{stroke:#f2b56a}
+      .stroke-teal{stroke:#7ccfc4}
+      .fill-purple{fill:#f2efff}
+      .fill-blue{fill:#eef5ff}
+      .fill-orange{fill:#fff2df}
+      .fill-teal{fill:#effcf9}
+      .arrow{stroke:#374151; stroke-width:3.2; fill:none; stroke-linecap:round; stroke-linejoin:round}
+    </style>
+
+    <marker id="arrowhead" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#374151"></path>
+    </marker>
+  </defs>
+
+  <!-- Target -->
+  <rect x="62" y="58" width="170" height="82" class="box fill-purple stroke-purple"></rect>
+  <text x="147" y="109" text-anchor="middle" class="label t1">Target</text>
+
+  <!-- Current -->
+  <rect x="280" y="58" width="170" height="82" class="box fill-blue stroke-blue"></rect>
+  <text x="365" y="109" text-anchor="middle" class="label t1">Current</text>
+
+  <!-- Copilot -->
+  <rect x="156" y="176" width="200" height="92" class="box fill-orange stroke-orange"></rect>
+  <text x="256" y="230" text-anchor="middle" class="label t2">Copilot</text>
+
+  <!-- Issue -->
+  <rect x="196" y="306" width="120" height="72" class="box fill-blue stroke-blue"></rect>
+  <text x="256" y="350" text-anchor="middle" class="label t3">Issue</text>
+
+  <!-- Pull Request -->
+  <rect x="156" y="412" width="200" height="86" class="box fill-teal stroke-teal"></rect>
+  <text x="256" text-anchor="middle" class="label t2">
+    <tspan x="256" y="454">Pull</tspan>
+    <tspan x="256" y="482">Request</tspan>
+  </text>
+
+  <!-- Checkmark badge -->
+  <g transform="translate(332 406)">
+    <rect width="42" height="42" rx="10" ry="10" fill="#7ccfc4"></rect>
+    <path d="M12 22 L19 29 L31 15" stroke="#ffffff" stroke-width="4.2" fill="none" stroke-linecap="round" stroke-linejoin="round"></path>
+  </g>
+
+  <!-- Arrows -->
+  <path class="arrow" marker-end="url(#arrowhead)" d="M147 140 C147 156 190 160 210 176"></path>
+  <path class="arrow" marker-end="url(#arrowhead)" d="M365 140 C365 156 322 160 302 176"></path>
+  <path class="arrow" marker-end="url(#arrowhead)" d="M256 268 L256 306"></path>
+  <path class="arrow" marker-end="url(#arrowhead)" d="M256 378 L256 412"></path>
+</svg>
