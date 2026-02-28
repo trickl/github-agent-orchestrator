@@ -2,6 +2,9 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
+<img width="811" height="952" alt="github-agent-orchestrator-loop" src="https://github.com/user-attachments/assets/85284e2e-c7b2-4f43-a492-ad351695aee1" />
+
+
 A Git-native **control loop for long-horizon, AI-assisted software development**, built around
 **bounded context**, **explicit state**, and **Copilot-only cognition**.
 
