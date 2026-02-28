@@ -41,28 +41,34 @@ This unlocks significant producitvity gains as it can be run **overnight** and *
 
 ---
 
-## Core insight: bounded context + repo-derived control
+## Quick Q&A
 
-This system is built on two principles:
+### Is this the same as the [Ralph Wiggum loop](https://github.com/vercel/ai/tree/main/examples/ralph-wiggum-loop)?
 
-1. **Bounded context**
-   Each iteration runs with a fixed, small prompt. There is no accumulated history and no summarisation.
+Short answer: **similar spirit, different mechanism.**
 
-2. **Repo-derived control**
-   All planning decisions are materialised as Git-tracked artefacts and executed via **GitHub Copilot**.
-   No other model is required for planning, prioritisation, or reflection.
+Both are designed for long-horizon, iterative development using AI.
 
-### Traditional agent systems vs this system
+The Ralph Wiggum loop works from a predefined list of requirements and iterates through them.
 
-| | Traditional agents | GitHub Agent Orchestrator |
-|---|---|---|
-| Context | Grows over time | Fixed per iteration |
-| Memory | Prompt history | Git-tracked files |
-| Planning | Implicit, conversational | Explicit, artefact-driven |
-| Models | Multiple / ad hoc | Copilot only |
-| State | Hallucinated | Versioned |
-| Auditability | Low | High |
-| Cost profile | Increases | Stable |
+GitHub Agent Orchestrator instead behaves more like **gradient descent**:
+
+- It computes the difference between **Target State** and **Current State**
+- It derives the next Issue from that difference
+- It updates the Current State after merge
+- It recomputes the next step from the new delta
+
+There is no fixed canonical task list.  
+Work emerges from the gap.
+
+---
+
+### What do I need to run this?
+
+- A Python environment  
+- A GitHub account  
+
+That’s it.
 
 ---
 
