@@ -1,31 +1,9 @@
 import React from 'react';
-import {
-  Alert,
-  Box,
-  Button,
-  Card,
-  CardContent,
-  CircularProgress,
-  Container,
-  FormControl,
-  Grid,
-  IconButton,
-  InputLabel,
-  List,
-  ListItem,
-  ListItemButton,
-  ListItemText,
-  MenuItem,
-  Snackbar,
-  Select,
-  Stack,
-  TextField,
-  Typography,
-} from '@mui/material';
-import DarkModeOutlinedIcon from '@mui/icons-material/DarkModeOutlined';
-import LightModeOutlinedIcon from '@mui/icons-material/LightModeOutlined';
+import { Alert, Box, CircularProgress, Container, Snackbar, Stack, Typography } from '@mui/material';
 import { apiFetch } from '../lib/apiClient';
 import { endpoints } from '../lib/endpoints';
+import { DashboardView } from './DashboardView';
+import { OnboardingFlow } from './OnboardingFlow';
 import { ColorModeContext } from './colorModeContext';
 
 type RepoStatusResponse = {
@@ -48,7 +26,19 @@ type RunResponse = {
   exit_code: number;
 };
 
+export type OnboardingScene =
+  | 'welcome'
+  | 'connect'
+  | 'connected'
+  | 'repo'
+  | 'target'
+  | 'initializing'
+  | 'dashboard';
+
 const REPO_STORAGE_KEY = 'gao.selectedRepo';
+const TARGET_DRAFT_STORAGE_KEY = 'gao.targetStateDraft';
+const ONBOARDING_COMPLETE_KEY = 'gao.onboardingComplete.v1';
+const DASHBOARD_TOUR_DISABLED_KEY = 'gao.dashboardTourDisabled.v1';
 const RUNNING_POLL_MS = 1500;
 const IDLE_POLL_MS = 7000;
 
@@ -77,7 +67,20 @@ export function App(): React.JSX.Element {
   const [selectedRepo, setSelectedRepo] = React.useState<string>('');
   const [status, setStatus] = React.useState<RepoStatusResponse | null>(null);
   const [developmentPrs, setDevelopmentPrs] = React.useState<DevelopmentPullRequest[]>([]);
-  const [targetStateText, setTargetStateText] = React.useState('');
+  const [targetStateText, setTargetStateText] = React.useState(
+    () => window.localStorage.getItem(TARGET_DRAFT_STORAGE_KEY) ?? ''
+  );
+  const [scene, setScene] = React.useState<OnboardingScene>('welcome');
+  const [initialSceneResolved, setInitialSceneResolved] = React.useState(false);
+  const [isConnecting, setIsConnecting] = React.useState(false);
+  const [isStartingFirstIteration, setIsStartingFirstIteration] = React.useState(false);
+  const [showTour, setShowTour] = React.useState(false);
+  const [initProgress, setInitProgress] = React.useState({
+    repositoryPrepared: false,
+    initialAnalysisComplete: false,
+    planGenerated: false,
+  });
+  const [repoSearch, setRepoSearch] = React.useState('');
   const [loading, setLoading] = React.useState(true);
   const [running, setRunning] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -90,18 +93,19 @@ export function App(): React.JSX.Element {
     setRepos(data);
     if (data.length === 0) {
       setSelectedRepo('');
-      return;
+      return data;
     }
     const persisted = window.localStorage.getItem(REPO_STORAGE_KEY);
     if (persisted && data.includes(persisted)) {
       setSelectedRepo(persisted);
-      return;
+      return data;
     }
     setSelectedRepo(data[0]);
+    return data;
   }, []);
 
   const loadRepoData = React.useCallback(async () => {
-    if (!selectedRepoParts) return;
+    if (!selectedRepoParts) return null;
     const { owner, repo } = selectedRepoParts;
     const [statusPayload, prsPayload] = await Promise.all([
       apiFetch<RepoStatusResponse>(endpoints.repoStatus(owner, repo)),
@@ -109,6 +113,7 @@ export function App(): React.JSX.Element {
     ]);
     setStatus(statusPayload);
     setDevelopmentPrs(prsPayload);
+    return statusPayload;
   }, [selectedRepoParts]);
 
   React.useEffect(() => {
@@ -130,6 +135,19 @@ export function App(): React.JSX.Element {
   }, [loadRepos]);
 
   React.useEffect(() => {
+    if (initialSceneResolved || loading) return;
+
+    const onboardingComplete = window.localStorage.getItem(ONBOARDING_COMPLETE_KEY) === 'true';
+    if (onboardingComplete) {
+      setScene(selectedRepo ? 'dashboard' : 'repo');
+    } else {
+      setScene('welcome');
+    }
+
+    setInitialSceneResolved(true);
+  }, [initialSceneResolved, loading, selectedRepo]);
+
+  React.useEffect(() => {
     if (!selectedRepo) return;
     window.localStorage.setItem(REPO_STORAGE_KEY, selectedRepo);
     setError(null);
@@ -139,7 +157,7 @@ export function App(): React.JSX.Element {
   }, [loadRepoData, selectedRepo]);
 
   React.useEffect(() => {
-    if (!selectedRepoParts) return;
+    if (!selectedRepoParts || scene !== 'dashboard') return;
 
     const pollMs = normalizeStatus(status?.status) === 'running' ? RUNNING_POLL_MS : IDLE_POLL_MS;
     const id = window.setInterval(() => {
@@ -149,7 +167,11 @@ export function App(): React.JSX.Element {
     }, pollMs);
 
     return () => window.clearInterval(id);
-  }, [loadRepoData, selectedRepoParts, status?.status]);
+  }, [loadRepoData, scene, selectedRepoParts, status?.status]);
+
+  React.useEffect(() => {
+    window.localStorage.setItem(TARGET_DRAFT_STORAGE_KEY, targetStateText);
+  }, [targetStateText]);
 
   const handleTargetStateSubmit = React.useCallback(async () => {
     if (!selectedRepoParts) return;
@@ -166,7 +188,6 @@ export function App(): React.JSX.Element {
       body: JSON.stringify({ content }),
     });
     setRunToast({ severity: 'success', message: '✅ Target state saved. You can now start building.' });
-    setTargetStateText('');
     await loadRepoData();
   }, [loadRepoData, selectedRepoParts, targetStateText]);
 
@@ -207,6 +228,100 @@ export function App(): React.JSX.Element {
     }
   }, [loadRepoData, running, selectedRepoParts]);
 
+  const markOnboardingCompleted = React.useCallback(() => {
+    window.localStorage.setItem(ONBOARDING_COMPLETE_KEY, 'true');
+    if (window.localStorage.getItem(DASHBOARD_TOUR_DISABLED_KEY) !== 'true') {
+      setShowTour(true);
+    }
+  }, []);
+
+  const handleConnectGithub = React.useCallback(async () => {
+    setIsConnecting(true);
+    setError(null);
+    try {
+      const data = await loadRepos();
+      if (data.length > 0) {
+        setScene('connected');
+      } else {
+        setScene('repo');
+      }
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIsConnecting(false);
+    }
+  }, [loadRepos]);
+
+  const handleContinueFromRepoSelection = React.useCallback(async () => {
+    if (!selectedRepoParts) {
+      setError('Please select a repository to continue.');
+      return;
+    }
+
+    setError(null);
+    try {
+      const latestStatus = await loadRepoData();
+      if (latestStatus?.hasTargetState) {
+        markOnboardingCompleted();
+        setScene('dashboard');
+        return;
+      }
+      setScene('target');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }, [loadRepoData, markOnboardingCompleted, selectedRepoParts]);
+
+  const runInitializationStep = React.useCallback(async () => {
+    if (!selectedRepoParts) return;
+    setScene('initializing');
+    setIsStartingFirstIteration(true);
+    setInitProgress({
+      repositoryPrepared: false,
+      initialAnalysisComplete: false,
+      planGenerated: false,
+    });
+
+    const wait = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
+
+    try {
+      await handleTargetStateSubmit();
+      setInitProgress((prev) => ({ ...prev, repositoryPrepared: true }));
+      await wait(700);
+
+      setInitProgress((prev) => ({ ...prev, initialAnalysisComplete: true }));
+      await wait(700);
+
+      setInitProgress((prev) => ({ ...prev, planGenerated: true }));
+      await wait(500);
+
+      await handleRun();
+      markOnboardingCompleted();
+      setScene('dashboard');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err));
+      setScene('target');
+    } finally {
+      setIsStartingFirstIteration(false);
+    }
+  }, [handleRun, handleTargetStateSubmit, markOnboardingCompleted, selectedRepoParts]);
+
+  const handleSaveForLater = React.useCallback(async () => {
+    try {
+      await handleTargetStateSubmit();
+      markOnboardingCompleted();
+      setRunToast({ severity: 'success', message: 'Target state saved. Continue whenever you are ready.' });
+      setScene('dashboard');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }, [handleTargetStateSubmit, markOnboardingCompleted]);
+
+  const handleDisableTour = React.useCallback(() => {
+    window.localStorage.setItem(DASHBOARD_TOUR_DISABLED_KEY, 'true');
+    setShowTour(false);
+  }, []);
+
   if (loading) {
     return (
       <Box sx={{ minHeight: '100vh', display: 'grid', placeItems: 'center' }}>
@@ -218,173 +333,56 @@ export function App(): React.JSX.Element {
     );
   }
 
-  if (repos.length === 0) {
+  if (scene !== 'dashboard') {
     return (
-      <Container maxWidth="md" sx={{ py: 8 }}>
-        <Alert severity="info">No repositories found for this token.</Alert>
-      </Container>
-    );
-  }
-
-  if (!status?.hasTargetState) {
-    return (
-      <Container maxWidth="md" sx={{ minHeight: '100vh', display: 'grid', placeItems: 'center', py: 4 }}>
-        <Card sx={{ width: '100%', maxWidth: 860 }}>
-          <CardContent sx={{ p: { xs: 3, md: 4 } }}>
-            <Stack spacing={3}>
-              <Stack direction="row" justifyContent="space-between" alignItems="center">
-                <Typography variant="h5">Welcome to GitHub Agent Orchestrator</Typography>
-                <IconButton aria-label="Toggle color mode" onClick={colorMode?.toggle}>
-                  {colorMode?.mode === 'dark' ? <LightModeOutlinedIcon /> : <DarkModeOutlinedIcon />}
-                </IconButton>
-              </Stack>
-
-              <Typography color="text.secondary">
-                Welcome 👋 Start by selecting a repository and describing your target state. The agent will
-                then iteratively work towards that goal.
-              </Typography>
-
-              <Alert severity="info" variant="outlined">
-                Tip: include architecture goals, key capabilities, and any non-negotiable constraints.
-              </Alert>
-
-              <FormControl fullWidth>
-                <InputLabel id="repo-select-label">Repository</InputLabel>
-                <Select
-                  labelId="repo-select-label"
-                  label="Repository"
-                  value={selectedRepo}
-                  onChange={(event) => setSelectedRepo(event.target.value)}
-                >
-                  {repos.map((repoName) => (
-                    <MenuItem key={repoName} value={repoName}>
-                      {repoName}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-
-              <TextField
-                multiline
-                minRows={8}
-                fullWidth
-                placeholder="Target State Input"
-                value={targetStateText}
-                onChange={(event) => setTargetStateText(event.target.value)}
-              />
-
-              {error ? <Alert severity="error">{error}</Alert> : null}
-
-              <Box>
-                <Button variant="contained" size="large" onClick={() => void handleTargetStateSubmit()}>
-                  Start Building
-                </Button>
-              </Box>
-            </Stack>
-          </CardContent>
-        </Card>
-      </Container>
+      <OnboardingFlow
+        scene={scene}
+        colorMode={colorMode}
+        repos={repos}
+        repoSearch={repoSearch}
+        onRepoSearchChange={setRepoSearch}
+        selectedRepo={selectedRepo}
+        onSelectRepo={setSelectedRepo}
+        targetStateText={targetStateText}
+        onTargetStateChange={setTargetStateText}
+        isConnecting={isConnecting}
+        isStartingFirstIteration={isStartingFirstIteration}
+        initProgress={initProgress}
+        error={error}
+        onGoToConnect={() => setScene('connect')}
+        onConnectGithub={() => void handleConnectGithub()}
+        onContinueAfterConnected={() => setScene('repo')}
+        onContinueFromRepo={() => void handleContinueFromRepoSelection()}
+        onStartFirstIteration={() => void runInitializationStep()}
+        onSaveForLater={() => void handleSaveForLater()}
+      />
     );
   }
 
   return (
-    <Container maxWidth="lg" sx={{ py: 4 }}>
-      <Stack spacing={3}>
-        <Card variant="outlined">
-          <CardContent>
-            <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} justifyContent="space-between">
-              <Stack spacing={1}>
-                <Typography variant="h6">Repo: {selectedRepo}</Typography>
-                <Typography color="text.secondary">Simple control panel for long-running autonomous work</Typography>
-              </Stack>
+    <>
+      <DashboardView
+        colorMode={colorMode}
+        repos={repos}
+        selectedRepo={selectedRepo}
+        onSelectRepo={setSelectedRepo}
+        status={status}
+        running={running}
+        developmentPrs={developmentPrs}
+        targetStateText={targetStateText}
+        onTargetStateChange={setTargetStateText}
+        onSaveTargetState={() => void handleTargetStateSubmit()}
+        onRunNextIteration={() => void handleRun()}
+        showTour={showTour}
+        onCloseTour={() => setShowTour(false)}
+        onDisableTour={handleDisableTour}
+      />
 
-              <Stack direction="row" spacing={1} alignItems="center">
-                <FormControl sx={{ minWidth: 280 }}>
-                  <InputLabel id="repo-switch-label">Select repository</InputLabel>
-                  <Select
-                    labelId="repo-switch-label"
-                    label="Select repository"
-                    value={selectedRepo}
-                    onChange={(event) => setSelectedRepo(event.target.value)}
-                  >
-                    {repos.map((repoName) => (
-                      <MenuItem key={repoName} value={repoName}>
-                        {repoName}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
-                <IconButton aria-label="Toggle color mode" onClick={colorMode?.toggle}>
-                  {colorMode?.mode === 'dark' ? <LightModeOutlinedIcon /> : <DarkModeOutlinedIcon />}
-                </IconButton>
-              </Stack>
-            </Stack>
-          </CardContent>
-        </Card>
-
-        <Grid container spacing={2}>
-          <Grid item xs={12} md={4} sx={{ display: 'flex' }}>
-            <Card variant="outlined" sx={{ width: '100%', display: 'flex' }}>
-              <CardContent sx={{ width: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-                <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-                  Control
-                </Typography>
-                <Box sx={{ pt: 1 }}>
-                  <Button
-                    variant="contained"
-                    size="large"
-                    disabled={running || normalizeStatus(status?.status) === 'running'}
-                    onClick={() => void handleRun()}
-                  >
-                    ▶ Run
-                  </Button>
-                </Box>
-              </CardContent>
-            </Card>
-          </Grid>
-
-          <Grid item xs={12} md={8} sx={{ display: 'flex' }}>
-            <Card variant="outlined" sx={{ width: '100%' }}>
-              <CardContent>
-                <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-                  Current State
-                </Typography>
-                <Typography variant="h6">Status: {normalizeStatus(status?.status)}</Typography>
-                <Typography color="text.secondary">
-                  Current Step: {status?.currentStep?.trim() ? status.currentStep : '—'}
-                </Typography>
-              </CardContent>
-            </Card>
-          </Grid>
-        </Grid>
-
-        {error ? <Alert severity="error">{error}</Alert> : null}
-
-        <Card variant="outlined">
-          <CardContent>
-            <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-              Development Timeline
-            </Typography>
-            {developmentPrs.length === 0 ? (
-              <Typography color="text.secondary">No development pull requests yet.</Typography>
-            ) : (
-              <List disablePadding>
-                {developmentPrs.map((pr) => (
-                  <ListItem
-                    key={`${pr.url}-${pr.createdAt}`}
-                    disablePadding
-                    secondaryAction={<Typography color="text.secondary">{formatTimestamp(pr.createdAt)}</Typography>}
-                  >
-                    <ListItemButton component="a" href={pr.url} target="_blank" rel="noreferrer">
-                      <ListItemText primary={pr.title} />
-                    </ListItemButton>
-                  </ListItem>
-                ))}
-              </List>
-            )}
-          </CardContent>
-        </Card>
-      </Stack>
+      {error ? (
+        <Container maxWidth="lg" sx={{ pb: 2 }}>
+          <Alert severity="error">{error}</Alert>
+        </Container>
+      ) : null}
 
       <Snackbar
         open={Boolean(runToast)}
@@ -398,6 +396,6 @@ export function App(): React.JSX.Element {
           </Alert>
         ) : undefined}
       </Snackbar>
-    </Container>
+    </>
   );
 }
