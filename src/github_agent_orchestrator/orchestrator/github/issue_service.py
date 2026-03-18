@@ -19,6 +19,7 @@ from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field
 
+from github_agent_orchestrator.orchestrator.planning.issue_queue import QUEUE_MARKER_PREFIX
 from github_agent_orchestrator.orchestrator.github.client import (
     CreatedIssue,
     GitHubClient,
@@ -201,10 +202,37 @@ class IssueStore:
         self.save(issues)
 
 
+class NullIssueStore:
+    """No-op issue store used when local runtime persistence is disabled."""
+
+    def load(self) -> list[IssueRecord]:
+        return []
+
+    def save(self, issues: list[IssueRecord]) -> None:  # noqa: ARG002
+        return
+
+    def find_by_title(self, title: str, *, repository: str | None = None) -> IssueRecord | None:  # noqa: ARG002
+        return None
+
+    def find_by_queue_id(
+        self, queue_id: str, *, repository: str | None = None  # noqa: ARG002
+    ) -> IssueRecord | None:
+        return None
+
+    def add(self, record: IssueRecord) -> None:  # noqa: ARG002
+        return
+
+    def find_by_number(self, issue_number: int) -> IssueRecord | None:  # noqa: ARG002
+        return None
+
+    def upsert(self, record: IssueRecord) -> None:  # noqa: ARG002
+        return
+
+
 class IssueService:
     """High-level, testable issue creation orchestration."""
 
-    def __init__(self, *, github: GitHubClient, store: IssueStore) -> None:
+    def __init__(self, *, github: GitHubClient, store: IssueStore | NullIssueStore) -> None:
         self._github = github
         self._store = store
 
@@ -214,6 +242,21 @@ class IssueService:
         existing = self._store.find_by_title(title, repository=self._github.repository)
         if existing is not None:
             raise IssueAlreadyExists(existing)
+
+        remote_existing_number = self._github.find_open_issue_number_by_exact_title(title=title)
+        if isinstance(remote_existing_number, int):
+            remote_existing = self._github.get_issue(issue_number=remote_existing_number)
+            existing_record = IssueRecord.from_created_issue(
+                CreatedIssue(
+                    repository=remote_existing.repository,
+                    number=remote_existing.number,
+                    title=remote_existing.title,
+                    created_at=remote_existing.created_at,
+                    status=remote_existing.status,
+                )
+            )
+            existing_record = existing_record.model_copy(update={"assignees": remote_existing.assignees})
+            raise IssueAlreadyExists(existing_record)
 
         created_issue = self._github.create_issue(title=title, body=body, labels=labels)
         record = IssueRecord.from_created_issue(created_issue)
@@ -246,6 +289,28 @@ class IssueService:
         existing = self._store.find_by_queue_id(queue_id, repository=self._github.repository)
         if existing is not None:
             raise IssueAlreadyExists(existing)
+
+        marker = f"{QUEUE_MARKER_PREFIX} {queue_id}"
+        remote_existing_number = self._github.find_issue_number_by_body_marker(marker=marker)
+        if isinstance(remote_existing_number, int):
+            remote_existing = self._github.get_issue(issue_number=remote_existing_number)
+            existing_record = IssueRecord.from_created_issue(
+                CreatedIssue(
+                    repository=remote_existing.repository,
+                    number=remote_existing.number,
+                    title=remote_existing.title,
+                    created_at=remote_existing.created_at,
+                    status=remote_existing.status,
+                )
+            )
+            existing_record = existing_record.model_copy(
+                update={
+                    "assignees": remote_existing.assignees,
+                    "source_queue_id": queue_id,
+                    "source_queue_path": queue_path,
+                }
+            )
+            raise IssueAlreadyExists(existing_record)
 
         created_issue = self._github.create_issue(title=title, body=body, labels=labels)
         record = IssueRecord.from_created_issue(created_issue)

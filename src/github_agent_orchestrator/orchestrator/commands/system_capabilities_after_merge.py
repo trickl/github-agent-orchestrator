@@ -11,7 +11,7 @@ from github_agent_orchestrator.orchestrator.github.client import GitHubClient
 from github_agent_orchestrator.orchestrator.github.issue_service import (
     IssueAlreadyExists,
     IssueService,
-    IssueStore,
+    NullIssueStore,
 )
 from github_agent_orchestrator.orchestrator.branching import resolve_assignment_branch
 from github_agent_orchestrator.orchestrator.system_capabilities_after_merge import (
@@ -36,7 +36,7 @@ def handle_system_capabilities_after_merge(
         base_url=settings.github_base_url,
     )
     try:
-        store = IssueStore(settings.issues_state_file)
+        store = NullIssueStore()
         service = IssueService(github=github, store=store)
 
         pr = github.get_pull_request_content(pull_number=args.pr_number)

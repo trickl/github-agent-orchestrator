@@ -10,7 +10,7 @@ Programmatic issue creation (Phase 1/1A) showing:
 
 * settings loaded from `.env`
 * GitHub issue creation
-* local persistence to `agent_state/issues.json`
+* idempotency derived from GitHub state (no local runtime JSON persistence)
 
 Run with:
 ```bash

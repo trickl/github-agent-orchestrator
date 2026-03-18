@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 from github_agent_orchestrator.orchestrator.config import OrchestratorSettings
@@ -13,7 +11,6 @@ def test_settings_loads_from_dotenv(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     monkeypatch.delenv("ORCHESTRATOR_GITHUB_TOKEN", raising=False)
     monkeypatch.delenv("GITHUB_BASE_URL", raising=False)
     monkeypatch.delenv("LOG_LEVEL", raising=False)
-    monkeypatch.delenv("AGENT_STATE_PATH", raising=False)
     monkeypatch.chdir(tmp_path)
 
     (tmp_path / ".env").write_text(
@@ -37,7 +34,6 @@ def test_settings_defaults(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.delenv("ORCHESTRATOR_GITHUB_TOKEN", raising=False)
     monkeypatch.delenv("GITHUB_BASE_URL", raising=False)
     monkeypatch.delenv("LOG_LEVEL", raising=False)
-    monkeypatch.delenv("AGENT_STATE_PATH", raising=False)
     monkeypatch.chdir(tmp_path)
 
     (tmp_path / ".env").write_text(
@@ -51,5 +47,4 @@ def test_settings_defaults(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
     )
 
     settings = OrchestratorSettings()
-    assert settings.agent_state_path == Path("agent_state")
-    assert settings.issues_state_file == Path("agent_state") / "issues.json"
+    assert settings.github_base_url == "https://api.github.com"

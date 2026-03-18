@@ -33,9 +33,6 @@ def handle_init(args: argparse.Namespace, settings: OrchestratorSettings) -> int
         header=_INIT_HEADER,
     )
 
-    Path("agent_state").mkdir(parents=True, exist_ok=True)
-    Path("workflow").mkdir(parents=True, exist_ok=True)
-
     print(f"Initialized {env_path}")
     if updates:
         print("Configured:")

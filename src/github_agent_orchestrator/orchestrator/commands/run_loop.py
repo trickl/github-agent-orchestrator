@@ -9,9 +9,23 @@ from typing import Any
 
 from github_agent_orchestrator.orchestrator.config import OrchestratorSettings
 
+MERGE_STAGES = {"1c", "2c", "3c"}
 
-def handle_run(args: argparse.Namespace, settings: OrchestratorSettings) -> int:  # noqa: ARG001
-    """Run a single deterministic loop action based on current status."""
+
+def run_once(
+    *,
+    repo: str,
+    ref: str = "",
+    heal_orphans: bool = False,
+    auto_approve: bool = True,
+) -> tuple[int, dict[str, Any] | None, str | None]:
+    """Run a single deterministic loop action.
+
+    Returns a tuple of:
+    - exit code
+    - result payload (if action executed)
+    - informational message (for non-payload outcomes)
+    """
 
     from github_agent_orchestrator.server.config import ServerSettings
     from github_agent_orchestrator.server.dashboard.loop_actions import (
@@ -27,12 +41,9 @@ def handle_run(args: argparse.Namespace, settings: OrchestratorSettings) -> int:
     )
 
     server_settings = ServerSettings()
-    repo = args.repo or server_settings.default_repo
     if not repo:
-        print("Missing repo. Pass --repo or set ORCHESTRATOR_DEFAULT_REPO.", file=sys.stderr)
-        return 2
+        return 2, None, "Missing repo. Pass --repo or set ORCHESTRATOR_DEFAULT_REPO."
 
-    ref = args.ref or ""
     status: dict[str, Any] = _loop_status_for_repo(
         settings=server_settings,
         active_repo=repo,
@@ -53,33 +64,59 @@ def handle_run(args: argparse.Namespace, settings: OrchestratorSettings) -> int:
                 settings=server_settings, repo=repo
             )
         elif stage == "2b":
-            if args.heal_orphans or getattr(
+            if heal_orphans or getattr(
                 server_settings, "auto_heal_orphaned_processed_queue_items", False
             ):
                 result = _heal_orphaned_processed_queue_items(
                     settings=server_settings, repo=repo
                 )
             else:
-                print(
+                return (
+                    3,
+                    None,
                     "Stage 2b detected. Use --heal-orphans or set "
                     "ORCHESTRATOR_AUTO_HEAL_ORPHANED_PROCESSED_QUEUE_ITEMS=true.",
-                    file=sys.stderr,
                 )
-                return 3
         elif stage == "3a":
             result = _promote_next_unpromoted_capability_queue_item(
                 settings=server_settings, repo=repo
             )
-        elif stage in {"1c", "2c", "3c"}:
+        elif stage in MERGE_STAGES:
+            if not auto_approve:
+                return 0, None, "Waiting for manual approval before merge."
             result = _merge_next_ready_pull_request(settings=server_settings, repo=repo)
         else:
-            print("No actionable stage detected.", file=sys.stderr)
-            return 3
+            return 3, None, "No actionable stage detected."
     except Exception as exc:  # noqa: BLE001
         if getattr(exc, "status_code", None) == 409:
-            print(getattr(exc, "detail", "No action taken."), file=sys.stderr)
-            return 3
+            return 3, None, str(getattr(exc, "detail", "No action taken."))
         raise
 
-    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0, result, None
+
+
+def handle_run(args: argparse.Namespace, settings: OrchestratorSettings) -> int:  # noqa: ARG001
+    """Run a single deterministic loop action based on current status."""
+    from github_agent_orchestrator.server.config import ServerSettings
+
+    server_settings = ServerSettings()
+    repo = args.repo or server_settings.default_repo
+    ref = args.ref or ""
+    auto_approve = getattr(args, "auto_approve", True)
+
+    exit_code, result, message = run_once(
+        repo=repo,
+        ref=ref,
+        heal_orphans=args.heal_orphans,
+        auto_approve=auto_approve,
+    )
+    if exit_code != 0:
+        if message:
+            print(message, file=sys.stderr)
+        return exit_code
+
+    if result is not None:
+        print(json.dumps(result, indent=2, sort_keys=True))
+    elif message:
+        print(message)
     return 0

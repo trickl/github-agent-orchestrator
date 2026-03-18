@@ -93,7 +93,7 @@ Concretely:
 
 The system continuously iterates over two explicit states:
 
-- **Target state**: `/.agent-orchestrator/state/target_state.md`
+- **Target state**: `/.orchestrator-agent/state/target_state.md`
 - **Current state**: `/.agent-orchestrator/state/current_state.md`
 
 Each loop:
@@ -181,7 +181,7 @@ It runs linting, formatting checks, type checking, and tests.
 The user owns two artefacts:
 
 ```text
-/.agent-orchestrator/state/target_state.md
+/.orchestrator-agent/state/target_state.md
 ```
 
 Everything else is derived.
@@ -196,6 +196,18 @@ Everything else is derived.
 orchestrator init --repo owner/repo
 orchestrator auth github --token ghp_...
 orchestrator run --repo owner/repo
+```
+
+Mode-driven package runner (defaults to `semi` mode):
+
+```bash
+gao run
+```
+
+Optional repo override:
+
+```bash
+gao run --repo owner/repo
 ```
 
 For ongoing operation:
@@ -232,6 +244,14 @@ ORCHESTRATOR_CREATE_WORK_BRANCH=true  # create per-issue work branches (safer de
 ORCHESTRATOR_WORK_BRANCH_PREFIX=orchestrator/work
 ```
 
+Mode file in repo root (`.orchestrator.yml`):
+
+```yaml
+mode: semi
+```
+
+Supported values are `manual`, `semi` (default), and `auto`.
+
 ---
 
 ## REST server and dashboard (optional)
@@ -255,6 +275,60 @@ In review mode:
 
 - OpenAPI: http://127.0.0.1:8000/api/openapi.json
 - Swagger UI: http://127.0.0.1:8000/api/docs
+
+### Lightweight local control-plane backend (pre-GitHub-App phase)
+
+For pre-GitHub-App validation, this repository includes a minimal FastAPI control-plane
+under `backend/app` that talks to **real GitHub repositories** using a **PAT**, while
+executing orchestration **locally**.
+
+Run locally:
+
+```bash
+uvicorn backend.app.main:app --reload --port 8000
+```
+
+Required environment variables:
+
+- `GITHUB_TOKEN` (PAT used for backend GitHub API calls)
+- `GITHUB_API_URL` (optional, defaults to `https://api.github.com`)
+- `GITHUB_WEBHOOK_SECRET` (required for `POST /webhooks/github` signature verification)
+- `GAO_CLI_COMMAND` (optional, defaults to `gao`)
+- `GAO_RUN_TIMEOUT_SECONDS` (optional, defaults to `1800`)
+
+MVP endpoints:
+
+- `GET /repos`
+- `POST /repos/{owner}/{repo}/target-state`
+- `POST /repos/{owner}/{repo}/run`
+- `GET /repos/{owner}/{repo}/status`
+- `GET /repos/{owner}/{repo}/development-prs`
+- `POST /webhooks/github`
+- `GET /webhooks/events/recent`
+
+`POST /repos/{owner}/{repo}/run` executes:
+
+`gao run --repo owner/repo`
+
+locally on the backend host and returns `stdout`, `stderr`, and `exit_code`.
+
+This phase intentionally does **not** require GitHub App installation flow and does
+**not** require local repository cloning.
+
+`GET /repos/{owner}/{repo}/status` includes `hasTargetState` so the UI can switch
+between first-time onboarding and the main control panel.
+
+`POST /webhooks/github` currently provides deterministic summaries for:
+
+- `workflow_run`
+- `installation_repositories`
+- `installation`
+- `ping`
+
+All other events are acknowledged and returned as `handled.kind: "unhandled"`.
+
+`GET /webhooks/events/recent` returns an in-memory ring buffer of the latest accepted
+webhook deliveries (most-recent-first), useful for local debugging.
 
 The dashboard is observational only; it does not alter system behaviour.
 

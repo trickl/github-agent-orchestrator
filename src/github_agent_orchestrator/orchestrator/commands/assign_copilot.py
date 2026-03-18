@@ -8,7 +8,7 @@ import logging
 from github_agent_orchestrator.orchestrator.config import OrchestratorSettings
 from github_agent_orchestrator.orchestrator.github.client import GitHubClient
 from github_agent_orchestrator.orchestrator.branching import resolve_assignment_branch
-from github_agent_orchestrator.orchestrator.github.issue_service import IssueService, IssueStore
+from github_agent_orchestrator.orchestrator.github.issue_service import IssueService, NullIssueStore
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +20,7 @@ def handle_assign_copilot(args: argparse.Namespace, settings: OrchestratorSettin
         repository=args.repository,
         base_url=settings.github_base_url,
     )
-    store = IssueStore(settings.issues_state_file)
+    store = NullIssueStore()
     service = IssueService(github=github, store=store)
 
     target_repo = args.target_repo or args.repository
@@ -55,11 +55,7 @@ def handle_assign_copilot(args: argparse.Namespace, settings: OrchestratorSettin
         )
 
     if updated is None:
-        print(
-            f"Assigned issue #{args.issue_number} to {settings.copilot_assignee} (not in local store)"
-        )
+        print(f"Assigned issue #{args.issue_number} to {settings.copilot_assignee}")
     else:
-        print(
-            f"Assigned issue #{args.issue_number} to {settings.copilot_assignee} and updated local state"
-        )
+        print(f"Assigned issue #{args.issue_number} to {settings.copilot_assignee}")
     return 0

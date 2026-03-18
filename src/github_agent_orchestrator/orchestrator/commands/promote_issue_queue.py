@@ -8,7 +8,7 @@ from pathlib import Path
 
 from github_agent_orchestrator.orchestrator.config import OrchestratorSettings
 from github_agent_orchestrator.orchestrator.github.client import GitHubClient
-from github_agent_orchestrator.orchestrator.github.issue_service import IssueService, IssueStore
+from github_agent_orchestrator.orchestrator.github.issue_service import IssueService, NullIssueStore
 from github_agent_orchestrator.orchestrator.branching import resolve_assignment_branch
 from github_agent_orchestrator.orchestrator.planning.issue_queue import (
     QUEUE_MARKER_PREFIX,
@@ -31,7 +31,7 @@ def handle_promote_issue_queue(args: argparse.Namespace, settings: OrchestratorS
         base_url=settings.github_base_url,
     )
     try:
-        store = IssueStore(settings.issues_state_file)
+        store = NullIssueStore()
         service = IssueService(github=github, store=store)
 
         pending_dir = Path(args.pending_dir)
@@ -44,28 +44,26 @@ def handle_promote_issue_queue(args: argparse.Namespace, settings: OrchestratorS
         item = parse_issue_queue_item(pending_files[0])
         queue_path = str(item.path.as_posix())
 
-        queue_record = store.find_by_queue_id(item.queue_id, repository=args.repository)
-        if queue_record is None:
-            marker = f"{QUEUE_MARKER_PREFIX} {item.queue_id}"
-            existing_number = github.find_issue_number_by_body_marker(marker=marker)
-            if existing_number is not None:
-                existing = github.get_issue(issue_number=existing_number)
-                queue_record = service.record_existing_issue_from_queue(
-                    issue=existing,
-                    queue_id=item.queue_id,
-                    queue_path=queue_path,
-                )
-            else:
-                queue_record = service.create_issue_from_queue(
-                    queue_id=item.queue_id,
-                    queue_path=queue_path,
-                    title=item.title,
-                    body=item.body,
-                    labels=labels,
-                )
-                print(f"Created issue #{queue_record.issue_number}: {queue_record.title}")
-        else:
+        queue_record = None
+        marker = f"{QUEUE_MARKER_PREFIX} {item.queue_id}"
+        existing_number = github.find_issue_number_by_body_marker(marker=marker)
+        if existing_number is not None:
+            existing = github.get_issue(issue_number=existing_number)
+            queue_record = service.record_existing_issue_from_queue(
+                issue=existing,
+                queue_id=item.queue_id,
+                queue_path=queue_path,
+            )
             print(f"Issue already exists: #{queue_record.issue_number} '{queue_record.title}'")
+        else:
+            queue_record = service.create_issue_from_queue(
+                queue_id=item.queue_id,
+                queue_path=queue_path,
+                title=item.title,
+                body=item.body,
+                labels=labels,
+            )
+            print(f"Created issue #{queue_record.issue_number}: {queue_record.title}")
 
         if queue_record is None:
             raise RuntimeError("Expected an issue record to be created or discovered")

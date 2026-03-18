@@ -18,12 +18,13 @@ export function PlanningDocsPage(): React.JSX.Element {
     () =>
       apiFetch<PlanningDoc>(endpoints.docCurrentState()).catch((e: unknown) => {
         if (e instanceof ApiError && e.status === 404) {
-          return {
+          const fallback: PlanningDoc = {
             key: 'currentState',
             title: 'Current',
             path: '.agent-orchestrator/state/current_state.md',
             content: '',
           };
+          return fallback;
         }
         throw e;
       }),

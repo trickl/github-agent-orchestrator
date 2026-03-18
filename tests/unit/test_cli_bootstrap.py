@@ -67,9 +67,6 @@ def test_init_creates_env_and_dirs(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     assert "ORCHESTRATOR_DEFAULT_REPO=acme/repo" in text
     assert "ORCHESTRATOR_LOOP_MODE=build" in text
 
-    assert (tmp_path / "agent_state").exists()
-    assert (tmp_path / "workflow").exists()
-
 
 def test_auth_github_writes_token(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)

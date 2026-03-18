@@ -11,7 +11,7 @@ from github_agent_orchestrator.orchestrator.github.client import GitHubClient
 from github_agent_orchestrator.orchestrator.github.issue_service import (
     IssueAlreadyExists,
     IssueService,
-    IssueStore,
+    NullIssueStore,
 )
 from github_agent_orchestrator.orchestrator.branching import resolve_assignment_branch
 from github_agent_orchestrator.orchestrator.utils import parse_labels
@@ -32,7 +32,7 @@ def handle_gap_analysis_cycle(args: argparse.Namespace, settings: OrchestratorSe
         base_url=settings.github_base_url,
     )
     try:
-        store = IssueStore(settings.issues_state_file)
+        store = NullIssueStore()
         service = IssueService(github=github, store=store)
 
         try:

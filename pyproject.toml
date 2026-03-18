@@ -64,6 +64,7 @@ Issues = "https://github.com/trickl/github-agent-orchestrator/issues"
 [project.scripts]
 orchestrator = "github_agent_orchestrator.orchestrator.main:main"
 orchestrator-server = "github_agent_orchestrator.server.main:main"
+gao = "gao.run:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

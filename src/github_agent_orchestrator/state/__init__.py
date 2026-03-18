@@ -1,6 +1,3 @@
-"""Deprecated Phase>1 package.
-
-Phase 1A persists issue metadata to `agent_state/issues.json`.
-"""
+"""Deprecated Phase>1 package."""
 
 __all__: list[str] = []

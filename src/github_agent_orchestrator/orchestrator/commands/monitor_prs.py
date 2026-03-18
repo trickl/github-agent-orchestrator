@@ -7,7 +7,7 @@ import logging
 
 from github_agent_orchestrator.orchestrator.config import OrchestratorSettings
 from github_agent_orchestrator.orchestrator.github.client import GitHubClient
-from github_agent_orchestrator.orchestrator.github.issue_service import IssueService, IssueStore
+from github_agent_orchestrator.orchestrator.github.issue_service import IssueService, NullIssueStore
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +20,7 @@ def handle_monitor_prs(args: argparse.Namespace, settings: OrchestratorSettings)
         base_url=settings.github_base_url,
     )
     try:
-        store = IssueStore(settings.issues_state_file)
+        store = NullIssueStore()
         service = IssueService(github=github, store=store)
 
         result = service.wait_for_linked_pull_requests_complete(

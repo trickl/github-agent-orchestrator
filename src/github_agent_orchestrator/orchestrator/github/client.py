@@ -817,6 +817,38 @@ class GitHubClient:
                 numbers.append(num)
         return min(numbers) if numbers else None
 
+    def find_open_issue_number_by_exact_title(self, *, title: str) -> int | None:
+        """Search for an OPEN issue in this repo by exact title match."""
+
+        normalized = title.strip()
+        if not normalized:
+            raise ValueError("title must be non-empty")
+
+        query = f'repo:{self._repository_name} is:issue is:open in:title "{normalized}"'
+        url = self._search_url(path="search/issues")
+        resp = self._session.get(url, params={"q": query}, timeout=30)
+        resp.raise_for_status()
+
+        payload: dict[str, Any] = resp.json()
+        items = payload.get("items")
+        if not isinstance(items, list) or not items:
+            return None
+
+        matches: list[int] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            item_title = item.get("title")
+            if not isinstance(item_title, str):
+                continue
+            if item_title.strip() != normalized:
+                continue
+            num = item.get("number")
+            if isinstance(num, int) and num > 0:
+                matches.append(num)
+
+        return min(matches) if matches else None
+
     def get_pull_request(self, *, pull_number: int) -> PullRequestDetails:
         url = self._pulls_url(pull_number=pull_number)
         resp = self._session.get(url, timeout=30)
