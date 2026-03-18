@@ -14,7 +14,7 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
+/lib/
 lib64/
 parts/
 sdist/
@@ -136,3 +136,7 @@ Thumbs.db
 # Project specific
 .state/
 *.db
+
+# Frontend source utilities must be tracked (they were previously hidden by broad lib/ ignore)
+!ui/src/lib/
+!ui/src/lib/*.ts
