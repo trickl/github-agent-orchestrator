@@ -386,6 +386,23 @@ def test_webhook_endpoint_handles_installation_repositories_event(monkeypatch) -
     assert payload["handled"]["repositories_removed"] == ["acme/legacy"]
 
 
+def test_cors_preflight_allows_github_pages_origin(monkeypatch) -> None:
+    _set_required_backend_env(monkeypatch)
+    monkeypatch.setenv("CORS_ORIGINS", "https://trickl.github.io")
+
+    client = TestClient(app)
+    response = client.options(
+        "/repos",
+        headers={
+            "Origin": "https://trickl.github.io",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers.get("access-control-allow-origin") == "https://trickl.github.io"
+
+
 def test_recent_webhook_events_endpoint_returns_latest_entries(monkeypatch) -> None:
     _set_required_backend_env(monkeypatch)
     _reset_event_log()

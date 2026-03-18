@@ -292,6 +292,7 @@ Required environment variables:
 
 - `GITHUB_TOKEN` (PAT used for backend GitHub API calls)
 - `GITHUB_API_URL` (optional, defaults to `https://api.github.com`)
+- `CORS_ORIGINS` (optional, comma-separated; include your GitHub Pages URL and local dev origin)
 - `GITHUB_WEBHOOK_SECRET` (required for `POST /webhooks/github` signature verification)
 - `GAO_CLI_COMMAND` (optional, defaults to `gao`)
 - `GAO_RUN_TIMEOUT_SECONDS` (optional, defaults to `1800`)
@@ -343,6 +344,15 @@ The UI is configured to support two modes automatically:
     - Workflow: `.github/workflows/ui-pages.yml`
     - Build-time API base URL is set to:
         - `https://github-agent-orchestrator.onrender.com`
+
+If you see browser-side `Failed to fetch`, ensure backend CORS allows the UI origin.
+Default backend CORS origins are:
+
+- `https://trickl.github.io`
+- `http://localhost:5173`
+- `http://127.0.0.1:5173`
+
+Override via `CORS_ORIGINS` (comma-separated) in your deployment environment.
 
 The Pages workflow also configures the correct Vite base path for repository-hosted pages
 (`/<repo-name>/`) during CI builds.
