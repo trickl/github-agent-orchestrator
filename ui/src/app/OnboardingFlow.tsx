@@ -124,7 +124,7 @@ export function OnboardingFlow({
     return commonShell(
       <Stack spacing={3}>
         <Stack spacing={1}>
-          <Typography variant="h4">Build software autonomously, one iteration at a time.</Typography>
+          <Typography variant="h4">Engineering that moves toward a goal.</Typography>
           <Typography color="text.secondary">
             Connect your repository, define your goal, and let the agent work toward it step by step.
           </Typography>
