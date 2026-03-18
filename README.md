@@ -332,6 +332,21 @@ webhook deliveries (most-recent-first), useful for local debugging.
 
 The dashboard is observational only; it does not alter system behaviour.
 
+### UI deployment (GitHub Pages) and API connectivity
+
+The UI is configured to support two modes automatically:
+
+- **Local development** (`npm run dev` in `ui/`):
+    - Uses Vite dev proxy `/api -> http://127.0.0.1:8000`
+    - This means local UI traffic targets a localhost backend service.
+- **GitHub Pages deployment**:
+    - Workflow: `.github/workflows/ui-pages.yml`
+    - Build-time API base URL is set to:
+        - `https://github-agent-orchestrator.onrender.com`
+
+The Pages workflow also configures the correct Vite base path for repository-hosted pages
+(`/<repo-name>/`) during CI builds.
+
 ---
 
 ## Current status
