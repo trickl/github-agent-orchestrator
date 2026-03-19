@@ -40,6 +40,11 @@ app.add_middleware(
 )
 
 
+@app.get("/")
+async def root() -> dict[str, object]:
+    return {"ok": True, "service": "control-plane-backend"}
+
+
 @app.get("/health")
 async def health() -> dict[str, object]:
     return {"ok": True, "service": "control-plane-backend"}
