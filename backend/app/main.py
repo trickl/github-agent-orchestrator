@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import os
+import tomllib
 from datetime import UTC, datetime
-from importlib import metadata
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,21 +17,23 @@ from backend.app.routes.status import router as status_router
 from backend.app.routes.webhooks import router as webhooks_router
 
 
-def _resolve_backend_version() -> str:
+def _version_from_pyproject() -> str:
+    pyproject_path = Path(__file__).resolve().parents[2] / "pyproject.toml"
+    if not pyproject_path.exists():
+        raise RuntimeError("pyproject.toml not found; cannot determine backend version")
     try:
-        from github_agent_orchestrator import __version__
+        data = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise RuntimeError("Unable to parse pyproject.toml for backend version") from exc
 
-        return __version__
-    except Exception:
-        pass
-
-    try:
-        return metadata.version("github-agent-orchestrator")
-    except metadata.PackageNotFoundError:
-        return "0.0.0"
+    project = data.get("project", {})
+    version = project.get("version") if isinstance(project, dict) else None
+    if isinstance(version, str) and version.strip():
+        return version.strip()
+    raise RuntimeError("[project].version missing in pyproject.toml")
 
 
-BACKEND_VERSION = _resolve_backend_version()
+BACKEND_VERSION = _version_from_pyproject()
 
 
 app = FastAPI(
@@ -80,6 +83,7 @@ async def version() -> dict[str, object]:
     return {
         "service": "control-plane-backend",
         "version": BACKEND_VERSION,
+        "versionSource": "pyproject-toml",
         "gitSha": git_sha,
         "buildTimeUtc": os.getenv("BUILD_TIME_UTC", datetime.now(UTC).isoformat()),
     }

@@ -416,6 +416,7 @@ def test_version_endpoint_includes_version_and_git_sha(monkeypatch) -> None:
     payload = response.json()
     assert payload["service"] == "control-plane-backend"
     assert payload["version"] == __version__
+    assert payload["versionSource"] == "pyproject-toml"
     assert payload["gitSha"] == "abc123def456"
     assert payload["buildTimeUtc"] == "2026-03-19T00:00:00+00:00"
 
@@ -432,6 +433,7 @@ def test_version_endpoint_uses_unknown_git_sha_when_not_available(monkeypatch) -
     assert response.status_code == 200
     payload = response.json()
     assert payload["version"] == __version__
+    assert payload["versionSource"] == "pyproject-toml"
     assert payload["gitSha"] == "unknown"
     assert isinstance(payload["buildTimeUtc"], str)
 
