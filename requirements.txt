@@ -1,3 +1,9 @@
-fastapi
-uvicorn[standard]
-requests
+fastapi>=0.110.0
+uvicorn[standard]>=0.27.0
+requests>=2.31.0
+PyGithub>=2.1.0
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
+pyyaml>=6.0
+httpx>=0.24.0
+tenacity>=8.2.0
