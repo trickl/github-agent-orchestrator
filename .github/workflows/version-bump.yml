@@ -1,0 +1,53 @@
+name: Auto Version Bump
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - 'pyproject.toml'
+      - 'src/github_agent_orchestrator/__init__.py'
+      - '.github/workflows/version-bump.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  bump:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Bump patch version
+        id: bump
+        run: |
+          NEW_VERSION=$(python scripts/bump_version.py --write)
+          echo "new_version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+          echo "new_tag=v$NEW_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Configure git user
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Commit and push version bump
+        run: |
+          if git diff --quiet; then
+            echo "No version changes detected"
+            exit 0
+          fi
+
+          git add pyproject.toml src/github_agent_orchestrator/__init__.py
+          git commit -m "chore: bump version to ${{ steps.bump.outputs.new_version }} [skip ci]"
+          git tag "${{ steps.bump.outputs.new_tag }}"
+          git push origin HEAD:main --follow-tags

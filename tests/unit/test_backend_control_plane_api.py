@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 from backend.app.main import app
 from backend.app.services.event_log import clear_events
+from github_agent_orchestrator import __version__
 
 
 def _set_required_backend_env(monkeypatch) -> None:
@@ -401,6 +402,38 @@ def test_cors_preflight_allows_github_pages_origin(monkeypatch) -> None:
 
     assert response.status_code == 200
     assert response.headers.get("access-control-allow-origin") == "https://trickl.github.io"
+
+
+def test_version_endpoint_includes_version_and_git_sha(monkeypatch) -> None:
+    _set_required_backend_env(monkeypatch)
+    monkeypatch.setenv("RENDER_GIT_COMMIT", "abc123def456")
+    monkeypatch.setenv("BUILD_TIME_UTC", "2026-03-19T00:00:00+00:00")
+
+    client = TestClient(app)
+    response = client.get("/version")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["service"] == "control-plane-backend"
+    assert payload["version"] == __version__
+    assert payload["gitSha"] == "abc123def456"
+    assert payload["buildTimeUtc"] == "2026-03-19T00:00:00+00:00"
+
+
+def test_version_endpoint_uses_unknown_git_sha_when_not_available(monkeypatch) -> None:
+    _set_required_backend_env(monkeypatch)
+    monkeypatch.delenv("RENDER_GIT_COMMIT", raising=False)
+    monkeypatch.delenv("GIT_COMMIT_SHA", raising=False)
+    monkeypatch.delenv("SOURCE_VERSION", raising=False)
+
+    client = TestClient(app)
+    response = client.get("/version")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["version"] == __version__
+    assert payload["gitSha"] == "unknown"
+    assert isinstance(payload["buildTimeUtc"], str)
 
 
 def test_recent_webhook_events_endpoint_returns_latest_entries(monkeypatch) -> None:

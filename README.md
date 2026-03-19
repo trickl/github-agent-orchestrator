@@ -300,6 +300,7 @@ Required environment variables:
 MVP endpoints:
 
 - `GET /repos`
+- `GET /version`
 - `POST /repos/{owner}/{repo}/target-state`
 - `POST /repos/{owner}/{repo}/run`
 - `GET /repos/{owner}/{repo}/status`
@@ -330,6 +331,31 @@ All other events are acknowledged and returned as `handled.kind: "unhandled"`.
 
 `GET /webhooks/events/recent` returns an in-memory ring buffer of the latest accepted
 webhook deliveries (most-recent-first), useful for local debugging.
+
+`GET /version` returns deploy verification metadata:
+
+- `version` (backend semantic version)
+- `gitSha` (from `RENDER_GIT_COMMIT`, `GIT_COMMIT_SHA`, or `SOURCE_VERSION`)
+- `buildTimeUtc` (from `BUILD_TIME_UTC` when set; otherwise runtime timestamp)
+
+Use this endpoint after Render auto-deploys to confirm the exact backend revision now serving traffic.
+
+### Automated versioning (main branch)
+
+This repository includes automatic patch versioning on `main` via:
+
+- `.github/workflows/version-bump.yml`
+- `scripts/bump_version.py`
+
+On each non-bot push to `main`, the workflow:
+
+1. Increments patch version (`x.y.z -> x.y.(z+1)`) in:
+    - `pyproject.toml`
+    - `src/github_agent_orchestrator/__init__.py`
+2. Commits the change
+3. Creates and pushes a `v<version>` git tag
+
+After deployment, call `GET /version` to confirm both semantic version and commit SHA served live.
 
 The dashboard is observational only; it does not alter system behaviour.
 
