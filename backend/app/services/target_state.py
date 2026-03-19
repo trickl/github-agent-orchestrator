@@ -7,7 +7,7 @@ from typing import Any
 
 from backend.app.github.client import GitHubClient
 
-TARGET_STATE_PATH = ".orchestrator-agent/state/target_state.md"
+TARGET_STATE_PATH = ".agent-orchestrator/state/target_state.md"
 ORCHESTRATOR_CONFIG_PATH = ".agent-orchestrator/config.yml"
 DEFAULT_ORCHESTRATOR_CONFIG = "mode: semi\n"
 

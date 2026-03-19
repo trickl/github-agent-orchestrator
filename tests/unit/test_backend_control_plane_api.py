@@ -63,7 +63,7 @@ def test_upsert_target_state_endpoint(monkeypatch) -> None:
             "owner": "acme",
             "repo": "widgets",
             "branch": "main",
-            "target_state_path": ".orchestrator-agent/state/target_state.md",
+            "target_state_path": ".agent-orchestrator/state/target_state.md",
             "target_state_updated": True,
             "target_state_created": True,
             "config_path": ".agent-orchestrator/config.yml",

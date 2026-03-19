@@ -9,9 +9,9 @@ from typing import Any
 from backend.app.github.client import GitHubClient
 from backend.app.services.run_state import get_repo_run_state
 
-TARGET_STATE_PATH = ".orchestrator-agent/state/target_state.md"
+TARGET_STATE_PATH = ".agent-orchestrator/state/target_state.md"
 LEGACY_TARGET_STATE_PATHS = (
-    ".agent-orchestrator/state/target_state.md",
+    ".orchestrator-agent/state/target_state.md",
     ".agent-orchestrator/state/targetstate.md",
 )
 EXCLUDED_DEVELOPMENT_PR_TITLE_SUBSTRINGS = (

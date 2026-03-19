@@ -30,7 +30,7 @@ class FakeGitHubClient:
         if method == "GET" and path_or_url == "/repos/acme/widgets/git/ref/heads/main":
             return {"object": {"sha": "base-sha"}}
 
-        if method == "GET" and path_or_url == "/repos/acme/widgets/contents/.orchestrator-agent/state/target_state.md":
+        if method == "GET" and path_or_url == "/repos/acme/widgets/contents/.agent-orchestrator/state/target_state.md":
             return {
                 "sha": "target-sha",
                 "content": base64.b64encode(b"# Target State\nBuild system\n").decode("utf-8"),

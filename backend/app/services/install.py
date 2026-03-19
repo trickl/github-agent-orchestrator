@@ -49,7 +49,7 @@ async def initialize_repo(
             },
         )
 
-    await _create_file(".orchestrator-agent/state/target_state.md", target_state)
+    await _create_file(".agent-orchestrator/state/target_state.md", target_state)
     await _create_file(".orchestrator.yml", orchestrator_config)
 
     result: dict[str, Any] = {
@@ -68,7 +68,7 @@ async def initialize_repo(
                 "title": "Initialize GitHub Agent Orchestrator",
                 "head": branch,
                 "base": base_branch,
-                "body": "Initial setup of .orchestrator-agent/state/target_state.md and .orchestrator.yml.",
+                "body": "Initial setup of .agent-orchestrator/state/target_state.md and .orchestrator.yml.",
             },
         )
         result["pull_request"] = {

@@ -19,14 +19,14 @@ class FakeGitHubClient:
     async def request(self, method: str, path_or_url: str, **kwargs: Any) -> Any:
         self.calls.append({"method": method, "path": path_or_url, "kwargs": kwargs})
 
-        if method == "GET" and path_or_url.endswith("/.orchestrator-agent/state/target_state.md"):
+        if method == "GET" and path_or_url.endswith("/.agent-orchestrator/state/target_state.md"):
             return {"sha": "target-sha"} if self.target_exists else {"message": "Not Found"}
 
         if method == "GET" and path_or_url.endswith("/.agent-orchestrator/config.yml"):
             return {"sha": "config-sha"} if self.config_exists else {"message": "Not Found"}
 
-        if method == "PUT" and path_or_url.endswith("/.orchestrator-agent/state/target_state.md"):
-            return {"content": {"path": ".orchestrator-agent/state/target_state.md"}}
+        if method == "PUT" and path_or_url.endswith("/.agent-orchestrator/state/target_state.md"):
+            return {"content": {"path": ".agent-orchestrator/state/target_state.md"}}
 
         if method == "PUT" and path_or_url.endswith("/.agent-orchestrator/config.yml"):
             return {"content": {"path": ".agent-orchestrator/config.yml"}}
@@ -53,7 +53,7 @@ async def test_upsert_target_state_creates_target_and_config_when_missing() -> N
         c
         for c in client.calls
         if c["method"] == "PUT"
-        and c["path"].endswith("/.orchestrator-agent/state/target_state.md")
+        and c["path"].endswith("/.agent-orchestrator/state/target_state.md")
     ][0]
     target_json = target_put["kwargs"]["json"]
     assert target_json["message"] == "Update target state"
@@ -80,7 +80,7 @@ async def test_upsert_target_state_updates_target_without_recreating_config() ->
         c
         for c in client.calls
         if c["method"] == "PUT"
-        and c["path"].endswith("/.orchestrator-agent/state/target_state.md")
+        and c["path"].endswith("/.agent-orchestrator/state/target_state.md")
     ][0]
     target_json = target_put["kwargs"]["json"]
     assert target_json["sha"] == "target-sha"
