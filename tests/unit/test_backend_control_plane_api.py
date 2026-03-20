@@ -236,7 +236,7 @@ def test_development_prs_endpoint(monkeypatch) -> None:
     assert payload[0]["title"] == "Implement API layer"
 
 
-def test_run_orchestrator_endpoint(monkeypatch) -> None:
+def test_dispatch_workflow_run_endpoint(monkeypatch) -> None:
     _set_required_backend_env(monkeypatch)
 
     import backend.app.routes.repos as repos_routes

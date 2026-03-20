@@ -2,8 +2,23 @@ import React from 'react';
 import { apiFetch } from '../lib/apiClient';
 import { endpoints } from '../lib/endpoints';
 import { DASHBOARD_TOUR_DISABLED_KEY, ONBOARDING_COMPLETE_KEY, REPO_STORAGE_KEY } from './types';
-import type { AuthStartResponse, DevelopmentPullRequest, RunResponse } from './types';
+import type { AuthStartResponse, DevelopmentPullRequest, RepoRunResponse } from './types';
 import type { AppDataResult } from './useAppData';
+
+function isRepoRunResponse(value: unknown): value is RepoRunResponse {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+
+  const candidate = value as Record<string, unknown>;
+  return (
+    typeof candidate.status === 'string' &&
+    typeof candidate.repo === 'string' &&
+    typeof candidate.dispatched === 'boolean' &&
+    typeof candidate.workflow === 'string' &&
+    typeof candidate.ref === 'string'
+  );
+}
 
 export function useAppActions(data: AppDataResult) {
   const {
@@ -52,10 +67,14 @@ export function useAppActions(data: AppDataResult) {
     setRunToast(null);
     const { owner, repo } = selectedRepoParts;
     try {
-      const runResult = await apiFetch<RunResponse>(String(endpoints.repoRun(owner, repo)), {
+      const runResultRaw = await apiFetch<unknown>(String(endpoints.repoRun(owner, repo)), {
         method: 'POST',
         body: JSON.stringify({}),
       });
+      if (!isRepoRunResponse(runResultRaw)) {
+        throw new Error('Control plane returned an invalid workflow dispatch response.');
+      }
+      const runResult = runResultRaw;
       const prs = await apiFetch<DevelopmentPullRequest[]>(String(endpoints.developmentPrs(owner, repo)));
       const latestPrTitle = prs[0]?.title;
       setDevelopmentPrs(prs);

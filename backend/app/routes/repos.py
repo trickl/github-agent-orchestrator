@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 from backend.app.config import Settings
 from backend.app.github.auth import create_github_client
-from backend.app.models.control_plane import RunOrchestratorResponse, UpdateOrchestratorResponse
+from backend.app.models.control_plane import DispatchWorkflowResponse, UpdateOrchestratorResponse
 from backend.app.routes.auth import require_authenticated_user
 from backend.app.routes.dependencies import get_settings
 from backend.app.services.install import initialize_repo
@@ -42,7 +42,7 @@ class UpdateOrchestratorRequest(BaseModel):
     base_branch: str | None = Field(default=None)
 
 
-class RunOrchestratorRequest(BaseModel):
+class DispatchWorkflowRequest(BaseModel):
     workflow_file: str | None = Field(default=None)
     ref: str = Field(default="main")
 
@@ -174,14 +174,14 @@ async def update_orchestrator_runtime(
 
 @router.post(
     "/repos/{owner}/{repo}/run",
-    response_model=RunOrchestratorResponse,
+    response_model=DispatchWorkflowResponse,
 )
-async def run_repo_orchestrator(
+async def dispatch_repo_workflow(
     owner: str,
     repo: str,
-    payload: RunOrchestratorRequest,
+    payload: DispatchWorkflowRequest,
     settings: Settings = Depends(get_settings),
-) -> RunOrchestratorResponse:
+) -> DispatchWorkflowResponse:
     repo_full_name = f"{owner}/{repo}"
     workflow_file = payload.workflow_file or settings.default_workflow_file
     try:
@@ -195,7 +195,7 @@ async def run_repo_orchestrator(
             ref=payload.ref,
         )
         set_repo_run_state(repo_full_name, status="running", current_step="Workflow dispatched")
-        return RunOrchestratorResponse.model_validate(
+        return DispatchWorkflowResponse.model_validate(
             {
                 "status": "dispatched",
                 "repo": repo_full_name,

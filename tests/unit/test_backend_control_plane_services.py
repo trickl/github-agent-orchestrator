@@ -12,7 +12,7 @@ from backend.app.services.install import initialize_repo
 from backend.app.services.run_state import set_repo_run_state
 from backend.app.services.status import get_status, list_development_pull_requests
 from backend.app.services.webhooks import handle_webhook_event
-from backend.app.services.workflows import cancel_latest_run
+from backend.app.services.workflows import cancel_latest_run, dispatch_workflow
 
 
 class FakeGitHubClient:
@@ -79,6 +79,23 @@ class FakeGitHubClient:
             if params.get("status") == "in_progress":
                 return {"workflow_runs": []}
             return {"workflow_runs": []}
+
+        if method == "POST" and path_or_url == "/repos/acme/widgets/actions/workflows/orchestrator.yml/dispatches":
+            return None
+
+        if method == "POST" and path_or_url == "/repos/acme/widgets/actions/workflows/.github/workflows/orchestrator.yml/dispatches":
+            return None
+
+        if method == "POST" and path_or_url == "/repos/acme/widgets/actions/workflows/.github/workflows/pipeline.yaml/dispatches":
+            return None
+
+        if method == "GET" and path_or_url == "/repos/acme/widgets/actions/workflows":
+            return {
+                "workflows": [
+                    {"path": ".github/workflows/pipeline.yaml"},
+                    {"path": ".github/workflows/release.yml"},
+                ]
+            }
 
         if method == "POST" and path_or_url == "/repos/acme/widgets/actions/runs/999/cancel":
             return None
@@ -209,3 +226,71 @@ def test_event_log_returns_most_recent_first() -> None:
     assert recent[0]["delivery_id"] == "d2"
     assert recent[1]["delivery_id"] == "d1"
     assert "received_at" in recent[0]
+
+
+@pytest.mark.asyncio
+async def test_dispatch_workflow_dispatches_with_requested_name() -> None:
+    client = FakeGitHubClient()
+
+    result = await dispatch_workflow(
+        client,
+        "acme",
+        "widgets",
+        workflow_file="orchestrator.yml",
+        ref="main",
+    )
+
+    assert result["dispatched"] is True
+    assert result["workflow"] in {
+        "orchestrator.yml",
+        ".github/workflows/orchestrator.yml",
+    }
+
+
+class FakeDispatchFallbackClient:
+    """Client stub that forces 404 for initial dispatch attempts."""
+
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    async def request(self, method: str, path_or_url: str, **kwargs: Any) -> Any:
+        import httpx
+
+        self.calls.append({"method": method, "path": path_or_url, "kwargs": kwargs})
+
+        if method == "POST" and path_or_url in {
+            "/repos/acme/widgets/actions/workflows/orchestrator.yml/dispatches",
+            "/repos/acme/widgets/actions/workflows/.github/workflows/orchestrator.yml/dispatches",
+            "/repos/acme/widgets/actions/workflows/orchestrator.yaml/dispatches",
+            "/repos/acme/widgets/actions/workflows/.github/workflows/orchestrator.yaml/dispatches",
+        }:
+            request = httpx.Request("POST", f"https://api.github.com{path_or_url}")
+            response = httpx.Response(404, request=request)
+            raise httpx.HTTPStatusError("not found", request=request, response=response)
+
+        if method == "GET" and path_or_url == "/repos/acme/widgets/actions/workflows":
+            return {
+                "workflows": [
+                    {"path": ".github/workflows/pipeline.yaml"},
+                    {"path": ".github/workflows/release.yml"},
+                ]
+            }
+
+        if method == "POST" and path_or_url == "/repos/acme/widgets/actions/workflows/.github/workflows/pipeline.yaml/dispatches":
+            return None
+
+        raise AssertionError(f"Unexpected request: {method} {path_or_url}")
+
+
+@pytest.mark.asyncio
+async def test_dispatch_workflow_falls_back_to_available_workflow_paths() -> None:
+    client = FakeDispatchFallbackClient()
+
+    with pytest.raises(ValueError, match="Workflow 'orchestrator.yml' was not found"):
+        await dispatch_workflow(
+            client,
+            "acme",
+            "widgets",
+            workflow_file="orchestrator.yml",
+            ref="main",
+        )

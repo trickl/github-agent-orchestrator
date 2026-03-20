@@ -10,7 +10,7 @@ export type DevelopmentPullRequest = {
   createdAt: string;
 };
 
-export type RunResponse = {
+export type RepoRunResponse = {
   status: string;
   repo: string;
   dispatched: boolean;

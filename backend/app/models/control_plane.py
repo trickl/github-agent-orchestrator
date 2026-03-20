@@ -46,7 +46,7 @@ class UpdateOrchestratorResponse(BaseModel):
     pullRequest: PullRequestSummary | None = None
 
 
-class RunOrchestratorResponse(BaseModel):
+class DispatchWorkflowResponse(BaseModel):
     """Response payload for orchestrator run dispatch endpoint."""
 
     status: str
