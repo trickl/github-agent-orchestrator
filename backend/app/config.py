@@ -6,6 +6,13 @@ from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+def _normalize_secret_value(value: str) -> str:
+    normalized = value.strip()
+    if len(normalized) >= 2 and normalized[0] == normalized[-1] and normalized[0] in {'"', "'"}:
+        normalized = normalized[1:-1].strip()
+    return normalized.replace("\\r\\n", "\n").replace("\\n", "\n")
+
+
 class Settings(BaseSettings):
     """Environment-backed settings for local control-plane APIs."""
 
@@ -55,9 +62,13 @@ class Settings(BaseSettings):
     @classmethod
     def _validate_private_key(cls, value: str) -> str:
         """Ensure app private key is non-empty after trimming."""
-        normalized = value.strip()
+        normalized = _normalize_secret_value(value)
         if not normalized:
             raise ValueError("GITHUB_APP_PRIVATE_KEY is required")
+        if "BEGIN" not in normalized or "PRIVATE KEY" not in normalized:
+            raise ValueError(
+                "GITHUB_APP_PRIVATE_KEY must be a PEM private key (including BEGIN/END PRIVATE KEY)"
+            )
         return normalized
 
     @model_validator(mode="after")

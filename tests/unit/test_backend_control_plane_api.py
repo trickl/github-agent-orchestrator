@@ -5,8 +5,10 @@ from __future__ import annotations
 import hashlib
 import hmac
 
+import pytest
 from fastapi.testclient import TestClient
 
+from backend.app.config import Settings
 from backend.app.main import app
 from backend.app.services.event_log import clear_events
 from github_agent_orchestrator import __version__
@@ -538,3 +540,46 @@ def test_repos_endpoint_requires_auth_when_enabled(monkeypatch) -> None:
 
     assert response.status_code == 401
     assert "Authentication required" in response.json()["detail"]
+
+
+def test_repos_endpoint_returns_actionable_key_error(monkeypatch) -> None:
+    _set_required_backend_env(monkeypatch)
+
+    import backend.app.routes.auth as auth_routes
+    import backend.app.routes.repos as repos_routes
+
+    auth_routes.get_settings.cache_clear()
+    repos_routes.get_settings.cache_clear()
+
+    async def fake_create_client(*_args, **_kwargs):
+        raise RuntimeError("Could not parse the provided public key.")
+
+    monkeypatch.setattr(repos_routes, "create_github_client", fake_create_client)
+
+    client = TestClient(app)
+    response = client.get("/repos")
+
+    assert response.status_code == 502
+    assert "GitHub App key is invalid" in response.json()["detail"]
+
+
+def test_settings_normalize_wrapped_private_key(monkeypatch) -> None:
+    monkeypatch.setenv("BACKEND_REQUIRE_AUTH", "false")
+    monkeypatch.setenv("GITHUB_APP_ID", "123456")
+    monkeypatch.setenv(
+        "GITHUB_APP_PRIVATE_KEY",
+        '"-----BEGIN PRIVATE KEY-----\\nTESTKEY\\n-----END PRIVATE KEY-----"',
+    )
+
+    settings = Settings()
+    assert settings.github_app_private_key.startswith("-----BEGIN PRIVATE KEY-----\n")
+    assert settings.github_app_private_key.endswith("\n-----END PRIVATE KEY-----")
+
+
+def test_settings_reject_non_pem_private_key(monkeypatch) -> None:
+    monkeypatch.setenv("BACKEND_REQUIRE_AUTH", "false")
+    monkeypatch.setenv("GITHUB_APP_ID", "123456")
+    monkeypatch.setenv("GITHUB_APP_PRIVATE_KEY", "not-a-pem-key")
+
+    with pytest.raises(ValueError, match="must be a PEM private key"):
+        Settings()

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from functools import lru_cache
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -17,6 +18,9 @@ from backend.app.services.orchestrator_version import update_orchestrator_versio
 from backend.app.services.run_state import set_repo_run_state
 from backend.app.services.status import list_accessible_repositories, list_development_pull_requests
 from backend.app.services.target_state import upsert_target_state
+
+
+logger = logging.getLogger(__name__)
 
 
 router = APIRouter(tags=["repos"], dependencies=[Depends(require_authenticated_user)])
@@ -47,6 +51,31 @@ class RunOrchestratorRequest(BaseModel):
     timeout_seconds: int | None = Field(default=None, ge=1, le=10800)
 
 
+def _diagnose_github_app_failure(exc: Exception) -> str:
+    message = str(exc)
+    lower = message.lower()
+
+    if "unable to generate jwt" in lower or "could not parse the provided public key" in lower:
+        return (
+            "GitHub App key is invalid. Verify GITHUB_APP_ID matches the key and "
+            "GITHUB_APP_PRIVATE_KEY is a full PEM private key (BEGIN/END lines, correct newlines)."
+        )
+
+    if "no github app installations available" in lower:
+        return (
+            "No installations found for this GitHub App. Install the app to the target account/repository "
+            "and ensure installation permissions are granted."
+        )
+
+    if "installation not found" in lower:
+        return (
+            "GitHub App is not installed for this repository. Install the app on the repository owner "
+            "and retry."
+        )
+
+    return message
+
+
 @router.get("/repos")
 async def list_repositories(
     settings: Settings = Depends(get_settings),
@@ -55,7 +84,9 @@ async def list_repositories(
         client = await create_github_client(settings)
         return await list_accessible_repositories(client)
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Failed to list repositories: {exc}") from exc
+        diagnosed = _diagnose_github_app_failure(exc)
+        logger.exception("Failed to list repositories: %s", diagnosed)
+        raise HTTPException(status_code=502, detail=f"Failed to list repositories: {diagnosed}") from exc
 
 
 @router.get("/repos/{owner}/{repo}/development-prs")
@@ -68,7 +99,9 @@ async def list_development_prs(
         client = await create_github_client(settings, owner=owner, repo=repo)
         return await list_development_pull_requests(client, owner, repo)
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Failed to list development PRs: {exc}") from exc
+        diagnosed = _diagnose_github_app_failure(exc)
+        logger.exception("Failed to list development PRs for %s/%s: %s", owner, repo, diagnosed)
+        raise HTTPException(status_code=502, detail=f"Failed to list development PRs: {diagnosed}") from exc
 
 
 @router.post("/repos/{owner}/{repo}/initialize")
@@ -90,7 +123,9 @@ async def initialize_repository(
             open_pr=payload.open_pr,
         )
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Failed to initialize repository: {exc}") from exc
+        diagnosed = _diagnose_github_app_failure(exc)
+        logger.exception("Failed to initialize repository %s/%s: %s", owner, repo, diagnosed)
+        raise HTTPException(status_code=502, detail=f"Failed to initialize repository: {diagnosed}") from exc
 
 
 @router.post("/repos/{owner}/{repo}/target-state")
@@ -110,7 +145,9 @@ async def create_or_update_target_state(
             branch=payload.branch,
         )
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Failed to upsert target state: {exc}") from exc
+        diagnosed = _diagnose_github_app_failure(exc)
+        logger.exception("Failed to upsert target state for %s/%s: %s", owner, repo, diagnosed)
+        raise HTTPException(status_code=502, detail=f"Failed to upsert target state: {diagnosed}") from exc
 
 
 @router.post(
@@ -128,9 +165,11 @@ async def update_orchestrator_runtime(
         result = await update_orchestrator_version(client, owner, repo)
         return UpdateOrchestratorResponse.model_validate(result)
     except Exception as exc:
+        diagnosed = _diagnose_github_app_failure(exc)
+        logger.exception("Failed to update orchestrator version for %s/%s: %s", owner, repo, diagnosed)
         raise HTTPException(
             status_code=502,
-            detail=f"Failed to update orchestrator version: {exc}",
+            detail=f"Failed to update orchestrator version: {diagnosed}",
         ) from exc
 
 
@@ -159,6 +198,7 @@ async def run_repo_orchestrator(
         set_repo_run_state(repo_full_name, status=final_status, current_step=final_step)
         return RunOrchestratorResponse.model_validate(result)
     except Exception as exc:
+        logger.exception("Failed to run orchestrator for %s: %s", repo_full_name, exc)
         set_repo_run_state(repo_full_name, status="error", current_step="Orchestrator run failed")
         raise HTTPException(
             status_code=502,

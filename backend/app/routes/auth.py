@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import secrets
 from datetime import UTC, datetime, timedelta
 from functools import lru_cache
@@ -18,6 +19,7 @@ from backend.app.config import Settings
 
 
 router = APIRouter(tags=["auth"])
+logger = logging.getLogger(__name__)
 
 SESSION_COOKIE_NAME = "gao_session"
 OAUTH_STATE_COOKIE_NAME = "gao_oauth_state"
@@ -43,12 +45,17 @@ def _oauth_authorization_url(settings: Settings, state: str) -> str:
 def _github_app_install_url(settings: Settings) -> str:
     explicit = settings.github_app_install_url.strip()
     if explicit:
+        logger.info("Using explicit GitHub App install URL")
         return explicit
 
     slug = settings.github_app_slug.strip()
     if slug:
+        logger.info("Using GitHub App slug to construct install URL (slug=%s)", slug)
         return f"https://github.com/apps/{slug}/installations/new"
 
+    logger.warning(
+        "GitHub App install URL not configured: set GITHUB_APP_INSTALL_URL or GITHUB_APP_SLUG"
+    )
     raise HTTPException(
         status_code=503,
         detail="GitHub App install URL is not configured (set GITHUB_APP_INSTALL_URL or GITHUB_APP_SLUG)",
@@ -145,6 +152,7 @@ async def start_github_auth(
     settings: Settings = Depends(get_settings),
 ) -> dict[str, str]:
     if not settings.backend_require_auth:
+        logger.info("Auth bypass enabled (BACKEND_REQUIRE_AUTH=false); returning frontend redirect")
         return {"authorizationUrl": settings.auth_frontend_redirect_url}
 
     state = secrets.token_urlsafe(24)
@@ -173,10 +181,12 @@ async def github_auth_callback(
     settings: Settings = Depends(get_settings),
 ) -> RedirectResponse:
     if not settings.backend_require_auth:
+        logger.info("Auth callback with auth disabled; redirecting to frontend")
         return RedirectResponse(url=settings.auth_frontend_redirect_url)
 
     state_cookie = request.cookies.get(OAUTH_STATE_COOKIE_NAME)
     if not state_cookie or state_cookie != state:
+        logger.warning("OAuth state mismatch during callback")
         raise HTTPException(status_code=401, detail="OAuth state mismatch")
 
     access_token = await _exchange_oauth_code_for_token(settings, code)
@@ -184,10 +194,12 @@ async def github_auth_callback(
     login = user.get("login")
     user_id = user.get("id")
     if not isinstance(login, str) or not isinstance(user_id, int):
+        logger.warning("Failed to resolve GitHub user identity from OAuth response")
         raise HTTPException(status_code=502, detail="Failed to resolve GitHub user identity")
 
     allowed = _allowed_users(settings)
     if allowed and login.lower() not in allowed:
+        logger.warning("Authenticated GitHub user is not allowlisted (login=%s)", login)
         raise HTTPException(status_code=403, detail=f"User '{login}' is not allowed")
 
     session_token = _create_session_token(settings, login=login, user_id=user_id)
@@ -203,6 +215,7 @@ async def github_auth_callback(
         path="/",
     )
     redirect.delete_cookie(OAUTH_STATE_COOKIE_NAME, path="/")
+    logger.info("OAuth callback successful for user %s", login)
     return redirect
 
 
