@@ -13,9 +13,9 @@ export type DevelopmentPullRequest = {
 export type RunResponse = {
   status: string;
   repo: string;
-  stdout: string;
-  stderr: string;
-  exit_code: number;
+  dispatched: boolean;
+  workflow: string;
+  ref: string;
 };
 
 export type AuthMeResponse = {

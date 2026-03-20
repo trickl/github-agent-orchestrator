@@ -1,4 +1,4 @@
-"""In-memory run state tracking for local orchestrator executions."""
+"""In-memory run state tracking for orchestrator workflow dispatches."""
 
 from __future__ import annotations
 

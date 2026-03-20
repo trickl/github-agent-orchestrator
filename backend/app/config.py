@@ -26,8 +26,6 @@ class Settings(BaseSettings):
         default="orchestrator.yml", alias="GITHUB_ORCHESTRATOR_WORKFLOW_FILE"
     )
     github_webhook_secret: str = Field(default="", alias="GITHUB_WEBHOOK_SECRET")
-    orchestrator_cli: str = Field(default="gao", alias="GAO_CLI_COMMAND")
-    orchestrator_run_timeout_seconds: int = Field(default=1800, alias="GAO_RUN_TIMEOUT_SECONDS")
 
     backend_require_auth: bool = Field(default=True, alias="BACKEND_REQUIRE_AUTH")
     github_oauth_client_id: str = Field(default="", alias="GITHUB_OAUTH_CLIENT_ID")

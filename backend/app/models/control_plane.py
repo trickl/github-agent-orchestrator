@@ -47,13 +47,13 @@ class UpdateOrchestratorResponse(BaseModel):
 
 
 class RunOrchestratorResponse(BaseModel):
-    """Response payload for local orchestrator execution endpoint."""
+    """Response payload for orchestrator run dispatch endpoint."""
 
     status: str
     repo: str
-    stdout: str
-    stderr: str
-    exit_code: int
+    dispatched: bool
+    workflow: str
+    ref: str
 
 
 class RepositoryStatusResponse(BaseModel):

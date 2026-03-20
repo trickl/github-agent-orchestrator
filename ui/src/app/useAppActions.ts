@@ -59,13 +59,15 @@ export function useAppActions(data: AppDataResult) {
       const prs = await apiFetch<DevelopmentPullRequest[]>(String(endpoints.developmentPrs(owner, repo)));
       const latestPrTitle = prs[0]?.title;
       setDevelopmentPrs(prs);
-      if (runResult.exit_code === 0) {
+      if (runResult.dispatched) {
         setRunToast({
           severity: 'success',
-          message: latestPrTitle ? `✅ Run completed. Created PR: ${latestPrTitle}` : '✅ Run completed.',
+          message: latestPrTitle
+            ? `✅ Workflow dispatched. Latest dev PR: ${latestPrTitle}`
+            : `✅ Workflow dispatched (${runResult.workflow} on ${runResult.ref}).`,
         });
       } else {
-        setRunToast({ severity: 'error', message: 'Run finished with errors. Check repository activity for details.' });
+        setRunToast({ severity: 'error', message: 'Workflow dispatch was not acknowledged by the backend.' });
       }
       await loadRepoData();
     } catch (err: unknown) {

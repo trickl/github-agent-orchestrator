@@ -243,24 +243,30 @@ def test_run_orchestrator_endpoint(monkeypatch) -> None:
 
     repos_routes.get_settings.cache_clear()
 
-    def fake_run_orchestrator(*_args, **_kwargs):
+    async def fake_create_client(*_args, **_kwargs):
+        return object()
+
+    async def fake_dispatch(*_args, **_kwargs):
         return {
-            "status": "completed",
-            "repo": "acme/widgets",
-            "stdout": "[GAO] Mode: semi\n",
-            "stderr": "",
-            "exit_code": 0,
+            "owner": "acme",
+            "repo": "widgets",
+            "workflow": "orchestrator.yml",
+            "ref": "main",
+            "dispatched": True,
         }
 
-    monkeypatch.setattr(repos_routes, "run_orchestrator", fake_run_orchestrator)
+    monkeypatch.setattr(repos_routes, "create_github_client", fake_create_client)
+    monkeypatch.setattr(repos_routes, "dispatch_workflow", fake_dispatch)
 
     client = TestClient(app)
-    response = client.post("/repos/acme/widgets/run", json={})
+    response = client.post("/repos/acme/widgets/run", json={"ref": "main"})
     assert response.status_code == 200
     payload = response.json()
-    assert payload["status"] == "completed"
+    assert payload["status"] == "dispatched"
     assert payload["repo"] == "acme/widgets"
-    assert payload["exit_code"] == 0
+    assert payload["dispatched"] is True
+    assert payload["workflow"] == "orchestrator.yml"
+    assert payload["ref"] == "main"
 
 
 def test_webhook_endpoint_accepts_valid_signature(monkeypatch) -> None:

@@ -40,9 +40,7 @@ BACKEND_VERSION = _version_from_pyproject()
 app = FastAPI(
     title="GitHub Agent Orchestrator Control Plane",
     version=BACKEND_VERSION,
-    description=(
-        "Local backend for PAT-authenticated GitHub operations and local orchestrator execution."
-    ),
+    description="Control-plane backend for GitHub App-authenticated repository operations.",
 )
 
 

@@ -13,11 +13,11 @@ from backend.app.models.control_plane import RunOrchestratorResponse, UpdateOrch
 from backend.app.routes.auth import require_authenticated_user
 from backend.app.routes.dependencies import get_settings
 from backend.app.services.install import initialize_repo
-from backend.app.services.local_runner import run_orchestrator
 from backend.app.services.orchestrator_version import update_orchestrator_version
 from backend.app.services.run_state import set_repo_run_state
 from backend.app.services.status import list_accessible_repositories, list_development_pull_requests
 from backend.app.services.target_state import upsert_target_state
+from backend.app.services.workflows import dispatch_workflow
 
 
 logger = logging.getLogger(__name__)
@@ -43,7 +43,8 @@ class UpdateOrchestratorRequest(BaseModel):
 
 
 class RunOrchestratorRequest(BaseModel):
-    timeout_seconds: int | None = Field(default=None, ge=1, le=10800)
+    workflow_file: str | None = Field(default=None)
+    ref: str = Field(default="main")
 
 
 def _diagnose_github_app_failure(exc: Exception) -> str:
@@ -182,22 +183,30 @@ async def run_repo_orchestrator(
     settings: Settings = Depends(get_settings),
 ) -> RunOrchestratorResponse:
     repo_full_name = f"{owner}/{repo}"
+    workflow_file = payload.workflow_file or settings.default_workflow_file
     try:
-        timeout_seconds = payload.timeout_seconds or settings.orchestrator_run_timeout_seconds
-        set_repo_run_state(repo_full_name, status="running", current_step="Running orchestrator")
-        result = run_orchestrator(
-            cli_command=settings.orchestrator_cli,
-            owner=owner,
-            repo=repo,
-            timeout_seconds=timeout_seconds,
+        set_repo_run_state(repo_full_name, status="running", current_step="Dispatching workflow")
+        client = await create_github_client(settings, owner=owner, repo=repo)
+        dispatch_result = await dispatch_workflow(
+            client,
+            owner,
+            repo,
+            workflow_file=workflow_file,
+            ref=payload.ref,
         )
-        final_status = "idle" if result.get("exit_code") == 0 else "error"
-        final_step = None if final_status == "idle" else "Orchestrator run failed"
-        set_repo_run_state(repo_full_name, status=final_status, current_step=final_step)
-        return RunOrchestratorResponse.model_validate(result)
+        set_repo_run_state(repo_full_name, status="running", current_step="Workflow dispatched")
+        return RunOrchestratorResponse.model_validate(
+            {
+                "status": "dispatched",
+                "repo": repo_full_name,
+                "dispatched": bool(dispatch_result.get("dispatched", False)),
+                "workflow": str(dispatch_result.get("workflow", workflow_file)),
+                "ref": str(dispatch_result.get("ref", payload.ref)),
+            }
+        )
     except Exception as exc:
         logger.exception("Failed to run orchestrator for %s: %s", repo_full_name, exc)
-        set_repo_run_state(repo_full_name, status="error", current_step="Orchestrator run failed")
+        set_repo_run_state(repo_full_name, status="error", current_step="Workflow dispatch failed")
         raise HTTPException(
             status_code=502,
             detail=f"Failed to run orchestrator: {exc}",

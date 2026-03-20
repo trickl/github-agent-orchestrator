@@ -280,7 +280,7 @@ In review mode:
 
 For GitHub App-based operation, this repository includes a minimal FastAPI control-plane
 under `backend/app` that talks to **real GitHub repositories** using **GitHub App installation tokens**, while
-executing orchestration **locally**.
+dispatching orchestration runs via **GitHub Actions**.
 
 Run locally:
 
@@ -304,8 +304,6 @@ Required environment variables:
 - `GITHUB_API_URL` (optional, defaults to `https://api.github.com`)
 - `CORS_ORIGINS` (optional, comma-separated; include your GitHub Pages URL and local dev origin)
 - `GITHUB_WEBHOOK_SECRET` (required for `POST /webhooks/github` signature verification)
-- `GAO_CLI_COMMAND` (optional, defaults to `gao`)
-- `GAO_RUN_TIMEOUT_SECONDS` (optional, defaults to `1800`)
 
 Optional auth override flags (secure defaults already applied):
 
@@ -328,13 +326,10 @@ MVP endpoints:
 - `POST /webhooks/github`
 - `GET /webhooks/events/recent`
 
-`POST /repos/{owner}/{repo}/run` executes:
+`POST /repos/{owner}/{repo}/run` dispatches the configured workflow (`orchestrator.yml` by default)
+using `workflow_dispatch` for the selected repository.
 
-`gao run --repo owner/repo`
-
-locally on the backend host and returns `stdout`, `stderr`, and `exit_code`.
-
-This phase intentionally does **not** require GitHub App installation flow and does
+This control-plane requires GitHub App installation for repository access and does
 **not** require local repository cloning.
 
 `GET /repos/{owner}/{repo}/status` includes `hasTargetState` so the UI can switch
