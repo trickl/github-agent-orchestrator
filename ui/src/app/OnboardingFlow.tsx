@@ -55,12 +55,14 @@ type Props = {
   onTargetStateChange: (value: string) => void;
   isConnecting: boolean;
   isStartingFirstIteration: boolean;
+  isRefreshingRepos: boolean;
   githubAppInstallUrl: string | null;
   initProgress: InitProgress;
   error: string | null;
   onGoToConnect: () => void;
   onConnectGithub: () => void;
   onContinueAfterConnected: () => void;
+  onRefreshRepos: () => void;
   onContinueFromRepo: () => void;
   onStartFirstIteration: () => void;
   onSaveForLater: () => void;
@@ -87,12 +89,14 @@ export function OnboardingFlow({
   onTargetStateChange,
   isConnecting,
   isStartingFirstIteration,
+  isRefreshingRepos,
   githubAppInstallUrl,
   initProgress,
   error,
   onGoToConnect,
   onConnectGithub,
   onContinueAfterConnected,
+  onRefreshRepos,
   onContinueFromRepo,
   onStartFirstIteration,
   onSaveForLater,
@@ -219,7 +223,8 @@ export function OnboardingFlow({
             <Stack spacing={1}>
               <Typography fontWeight={600}>No repositories available yet</Typography>
               <Typography variant="body2">
-                You may need to grant access to your repositories during setup.
+                You may need to grant access to your repositories during setup. After granting access in
+                GitHub, return to this tab and refresh.
               </Typography>
               <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.25}>
                 {githubAppInstallUrl ? (
@@ -233,6 +238,9 @@ export function OnboardingFlow({
                     Install GitHub App
                   </Button>
                 ) : null}
+                <Button variant="outlined" onClick={onRefreshRepos} disabled={isRefreshingRepos}>
+                  {isRefreshingRepos ? 'Refreshing…' : "I've granted access — refresh"}
+                </Button>
                 <Button
                   component="a"
                   href="https://github.com/settings/installations"
@@ -246,18 +254,35 @@ export function OnboardingFlow({
             </Stack>
           </Alert>
         ) : (
-          <List dense sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1, maxHeight: 280, overflowY: 'auto' }}>
-            {filteredRepos.map((repoName) => (
-              <ListItem key={repoName} disablePadding>
-                <ListItemButton selected={selectedRepo === repoName} onClick={() => onSelectRepo(repoName)}>
-                  <ListItemText
-                    primary={repoName}
-                    secondary="Visibility is controlled by your GitHub app installation"
-                  />
-                </ListItemButton>
-              </ListItem>
-            ))}
-          </List>
+          <Stack spacing={1.25}>
+            <List dense sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1, maxHeight: 280, overflowY: 'auto' }}>
+              {filteredRepos.map((repoName) => (
+                <ListItem key={repoName} disablePadding>
+                  <ListItemButton selected={selectedRepo === repoName} onClick={() => onSelectRepo(repoName)}>
+                    <ListItemText
+                      primary={repoName}
+                      secondary="Visibility is controlled by your GitHub app installation"
+                    />
+                  </ListItemButton>
+                </ListItem>
+              ))}
+            </List>
+
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.25}>
+              <Button variant="outlined" onClick={onRefreshRepos} disabled={isRefreshingRepos}>
+                {isRefreshingRepos ? 'Refreshing…' : 'Refresh repositories'}
+              </Button>
+              <Button
+                component="a"
+                href="https://github.com/settings/installations"
+                target="_blank"
+                rel="noreferrer"
+                variant="text"
+              >
+                Add or remove repository access in GitHub
+              </Button>
+            </Stack>
+          </Stack>
         )}
 
         <Box>

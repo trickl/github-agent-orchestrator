@@ -110,8 +110,10 @@ export function App(): React.JSX.Element {
   const [repoSearch, setRepoSearch] = React.useState('');
   const [loading, setLoading] = React.useState(true);
   const [running, setRunning] = React.useState(false);
+  const [isRefreshingRepos, setIsRefreshingRepos] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [runToast, setRunToast] = React.useState<{ severity: 'success' | 'error'; message: string } | null>(null);
+  const lastRepoRefreshAtRef = React.useRef<number>(0);
 
   const selectedRepoParts = React.useMemo(() => parseRepoFullName(selectedRepo), [selectedRepo]);
 
@@ -166,6 +168,25 @@ export function App(): React.JSX.Element {
     return statusPayload;
   }, [selectedRepoParts]);
 
+  const refreshRepos = React.useCallback(async () => {
+    setIsRefreshingRepos(true);
+    lastRepoRefreshAtRef.current = Date.now();
+    try {
+      return await loadRepos();
+    } catch (err: unknown) {
+      if (isNoInstallationsError(err)) {
+        setRepos([]);
+        setSelectedRepo('');
+        setError(null);
+        return [];
+      }
+      setError(err instanceof Error ? err.message : String(err));
+      return [];
+    } finally {
+      setIsRefreshingRepos(false);
+    }
+  }, [loadRepos]);
+
   React.useEffect(() => {
     let cancelled = false;
     setLoading(true);
@@ -183,7 +204,7 @@ export function App(): React.JSX.Element {
           }
           return;
         }
-        await loadRepos();
+        await refreshRepos();
       } catch (err: unknown) {
         if (!cancelled) {
           if (isNoInstallationsError(err)) {
@@ -204,7 +225,31 @@ export function App(): React.JSX.Element {
     return () => {
       cancelled = true;
     };
-  }, [loadAuthSession, loadGithubAppInstallUrl, loadRepos]);
+  }, [loadAuthSession, loadGithubAppInstallUrl, refreshRepos]);
+
+  React.useEffect(() => {
+    if (scene !== 'repo' || !authLogin || repos.length > 0) return;
+
+    const maybeRefresh = () => {
+      const now = Date.now();
+      if (now - lastRepoRefreshAtRef.current < 2000) return;
+      void refreshRepos();
+    };
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        maybeRefresh();
+      }
+    };
+
+    window.addEventListener('focus', maybeRefresh);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+
+    return () => {
+      window.removeEventListener('focus', maybeRefresh);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, [authLogin, refreshRepos, repos.length, scene]);
 
   React.useEffect(() => {
     if (initialSceneResolved || loading) return;
@@ -438,12 +483,14 @@ export function App(): React.JSX.Element {
         onTargetStateChange={setTargetStateText}
         isConnecting={isConnecting}
         isStartingFirstIteration={isStartingFirstIteration}
+        isRefreshingRepos={isRefreshingRepos}
         githubAppInstallUrl={githubAppInstallUrl}
         initProgress={initProgress}
         error={error}
         onGoToConnect={() => setScene('connect')}
         onConnectGithub={() => void handleConnectGithub()}
         onContinueAfterConnected={() => setScene('repo')}
+        onRefreshRepos={() => void refreshRepos()}
         onContinueFromRepo={() => void handleContinueFromRepoSelection()}
         onStartFirstIteration={() => void runInitializationStep()}
         onSaveForLater={() => void handleSaveForLater()}
