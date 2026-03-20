@@ -39,6 +39,15 @@ class FakeGitHubClient:
         if method == "GET" and path_or_url == "/repos/acme/widgets/contents/.agent-orchestrator/state/targetstate.md":
             return {"message": "Not Found"}
 
+        if method == "GET" and path_or_url == "/repos/acme/private/contents/.agent-orchestrator/state/target_state.md":
+            return {"message": "Resource not accessible by integration"}
+
+        if method == "GET" and path_or_url == "/repos/acme/private/contents/.orchestrator-agent/state/target_state.md":
+            return {"message": "Resource not accessible by integration"}
+
+        if method == "GET" and path_or_url == "/repos/acme/private/contents/.agent-orchestrator/state/targetstate.md":
+            return {"message": "Resource not accessible by integration"}
+
         if method == "POST" and path_or_url == "/repos/acme/widgets/git/refs":
             return {"ref": "refs/heads/gao/init-branch"}
 
@@ -129,6 +138,21 @@ async def test_get_status_includes_latest_run_and_parsed_artifact() -> None:
     assert result["currentStep"] == "Creating PR"
     assert result["latest_run"] is None
     assert result["status_artifact"] is None
+
+
+@pytest.mark.asyncio
+async def test_get_status_handles_target_state_403_as_missing() -> None:
+    client = FakeGitHubClient()
+
+    result = await get_status(
+        client,
+        "acme",
+        "private",
+    )
+
+    assert result["owner"] == "acme"
+    assert result["repo"] == "private"
+    assert result["hasTargetState"] is False
 
 
 @pytest.mark.asyncio

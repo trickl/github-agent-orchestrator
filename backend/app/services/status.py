@@ -44,10 +44,12 @@ async def _target_state_has_content(client: GitHubClient, owner: str, repo: str,
         "GET",
         f"/repos/{owner}/{repo}/contents/{path}",
         params={"ref": "main"},
-        expected_status={200, 404},
+        expected_status={200, 403, 404},
     )
-    if isinstance(response, dict) and response.get("message") == "Not Found":
-        return False
+    if isinstance(response, dict):
+        message = response.get("message")
+        if message in {"Not Found", "Resource not accessible by integration"}:
+            return False
     return bool(_extract_non_empty_text(response))
 
 

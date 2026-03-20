@@ -35,7 +35,7 @@ class InitializeRepoRequest(BaseModel):
 
 class UpsertTargetStateRequest(BaseModel):
     content: str = Field(..., min_length=1)
-    branch: str = Field(default="main", min_length=1)
+    branch: str | None = Field(default=None)
 
 
 class UpdateOrchestratorRequest(BaseModel):

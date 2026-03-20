@@ -19,6 +19,9 @@ class FakeGitHubClient:
     async def request(self, method: str, path_or_url: str, **kwargs: Any) -> Any:
         self.calls.append({"method": method, "path": path_or_url, "kwargs": kwargs})
 
+        if method == "GET" and path_or_url == "/repos/acme/widgets":
+            return {"default_branch": "develop"}
+
         if method == "GET" and path_or_url.endswith("/.agent-orchestrator/state/target_state.md"):
             return {"sha": "target-sha"} if self.target_exists else {"message": "Not Found"}
 
@@ -91,3 +94,25 @@ async def test_upsert_target_state_updates_target_without_recreating_config() ->
         if c["method"] == "PUT" and c["path"].endswith("/.agent-orchestrator/config.yml")
     ]
     assert config_puts == []
+
+
+@pytest.mark.asyncio
+async def test_upsert_target_state_uses_repo_default_branch_when_branch_not_provided() -> None:
+    client = FakeGitHubClient(target_exists=False, config_exists=False)
+
+    result = await upsert_target_state(
+        client,
+        "acme",
+        "widgets",
+        "Desired end state",
+    )
+
+    assert result["branch"] == "develop"
+
+    target_put = [
+        c
+        for c in client.calls
+        if c["method"] == "PUT"
+        and c["path"].endswith("/.agent-orchestrator/state/target_state.md")
+    ][0]
+    assert target_put["kwargs"]["json"]["branch"] == "develop"

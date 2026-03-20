@@ -42,27 +42,46 @@ async def _get_file_sha_if_exists(
     return _extract_sha(response)
 
 
+async def _resolve_target_branch(
+    client: GitHubClient,
+    owner: str,
+    repo: str,
+    requested_branch: str | None,
+) -> str:
+    if isinstance(requested_branch, str) and requested_branch.strip():
+        return requested_branch.strip()
+
+    repo_payload = await client.request("GET", f"/repos/{owner}/{repo}")
+    if isinstance(repo_payload, dict):
+        default_branch = repo_payload.get("default_branch")
+        if isinstance(default_branch, str) and default_branch.strip():
+            return default_branch.strip()
+    return "main"
+
+
 async def upsert_target_state(
     client: GitHubClient,
     owner: str,
     repo: str,
     content: str,
-    branch: str = "main",
+    branch: str | None = None,
 ) -> dict[str, Any]:
     """Create or update target state and ensure default orchestrator config exists."""
+
+    resolved_branch = await _resolve_target_branch(client, owner, repo, branch)
 
     target_sha = await _get_file_sha_if_exists(
         client,
         owner,
         repo,
         path=TARGET_STATE_PATH,
-        branch=branch,
+        branch=resolved_branch,
     )
 
     target_payload: dict[str, Any] = {
         "message": "Update target state",
         "content": _encode_content(content),
-        "branch": branch,
+        "branch": resolved_branch,
     }
     if target_sha:
         target_payload["sha"] = target_sha
@@ -78,7 +97,7 @@ async def upsert_target_state(
         owner,
         repo,
         path=ORCHESTRATOR_CONFIG_PATH,
-        branch=branch,
+        branch=resolved_branch,
     )
 
     config_created = False
@@ -86,7 +105,7 @@ async def upsert_target_state(
         config_payload = {
             "message": "Ensure orchestrator config",
             "content": _encode_content(DEFAULT_ORCHESTRATOR_CONFIG),
-            "branch": branch,
+            "branch": resolved_branch,
         }
         await client.request(
             "PUT",
@@ -98,7 +117,7 @@ async def upsert_target_state(
     return {
         "owner": owner,
         "repo": repo,
-        "branch": branch,
+        "branch": resolved_branch,
         "target_state_path": TARGET_STATE_PATH,
         "target_state_updated": True,
         "target_state_created": target_sha is None,
