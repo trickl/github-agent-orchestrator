@@ -75,6 +75,17 @@ function normalizeStatus(status: string | null | undefined): 'idle' | 'running' 
   return 'idle';
 }
 
+function isNoInstallationsError(err: unknown): boolean {
+  if (!(err instanceof ApiError)) return false;
+
+  const combined = `${err.message}\n${err.bodyText ?? ''}`.toLowerCase();
+  return (
+    err.status === 502 &&
+    (combined.includes('no installations found for this github app') ||
+      combined.includes('no github app installations available'))
+  );
+}
+
 export function App(): React.JSX.Element {
   const colorMode = React.useContext(ColorModeContext);
   const [repos, setRepos] = React.useState<string[]>([]);
@@ -175,6 +186,12 @@ export function App(): React.JSX.Element {
         await loadRepos();
       } catch (err: unknown) {
         if (!cancelled) {
+          if (isNoInstallationsError(err)) {
+            setRepos([]);
+            setSelectedRepo('');
+            setError(null);
+            return;
+          }
           setError(err instanceof Error ? err.message : String(err));
         }
       } finally {

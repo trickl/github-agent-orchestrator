@@ -514,6 +514,27 @@ def test_github_app_install_url_endpoint_uses_slug(monkeypatch) -> None:
     )
 
 
+def test_github_app_install_url_endpoint_falls_back_to_settings_page(monkeypatch) -> None:
+    monkeypatch.setenv("BACKEND_REQUIRE_AUTH", "false")
+    monkeypatch.setenv("GITHUB_APP_ID", "123456")
+    monkeypatch.setenv(
+        "GITHUB_APP_PRIVATE_KEY",
+        "-----BEGIN PRIVATE KEY-----\\nTESTKEY\\n-----END PRIVATE KEY-----",
+    )
+    monkeypatch.delenv("GITHUB_APP_INSTALL_URL", raising=False)
+    monkeypatch.delenv("GITHUB_APP_SLUG", raising=False)
+
+    import backend.app.routes.auth as auth_routes
+
+    auth_routes.get_settings.cache_clear()
+
+    client = TestClient(app)
+    response = client.get("/auth/github-app/install-url")
+
+    assert response.status_code == 200
+    assert response.json()["installUrl"] == "https://github.com/settings/installations"
+
+
 def test_repos_endpoint_requires_auth_when_enabled(monkeypatch) -> None:
     monkeypatch.setenv("BACKEND_REQUIRE_AUTH", "true")
     monkeypatch.setenv("GITHUB_APP_ID", "123456")
@@ -561,6 +582,27 @@ def test_repos_endpoint_returns_actionable_key_error(monkeypatch) -> None:
 
     assert response.status_code == 502
     assert "GitHub App key is invalid" in response.json()["detail"]
+
+
+def test_repos_endpoint_returns_empty_list_when_no_installations(monkeypatch) -> None:
+    _set_required_backend_env(monkeypatch)
+
+    import backend.app.routes.auth as auth_routes
+    import backend.app.routes.repos as repos_routes
+
+    auth_routes.get_settings.cache_clear()
+    repos_routes.get_settings.cache_clear()
+
+    async def fake_create_client(*_args, **_kwargs):
+        raise RuntimeError("No GitHub App installations available")
+
+    monkeypatch.setattr(repos_routes, "create_github_client", fake_create_client)
+
+    client = TestClient(app)
+    response = client.get("/repos")
+
+    assert response.status_code == 200
+    assert response.json() == []
 
 
 def test_settings_normalize_wrapped_private_key(monkeypatch) -> None:

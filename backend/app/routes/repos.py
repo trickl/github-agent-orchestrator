@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from functools import lru_cache
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -12,6 +11,7 @@ from backend.app.config import Settings
 from backend.app.github.auth import create_github_client
 from backend.app.models.control_plane import RunOrchestratorResponse, UpdateOrchestratorResponse
 from backend.app.routes.auth import require_authenticated_user
+from backend.app.routes.dependencies import get_settings
 from backend.app.services.install import initialize_repo
 from backend.app.services.local_runner import run_orchestrator
 from backend.app.services.orchestrator_version import update_orchestrator_version
@@ -24,11 +24,6 @@ logger = logging.getLogger(__name__)
 
 
 router = APIRouter(tags=["repos"], dependencies=[Depends(require_authenticated_user)])
-
-
-@lru_cache(maxsize=1)
-def get_settings() -> Settings:
-    return Settings()
 
 
 class InitializeRepoRequest(BaseModel):
@@ -84,6 +79,9 @@ async def list_repositories(
         client = await create_github_client(settings)
         return await list_accessible_repositories(client)
     except Exception as exc:
+        if "no github app installations available" in str(exc).lower():
+            logger.warning("No GitHub App installations available yet; returning empty repository list")
+            return []
         diagnosed = _diagnose_github_app_failure(exc)
         logger.exception("Failed to list repositories: %s", diagnosed)
         raise HTTPException(status_code=502, detail=f"Failed to list repositories: {diagnosed}") from exc

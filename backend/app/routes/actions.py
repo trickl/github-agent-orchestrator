@@ -2,23 +2,17 @@
 
 from __future__ import annotations
 
-from functools import lru_cache
-
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from backend.app.config import Settings
 from backend.app.github.auth import create_github_client
 from backend.app.routes.auth import require_authenticated_user
+from backend.app.routes.dependencies import get_settings
 from backend.app.services.workflows import cancel_latest_run, dispatch_workflow
 
 
 router = APIRouter(tags=["actions"], dependencies=[Depends(require_authenticated_user)])
-
-
-@lru_cache(maxsize=1)
-def get_settings() -> Settings:
-    return Settings()
 
 
 class StartLoopRequest(BaseModel):

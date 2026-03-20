@@ -2,23 +2,17 @@
 
 from __future__ import annotations
 
-from functools import lru_cache
-
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from backend.app.config import Settings
 from backend.app.github.auth import create_github_client
 from backend.app.models.control_plane import RepositoryStatusResponse
 from backend.app.routes.auth import require_authenticated_user
+from backend.app.routes.dependencies import get_settings
 from backend.app.services.status import get_status
 
 
 router = APIRouter(tags=["status"], dependencies=[Depends(require_authenticated_user)])
-
-
-@lru_cache(maxsize=1)
-def get_settings() -> Settings:
-    return Settings()
 
 
 @router.get("/repos/{owner}/{repo}/status", response_model=RepositoryStatusResponse)

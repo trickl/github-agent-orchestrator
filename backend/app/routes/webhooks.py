@@ -4,22 +4,17 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-from functools import lru_cache
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 
 from backend.app.config import Settings
+from backend.app.routes.dependencies import get_settings
 from backend.app.services.event_log import append_event
 from backend.app.services.webhooks import handle_webhook_event
 
 
 router = APIRouter(tags=["webhooks"])
-
-
-@lru_cache(maxsize=1)
-def get_settings() -> Settings:
-    return Settings()
 
 
 def _verify_github_signature(*, body: bytes, signature_header: str, secret: str) -> bool:

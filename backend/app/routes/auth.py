@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 import secrets
 from datetime import UTC, datetime, timedelta
-from functools import lru_cache
 from typing import Any
 from urllib.parse import urlencode
 
@@ -16,6 +15,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.responses import JSONResponse
 
 from backend.app.config import Settings
+from backend.app.routes.dependencies import get_settings
 
 
 router = APIRouter(tags=["auth"])
@@ -23,11 +23,6 @@ logger = logging.getLogger(__name__)
 
 SESSION_COOKIE_NAME = "gao_session"
 OAUTH_STATE_COOKIE_NAME = "gao_oauth_state"
-
-
-@lru_cache(maxsize=1)
-def get_settings() -> Settings:
-    return Settings()
 
 
 def _oauth_authorization_url(settings: Settings, state: str) -> str:
@@ -54,12 +49,9 @@ def _github_app_install_url(settings: Settings) -> str:
         return f"https://github.com/apps/{slug}/installations/new"
 
     logger.warning(
-        "GitHub App install URL not configured: set GITHUB_APP_INSTALL_URL or GITHUB_APP_SLUG"
+        "GitHub App install URL not configured; falling back to GitHub installations settings page"
     )
-    raise HTTPException(
-        status_code=503,
-        detail="GitHub App install URL is not configured (set GITHUB_APP_INSTALL_URL or GITHUB_APP_SLUG)",
-    )
+    return "https://github.com/settings/installations"
 
 
 async def _exchange_oauth_code_for_token(settings: Settings, code: str) -> str:
