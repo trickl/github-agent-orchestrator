@@ -6,7 +6,7 @@ import logging
 import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 
 import httpx
 import jwt
@@ -45,13 +45,43 @@ def _github_app_install_url(settings: Settings) -> str:
 
     slug = settings.github_app_slug.strip()
     if slug:
-        logger.info("Using GitHub App slug to construct install URL (slug=%s)", slug)
-        return f"https://github.com/apps/{slug}/installations/new"
+        normalized_slug = _normalize_github_app_slug(slug)
+        if normalized_slug:
+            logger.info(
+                "Using GitHub App slug to construct install URL (raw=%s normalized=%s)",
+                slug,
+                normalized_slug,
+            )
+            return f"https://github.com/apps/{normalized_slug}/installations/new"
 
     logger.warning(
         "GitHub App install URL not configured; falling back to GitHub installations settings page"
     )
     return "https://github.com/settings/installations"
+
+
+def _normalize_github_app_slug(raw_value: str) -> str:
+    value = raw_value.strip()
+    if not value:
+        return ""
+
+    # Accept full URLs like https://github.com/apps/<slug>[/installations/new]
+    parsed = urlparse(value)
+    if parsed.scheme and parsed.netloc:
+        path = parsed.path
+    elif value.startswith("github.com/"):
+        path = "/" + value[len("github.com/") :]
+    else:
+        path = value
+
+    normalized_path = path.strip().strip("/")
+    if normalized_path.startswith("apps/"):
+        suffix = normalized_path[len("apps/") :]
+        slug = suffix.split("/", 1)[0].strip()
+        return slug
+
+    # Fallback: treat as raw slug and ignore accidental extra path segments.
+    return normalized_path.split("/", 1)[0].strip()
 
 
 async def _exchange_oauth_code_for_token(settings: Settings, code: str) -> str:

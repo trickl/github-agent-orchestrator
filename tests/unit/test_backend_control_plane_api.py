@@ -535,6 +535,52 @@ def test_github_app_install_url_endpoint_falls_back_to_settings_page(monkeypatch
     assert response.json()["installUrl"] == "https://github.com/settings/installations"
 
 
+def test_github_app_install_url_endpoint_accepts_full_app_url_in_slug_env(monkeypatch) -> None:
+    monkeypatch.setenv("BACKEND_REQUIRE_AUTH", "false")
+    monkeypatch.setenv("GITHUB_APP_ID", "123456")
+    monkeypatch.setenv(
+        "GITHUB_APP_PRIVATE_KEY",
+        "-----BEGIN PRIVATE KEY-----\\nTESTKEY\\n-----END PRIVATE KEY-----",
+    )
+    monkeypatch.setenv("GITHUB_APP_SLUG", "https://github.com/apps/github-agent-orchestrator")
+
+    import backend.app.routes.auth as auth_routes
+
+    auth_routes.get_settings.cache_clear()
+
+    client = TestClient(app)
+    response = client.get("/auth/github-app/install-url")
+
+    assert response.status_code == 200
+    assert (
+        response.json()["installUrl"]
+        == "https://github.com/apps/github-agent-orchestrator/installations/new"
+    )
+
+
+def test_github_app_install_url_endpoint_accepts_apps_path_in_slug_env(monkeypatch) -> None:
+    monkeypatch.setenv("BACKEND_REQUIRE_AUTH", "false")
+    monkeypatch.setenv("GITHUB_APP_ID", "123456")
+    monkeypatch.setenv(
+        "GITHUB_APP_PRIVATE_KEY",
+        "-----BEGIN PRIVATE KEY-----\\nTESTKEY\\n-----END PRIVATE KEY-----",
+    )
+    monkeypatch.setenv("GITHUB_APP_SLUG", "github.com/apps/github-agent-orchestrator/installations/new")
+
+    import backend.app.routes.auth as auth_routes
+
+    auth_routes.get_settings.cache_clear()
+
+    client = TestClient(app)
+    response = client.get("/auth/github-app/install-url")
+
+    assert response.status_code == 200
+    assert (
+        response.json()["installUrl"]
+        == "https://github.com/apps/github-agent-orchestrator/installations/new"
+    )
+
+
 def test_repos_endpoint_requires_auth_when_enabled(monkeypatch) -> None:
     monkeypatch.setenv("BACKEND_REQUIRE_AUTH", "true")
     monkeypatch.setenv("GITHUB_APP_ID", "123456")
