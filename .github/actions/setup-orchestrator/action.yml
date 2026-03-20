@@ -1,0 +1,41 @@
+name: Setup GitHub Agent Orchestrator
+description: Install and verify a fresh orchestrator runtime version for workflow jobs.
+
+inputs:
+  version:
+    description: "Orchestrator version to install (use 'latest' or a pinned semver like 0.1.13)."
+    required: false
+    default: "latest"
+
+outputs:
+  installed-version:
+    description: "Resolved installed github-agent-orchestrator version."
+    value: ${{ steps.verify.outputs.installed_version }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install orchestrator runtime
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [[ "${{ inputs.version }}" == "latest" ]]; then
+          python -m pip install --upgrade --no-cache-dir github-agent-orchestrator
+        else
+          python -m pip install --upgrade --no-cache-dir "github-agent-orchestrator==${{ inputs.version }}"
+        fi
+
+    - name: Verify orchestrator runtime version
+      id: verify
+      shell: bash
+      run: |
+        set -euo pipefail
+        installed_version="$(python -c 'import github_agent_orchestrator as g; print(g.__version__)')"
+        echo "installed_version=${installed_version}" >> "$GITHUB_OUTPUT"
+
+        if [[ "${{ inputs.version }}" != "latest" && "${installed_version}" != "${{ inputs.version }}" ]]; then
+          echo "Expected github-agent-orchestrator==${{ inputs.version }}, got ${installed_version}" >&2
+          exit 1
+        fi
+
+        echo "GitHub Agent Orchestrator version: ${installed_version}"

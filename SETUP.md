@@ -199,6 +199,17 @@ If state is not persisting:
 
 ## Next Steps
 
+### Keep workflow runtime up to date
+
+If your target repository runs orchestration via GitHub Actions, install orchestrator runtime in each
+workflow run to prevent stale environments:
+
+- Add `actions/setup-python` in the workflow job.
+- Add `trickl/github-agent-orchestrator/.github/actions/setup-orchestrator@main`.
+- Set `with: version: latest` for auto-updates, or pin a specific version for reproducibility.
+
+This ensures the job refreshes runtime dependencies every run, including on self-hosted runners.
+
 1. Read the [Architecture Documentation](docs/architecture.rst)
 2. Explore the [Usage Guide](docs/usage.rst)
 3. Check out [Examples](examples/)

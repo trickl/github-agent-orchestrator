@@ -13,6 +13,7 @@ from backend.app.services.orchestrator_version import (
     is_update_available,
     update_orchestrator_version,
 )
+from github_agent_orchestrator import __version__
 
 
 class FakeVersionGitHubClient:
@@ -65,6 +66,10 @@ def test_extract_orchestrator_version() -> None:
     assert extract_orchestrator_version("pip install github-agent-orchestrator") is None
 
 
+def test_latest_orchestrator_version_tracks_package_version() -> None:
+    assert LATEST_ORCHESTRATOR_VERSION == __version__
+
+
 def test_is_update_available() -> None:
     assert is_update_available(None, "0.3.1") is True
     assert is_update_available("0.2.9", "0.3.1") is True
@@ -75,14 +80,14 @@ def test_is_update_available() -> None:
 @pytest.mark.asyncio
 async def test_update_orchestrator_version_creates_pr_for_outdated_pin() -> None:
     client = FakeVersionGitHubClient(
-        workflow_text="run: pip install github-agent-orchestrator==0.2.0\n",
+        workflow_text="run: pip install github-agent-orchestrator==0.0.1\n",
         branch_exists=False,
     )
 
     result = await update_orchestrator_version(client, "acme", "widgets")
 
     assert result["updated"] is True
-    assert result["current"] == "0.2.0"
+    assert result["current"] == "0.0.1"
     assert result["latest"] == LATEST_ORCHESTRATOR_VERSION
     assert result["pullRequest"]["number"] == 77
 

@@ -7,8 +7,9 @@ import re
 from typing import Any
 
 from backend.app.github.client import GitHubClient
+from github_agent_orchestrator import __version__
 
-LATEST_ORCHESTRATOR_VERSION = "0.3.1"
+LATEST_ORCHESTRATOR_VERSION = __version__
 WORKFLOW_PATH = ".github/workflows/orchestrator.yml"
 UPDATE_BRANCH = "gao/update-orchestrator-version"
 VERSION_REGEX = re.compile(r"github-agent-orchestrator==([0-9]+\.[0-9]+\.[0-9]+)")

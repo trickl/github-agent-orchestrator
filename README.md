@@ -329,6 +329,28 @@ MVP endpoints:
 `POST /repos/{owner}/{repo}/run` dispatches the configured workflow (`orchestrator.yml` by default)
 using `workflow_dispatch` for the selected repository.
 
+### Keeping orchestrator runtime fresh in workflow runs
+
+To prevent stale runtime installs in target repositories, ensure each orchestrator workflow installs
+the package at runtime. A reusable action is available in this repository:
+
+`trickl/github-agent-orchestrator/.github/actions/setup-orchestrator@main`
+
+Recommended usage in target repository workflows:
+
+- Use `with: version: latest` to always install the newest published package each run.
+- Use `with: version: <x.y.z>` to pin deterministically.
+- The action verifies installed version and exposes `installed-version` output.
+
+Example step sequence in a workflow job:
+
+1. `actions/setup-python`
+2. `trickl/github-agent-orchestrator/.github/actions/setup-orchestrator@main`
+3. `gao run --repo <owner/repo>` (or `python -m github_agent_orchestrator.cli run --repo <owner/repo>`)
+
+The backend `/repos/{owner}/{repo}/update-orchestrator` endpoint also compares workflow pins against
+the backend package version and can open a PR to bump stale workflow pins.
+
 This control-plane requires GitHub App installation for repository access and does
 **not** require local repository cloning.
 
