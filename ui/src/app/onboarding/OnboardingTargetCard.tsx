@@ -37,7 +37,7 @@ export function OnboardingTargetCard({
   onSaveForLater,
 }: Props): React.JSX.Element {
   return (
-    <Stack spacing={2.5}>
+    <Stack spacing={2.5} sx={{ height: '100%', minHeight: 0 }}>
       <Typography variant="h4">What do you want to build?</Typography>
       <Typography color="text.secondary">
         Describe the desired end state. The agent will work toward this goal iteratively.
@@ -46,10 +46,23 @@ export function OnboardingTargetCard({
       <TextField
         multiline
         minRows={8}
+        maxRows={14}
         value={targetStateText}
         onChange={(event) => onTargetStateChange(event.target.value)}
         placeholder="Implement a REST API for user authentication with login, registration, and tests."
         fullWidth
+        sx={{
+          flex: 1,
+          minHeight: 0,
+          '& .MuiInputBase-root': {
+            minHeight: 220,
+            maxHeight: '100%',
+            alignItems: 'stretch',
+          },
+          '& .MuiInputBase-inputMultiline': {
+            overflowY: 'auto !important',
+          },
+        }}
       />
 
       <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
@@ -93,7 +106,7 @@ export function OnboardingTargetCard({
         More specific goals produce better results.
       </Typography>
 
-      <Stack direction="row" spacing={2}>
+      <Stack direction="row" spacing={2} sx={{ mt: 'auto' }}>
         <Button variant="contained" size="large" disabled={isStartingFirstIteration} onClick={onStartFirstIteration}>
           Start first iteration
         </Button>

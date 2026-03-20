@@ -2,7 +2,7 @@ import React from 'react';
 import { apiFetch } from '../lib/apiClient';
 import { endpoints } from '../lib/endpoints';
 import { DASHBOARD_TOUR_DISABLED_KEY, ONBOARDING_COMPLETE_KEY, REPO_STORAGE_KEY } from './types';
-import type { AuthStartResponse, DevelopmentPullRequest, RepoRunResponse } from './types';
+import type { AuthStartResponse, DevelopmentPullRequest, RepoInitializeResponse, RepoRunResponse } from './types';
 import type { AppDataResult } from './useAppData';
 
 function isRepoRunResponse(value: unknown): value is RepoRunResponse {
@@ -150,12 +150,27 @@ export function useAppActions(data: AppDataResult) {
 
   const runInitializationStep = React.useCallback(async () => {
     if (!selectedRepoParts) return;
+    const content = targetStateText.trim();
+    if (!content) {
+      setError('Please describe the system you want to build before starting.');
+      return;
+    }
+
     setScene('initializing');
     setIsStartingFirstIteration(true);
     setInitProgress({ repositoryPrepared: false, initialAnalysisComplete: false, planGenerated: false });
     const wait = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
     try {
-      await handleTargetStateSubmit();
+      const { owner, repo } = selectedRepoParts;
+      await apiFetch<RepoInitializeResponse>(String(endpoints.repoInitialize(owner, repo)), {
+        method: 'POST',
+        body: JSON.stringify({
+          target_state: content,
+          orchestrator_config: 'mode: semi\n',
+          open_pr: false,
+          apply_directly: true,
+        }),
+      });
       setInitProgress((prev) => ({ ...prev, repositoryPrepared: true }));
       await wait(700);
       setInitProgress((prev) => ({ ...prev, initialAnalysisComplete: true }));
@@ -173,13 +188,13 @@ export function useAppActions(data: AppDataResult) {
     }
   }, [
     handleRun,
-    handleTargetStateSubmit,
     markOnboardingCompleted,
     selectedRepoParts,
     setError,
     setInitProgress,
     setIsStartingFirstIteration,
     setScene,
+    targetStateText,
   ]);
 
   const handleSaveForLater = React.useCallback(async () => {

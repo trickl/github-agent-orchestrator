@@ -18,6 +18,8 @@ export const endpoints = {
   repos: (): string => `/repos`,
   repoStatus: (owner: string, repo: string): string =>
     `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/status`,
+  repoInitialize: (owner: string, repo: string): string =>
+    `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/initialize`,
   repoTargetState: (owner: string, repo: string): string =>
     `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/target-state`,
   repoRun: (owner: string, repo: string): string =>

@@ -18,6 +18,16 @@ export type RepoRunResponse = {
   ref: string;
 };
 
+export type RepoInitializeResponse = {
+  owner: string;
+  repo: string;
+  base_branch: string;
+  branch: string;
+  opened_pull_request: boolean;
+  applied_directly: boolean;
+  initialized_files: Record<string, 'created' | 'updated' | 'unchanged'>;
+};
+
 export type AuthMeResponse = {
   authenticated: boolean;
   login: string;

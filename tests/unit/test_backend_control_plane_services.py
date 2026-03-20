@@ -13,6 +13,7 @@ from backend.app.services.run_state import set_repo_run_state
 from backend.app.services.status import get_status, list_development_pull_requests
 from backend.app.services.webhooks import handle_webhook_event
 from backend.app.services.workflows import cancel_latest_run, dispatch_workflow
+from backend.app.templates.workflows import render_orchestrator_workflow
 
 
 class FakeGitHubClient:
@@ -35,6 +36,12 @@ class FakeGitHubClient:
                 "sha": "target-sha",
                 "content": base64.b64encode(b"# Target State\nBuild system\n").decode("utf-8"),
             }
+
+        if method == "GET" and path_or_url == "/repos/acme/widgets/contents/.orchestrator.yml":
+            return {"message": "Not Found"}
+
+        if method == "GET" and path_or_url == "/repos/acme/widgets/contents/.github/workflows/orchestrator.yml":
+            return {"message": "Not Found"}
 
         if method == "GET" and path_or_url == "/repos/acme/widgets/contents/.agent-orchestrator/state/targetstate.md":
             return {"message": "Not Found"}
@@ -120,6 +127,138 @@ async def test_initialize_repo_creates_branch_files_and_pr() -> None:
     assert result["base_branch"] == "main"
     assert result["opened_pull_request"] is True
     assert result["pull_request"]["number"] == 17
+    assert result["initialized_files"][".agent-orchestrator/state/target_state.md"] in {
+        "updated",
+        "unchanged",
+    }
+    assert result["initialized_files"][".orchestrator.yml"] == "created"
+    assert result["initialized_files"][".github/workflows/orchestrator.yml"] == "created"
+
+    put_paths = [
+        call["path"]
+        for call in client.calls
+        if call["method"] == "PUT" and call["path"].startswith("/repos/acme/widgets/contents/")
+    ]
+    assert "/repos/acme/widgets/contents/.github/workflows/orchestrator.yml" in put_paths
+
+
+class FakeInitializeIdempotentClient:
+    """Client stub where initialized files already match desired content."""
+
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    async def request(self, method: str, path_or_url: str, **kwargs: Any) -> Any:
+        self.calls.append({"method": method, "path": path_or_url, "kwargs": kwargs})
+
+        if method == "GET" and path_or_url == "/repos/acme/widgets":
+            return {"default_branch": "main"}
+
+        if method == "GET" and path_or_url == "/repos/acme/widgets/git/ref/heads/main":
+            return {"object": {"sha": "base-sha"}}
+
+        if method == "POST" and path_or_url == "/repos/acme/widgets/git/refs":
+            return {"ref": "refs/heads/gao/init-branch"}
+
+        if method == "GET" and path_or_url == "/repos/acme/widgets/contents/.agent-orchestrator/state/target_state.md":
+            return {
+                "sha": "target-sha",
+                "content": base64.b64encode("# Target\n".encode("utf-8")).decode("utf-8"),
+            }
+
+        if method == "GET" and path_or_url == "/repos/acme/widgets/contents/.orchestrator.yml":
+            return {
+                "sha": "config-sha",
+                "content": base64.b64encode("mode: semi\n".encode("utf-8")).decode("utf-8"),
+            }
+
+        if method == "GET" and path_or_url == "/repos/acme/widgets/contents/.github/workflows/orchestrator.yml":
+            return {
+                "sha": "workflow-sha",
+                "content": base64.b64encode(render_orchestrator_workflow().encode("utf-8")).decode("utf-8"),
+            }
+
+        if method == "POST" and path_or_url == "/repos/acme/widgets/pulls":
+            return {"number": 18, "html_url": "https://example/pr/18", "state": "open"}
+
+        raise AssertionError(f"Unexpected request: {method} {path_or_url}")
+
+
+@pytest.mark.asyncio
+async def test_initialize_repo_is_idempotent_when_initialized_files_match() -> None:
+    client = FakeInitializeIdempotentClient()
+
+    result = await initialize_repo(
+        client,
+        "acme",
+        "widgets",
+        target_state="# Target\n",
+        orchestrator_config="mode: semi\n",
+        branch_name="gao/init-branch",
+        open_pr=True,
+    )
+
+    assert result["initialized_files"][".agent-orchestrator/state/target_state.md"] == "unchanged"
+    assert result["initialized_files"][".orchestrator.yml"] == "unchanged"
+    assert result["initialized_files"][".github/workflows/orchestrator.yml"] == "unchanged"
+
+    content_put_calls = [
+        call
+        for call in client.calls
+        if call["method"] == "PUT" and call["path"].startswith("/repos/acme/widgets/contents/")
+    ]
+    assert content_put_calls == []
+
+
+class FakeInitializeDirectClient:
+    """Client stub for apply_directly initialization mode."""
+
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    async def request(self, method: str, path_or_url: str, **kwargs: Any) -> Any:
+        self.calls.append({"method": method, "path": path_or_url, "kwargs": kwargs})
+
+        if method == "GET" and path_or_url == "/repos/acme/widgets":
+            return {"default_branch": "main"}
+
+        if method == "GET" and path_or_url == "/repos/acme/widgets/git/ref/heads/main":
+            return {"object": {"sha": "base-sha"}}
+
+        if method == "GET" and path_or_url.startswith("/repos/acme/widgets/contents/"):
+            return {"message": "Not Found"}
+
+        if method == "PUT" and path_or_url.startswith("/repos/acme/widgets/contents/"):
+            return {"content": {"path": path_or_url.split("/contents/")[1]}}
+
+        raise AssertionError(f"Unexpected request: {method} {path_or_url}")
+
+
+@pytest.mark.asyncio
+async def test_initialize_repo_apply_directly_writes_to_default_branch_without_pr() -> None:
+    client = FakeInitializeDirectClient()
+
+    result = await initialize_repo(
+        client,
+        "acme",
+        "widgets",
+        target_state="# Target\n",
+        orchestrator_config="mode: semi\n",
+        apply_directly=True,
+        open_pr=True,
+    )
+
+    assert result["applied_directly"] is True
+    assert result["branch"] == "main"
+    assert result["opened_pull_request"] is False
+    assert "pull_request" not in result
+
+    git_ref_create_calls = [
+        call
+        for call in client.calls
+        if call["method"] == "POST" and call["path"] == "/repos/acme/widgets/git/refs"
+    ]
+    assert git_ref_create_calls == []
 
 
 @pytest.mark.asyncio

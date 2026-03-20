@@ -31,6 +31,7 @@ class InitializeRepoRequest(BaseModel):
     orchestrator_config: str = Field(default="mode: semi\n")
     branch_name: str | None = Field(default=None)
     open_pr: bool = Field(default=True)
+    apply_directly: bool = Field(default=False)
 
 
 class UpsertTargetStateRequest(BaseModel):
@@ -120,6 +121,7 @@ async def initialize_repository(
             orchestrator_config=payload.orchestrator_config,
             branch_name=payload.branch_name,
             open_pr=payload.open_pr,
+            apply_directly=payload.apply_directly,
         )
     except Exception as exc:
         diagnosed = _diagnose_github_app_failure(exc)

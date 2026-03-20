@@ -39,7 +39,17 @@ def test_initialize_endpoint(monkeypatch) -> None:
         return object()
 
     async def fake_initialize(*_args, **_kwargs):
-        return {"owner": "acme", "repo": "widgets", "branch": "gao/init-1", "opened_pull_request": True}
+        return {
+            "owner": "acme",
+            "repo": "widgets",
+            "branch": "gao/init-1",
+            "opened_pull_request": True,
+            "initialized_files": {
+                ".agent-orchestrator/state/target_state.md": "created",
+                ".orchestrator.yml": "created",
+                ".github/workflows/orchestrator.yml": "created",
+            },
+        }
 
     monkeypatch.setattr(repos_routes, "create_github_client", fake_create_client)
     monkeypatch.setattr(repos_routes, "initialize_repo", fake_initialize)
@@ -53,6 +63,54 @@ def test_initialize_endpoint(monkeypatch) -> None:
     data = response.json()
     assert data["owner"] == "acme"
     assert data["repo"] == "widgets"
+    assert data["initialized_files"][".github/workflows/orchestrator.yml"] == "created"
+
+
+def test_initialize_endpoint_forwards_apply_directly(monkeypatch) -> None:
+    _set_required_backend_env(monkeypatch)
+
+    import backend.app.routes.repos as repos_routes
+
+    repos_routes.get_settings.cache_clear()
+
+    captured: dict[str, object] = {}
+
+    async def fake_create_client(*_args, **_kwargs):
+        return object()
+
+    async def fake_initialize(*_args, **kwargs):
+        captured.update(kwargs)
+        return {
+            "owner": "acme",
+            "repo": "widgets",
+            "branch": "main",
+            "base_branch": "main",
+            "opened_pull_request": False,
+            "applied_directly": True,
+            "initialized_files": {
+                ".agent-orchestrator/state/target_state.md": "created",
+                ".orchestrator.yml": "created",
+                ".github/workflows/orchestrator.yml": "created",
+            },
+        }
+
+    monkeypatch.setattr(repos_routes, "create_github_client", fake_create_client)
+    monkeypatch.setattr(repos_routes, "initialize_repo", fake_initialize)
+
+    client = TestClient(app)
+    response = client.post(
+        "/repos/acme/widgets/initialize",
+        json={
+            "target_state": "# Target\n",
+            "orchestrator_config": "mode: semi\n",
+            "open_pr": False,
+            "apply_directly": True,
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured["open_pr"] is False
+    assert captured["apply_directly"] is True
 
 
 def test_upsert_target_state_endpoint(monkeypatch) -> None:

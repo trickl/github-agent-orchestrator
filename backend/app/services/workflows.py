@@ -114,8 +114,10 @@ async def dispatch_workflow(
     available_paths = await _list_repo_workflow_paths(client, owner, repo)
     if not available_paths:
         raise ValueError(
-            "No GitHub Actions workflows found in repository. "
-            "Add a workflow file under .github/workflows and enable workflow_dispatch."
+            f"No GitHub Actions workflows found in target repository '{owner}/{repo}'. "
+            "The control plane dispatches workflows from the selected target repository (not the "
+            "github-agent-orchestrator control-plane repository). Add a workflow file under "
+            "'.github/workflows' in the target repository and enable workflow_dispatch."
         )
 
     basename_to_path = {PurePosixPath(path).name: path for path in available_paths}
@@ -137,7 +139,8 @@ async def dispatch_workflow(
         preview = ", ".join(available_paths[:5])
         suffix = "" if len(available_paths) <= 5 else ", ..."
         raise ValueError(
-            f"Workflow '{requested}' was not found. Available workflows: {preview}{suffix}. "
+            f"Workflow '{requested}' was not found in target repository '{owner}/{repo}'. "
+            f"Available target-repo workflows: {preview}{suffix}. "
             "Set GITHUB_ORCHESTRATOR_WORKFLOW_FILE to one of these paths."
         )
 

@@ -34,11 +34,21 @@ export function OnboardingFlow({
   onStartFirstIteration,
   onSaveForLater,
 }: OnboardingFlowProps): React.JSX.Element {
+  const isTargetScene = scene === 'target';
+
   const commonShell = (content: React.ReactNode): React.JSX.Element => (
-    <Container maxWidth="md" sx={{ minHeight: '100vh', display: 'grid', placeItems: 'center', py: 4 }}>
-      <Card sx={{ width: '100%', maxWidth: 920 }}>
-        <CardContent sx={{ p: { xs: 3, md: 4 } }}>
-          <Stack spacing={3}>
+    <Container maxWidth="md" sx={{ minHeight: '100dvh', display: 'grid', placeItems: 'center', py: 2 }}>
+      <Card
+        sx={{
+          width: '100%',
+          maxWidth: 920,
+          maxHeight: 'calc(100dvh - 32px)',
+          display: 'flex',
+          flexDirection: 'column',
+        }}
+      >
+        <CardContent sx={{ p: { xs: 3, md: 4 }, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+          <Stack spacing={3} sx={{ flex: 1, minHeight: 0 }}>
             <Stack direction="row" justifyContent="space-between" alignItems="center">
               <Typography variant="h5">GitHub Agent Orchestrator</Typography>
               <IconButton aria-label="Toggle color mode" onClick={colorMode?.toggle}>
@@ -46,7 +56,7 @@ export function OnboardingFlow({
               </IconButton>
             </Stack>
             {error ? <Alert severity="error">{error}</Alert> : null}
-            {content}
+            <Stack sx={{ minHeight: 0, flex: isTargetScene ? 1 : undefined }}>{content}</Stack>
           </Stack>
         </CardContent>
       </Card>
