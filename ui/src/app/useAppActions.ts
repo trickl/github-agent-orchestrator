@@ -1,0 +1,190 @@
+import React from 'react';
+import { apiFetch } from '../lib/apiClient';
+import { endpoints } from '../lib/endpoints';
+import { DASHBOARD_TOUR_DISABLED_KEY, ONBOARDING_COMPLETE_KEY, REPO_STORAGE_KEY } from './types';
+import type { AuthStartResponse, DevelopmentPullRequest, RunResponse } from './types';
+import type { AppDataResult } from './useAppData';
+
+export function useAppActions(data: AppDataResult) {
+  const {
+    selectedRepoParts,
+    targetStateText,
+    running,
+    loadRepoData,
+    markOnboardingCompleted,
+    setError,
+    setRunToast,
+    setRunning,
+    setDevelopmentPrs,
+    setIsConnecting,
+    setAuthLogin,
+    setRepos,
+    setSelectedRepo,
+    setStatus,
+    setScene,
+    setIsStartingFirstIteration,
+    setInitProgress,
+    setShowTour,
+  } = data;
+
+  const handleTargetStateSubmit = React.useCallback(async () => {
+    if (!selectedRepoParts) return;
+    const content = targetStateText.trim();
+    if (!content) {
+      setError('Please describe the system you want to build before starting.');
+      return;
+    }
+    setError(null);
+    setRunToast(null);
+    const { owner, repo } = selectedRepoParts;
+    await apiFetch(String(endpoints.repoTargetState(owner, repo)), {
+      method: 'POST',
+      body: JSON.stringify({ content }),
+    });
+    setRunToast({ severity: 'success', message: '✅ Target state saved. You can now start building.' });
+    await loadRepoData();
+  }, [loadRepoData, selectedRepoParts, setError, setRunToast, targetStateText]);
+
+  const handleRun = React.useCallback(async () => {
+    if (!selectedRepoParts || running) return;
+    setRunning(true);
+    setError(null);
+    setRunToast(null);
+    const { owner, repo } = selectedRepoParts;
+    try {
+      const runResult = await apiFetch<RunResponse>(String(endpoints.repoRun(owner, repo)), {
+        method: 'POST',
+        body: JSON.stringify({}),
+      });
+      const prs = await apiFetch<DevelopmentPullRequest[]>(String(endpoints.developmentPrs(owner, repo)));
+      const latestPrTitle = prs[0]?.title;
+      setDevelopmentPrs(prs);
+      if (runResult.exit_code === 0) {
+        setRunToast({
+          severity: 'success',
+          message: latestPrTitle ? `✅ Run completed. Created PR: ${latestPrTitle}` : '✅ Run completed.',
+        });
+      } else {
+        setRunToast({ severity: 'error', message: 'Run finished with errors. Check repository activity for details.' });
+      }
+      await loadRepoData();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err));
+      setRunToast({ severity: 'error', message: 'Run failed to start from control plane.' });
+      await loadRepoData();
+    } finally {
+      setRunning(false);
+    }
+  }, [loadRepoData, running, selectedRepoParts, setDevelopmentPrs, setError, setRunToast, setRunning]);
+
+  const handleConnectGithub = React.useCallback(async () => {
+    setIsConnecting(true);
+    setError(null);
+    try {
+      const payload = await apiFetch<AuthStartResponse>('/auth/github/start', {
+        method: 'POST',
+        body: JSON.stringify({}),
+      });
+      window.location.assign(payload.authorizationUrl);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIsConnecting(false);
+    }
+  }, [setError, setIsConnecting]);
+
+  const handleLogout = React.useCallback(async () => {
+    try {
+      await apiFetch('/auth/logout', { method: 'POST', body: JSON.stringify({}) });
+    } finally {
+      window.localStorage.removeItem(REPO_STORAGE_KEY);
+      window.localStorage.removeItem(ONBOARDING_COMPLETE_KEY);
+      setAuthLogin(null);
+      setRepos([]);
+      setSelectedRepo('');
+      setStatus(null);
+      setDevelopmentPrs([]);
+      setScene('connect');
+    }
+  }, [setAuthLogin, setDevelopmentPrs, setRepos, setScene, setSelectedRepo, setStatus]);
+
+  const handleContinueFromRepoSelection = React.useCallback(async () => {
+    if (!selectedRepoParts) {
+      setError('Please select a repository to continue.');
+      return;
+    }
+    setError(null);
+    try {
+      const latestStatus = await loadRepoData();
+      if (latestStatus?.hasTargetState) {
+        markOnboardingCompleted();
+        setScene('dashboard');
+        return;
+      }
+      setScene('target');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }, [loadRepoData, markOnboardingCompleted, selectedRepoParts, setError, setScene]);
+
+  const runInitializationStep = React.useCallback(async () => {
+    if (!selectedRepoParts) return;
+    setScene('initializing');
+    setIsStartingFirstIteration(true);
+    setInitProgress({ repositoryPrepared: false, initialAnalysisComplete: false, planGenerated: false });
+    const wait = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
+    try {
+      await handleTargetStateSubmit();
+      setInitProgress((prev) => ({ ...prev, repositoryPrepared: true }));
+      await wait(700);
+      setInitProgress((prev) => ({ ...prev, initialAnalysisComplete: true }));
+      await wait(700);
+      setInitProgress((prev) => ({ ...prev, planGenerated: true }));
+      await wait(500);
+      await handleRun();
+      markOnboardingCompleted();
+      setScene('dashboard');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err));
+      setScene('target');
+    } finally {
+      setIsStartingFirstIteration(false);
+    }
+  }, [
+    handleRun,
+    handleTargetStateSubmit,
+    markOnboardingCompleted,
+    selectedRepoParts,
+    setError,
+    setInitProgress,
+    setIsStartingFirstIteration,
+    setScene,
+  ]);
+
+  const handleSaveForLater = React.useCallback(async () => {
+    try {
+      await handleTargetStateSubmit();
+      markOnboardingCompleted();
+      setRunToast({ severity: 'success', message: 'Target state saved. Continue whenever you are ready.' });
+      setScene('dashboard');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }, [handleTargetStateSubmit, markOnboardingCompleted, setError, setRunToast, setScene]);
+
+  const handleDisableTour = React.useCallback(() => {
+    window.localStorage.setItem(DASHBOARD_TOUR_DISABLED_KEY, 'true');
+    setShowTour(false);
+  }, [setShowTour]);
+
+  return {
+    handleTargetStateSubmit,
+    handleRun,
+    handleConnectGithub,
+    handleLogout,
+    handleContinueFromRepoSelection,
+    runInitializationStep,
+    handleSaveForLater,
+    handleDisableTour,
+  };
+}

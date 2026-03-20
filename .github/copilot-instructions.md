@@ -170,3 +170,30 @@ Assume linting tools run (black, ruff, isort, mypy or equivalent).
 - Never hard-code secrets.
 - Use environment variables or secure configuration management for sensitive data.
 - Validate and sanitize all external inputs.
+
+## Frontend (React + TypeScript) best practices
+
+- Use function components with hooks and strict TypeScript types.
+- Keep UI state transitions explicit; avoid hidden side-effects.
+- Prefer small, composable components and hooks over monolithic files.
+- Keep API/network concerns in dedicated helpers/hooks (do not inline fetch logic across many components).
+- Ensure accessibility basics (labels, button semantics, keyboard flows) for interactive controls.
+
+### UI file-structure rule
+
+- Every **exported React component** must live in its **own file** (one exported component per file).
+- Shared types/constants/helpers should live in separate non-component files.
+
+### UI linting/formatting enforcement
+
+- UI code must pass **ESLint** and **Prettier**.
+- Keep every TypeScript/TSX UI file to **≤ 300 lines**.
+- If a file approaches this limit, refactor into focused components/hooks/modules before adding more logic.
+
+## Backend (Python) best practices
+
+- Use explicit typing for public function signatures and return values.
+- Keep route handlers thin; push logic into services/helpers.
+- Prefer clear error handling with actionable messages over broad opaque exceptions.
+- Keep module boundaries clear (routes, services, models, config, clients).
+- Add/update tests whenever behavior changes; preserve deterministic test behavior.

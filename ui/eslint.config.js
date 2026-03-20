@@ -3,6 +3,7 @@ import globals from 'globals';
 import tseslint from 'typescript-eslint';
 import reactHooks from 'eslint-plugin-react-hooks';
 import reactRefresh from 'eslint-plugin-react-refresh';
+import eslintConfigPrettier from 'eslint-config-prettier';
 
 export default tseslint.config(
   {
@@ -43,9 +44,16 @@ export default tseslint.config(
     },
   },
   {
+    files: ['src/app/**/*.{ts,tsx}'],
+    rules: {
+      'max-lines': ['error', { max: 300, skipBlankLines: true, skipComments: true }],
+    },
+  },
+  {
     files: ['**/*.test.ts', '**/*.test.tsx', 'playwright/**'],
     rules: {
       '@typescript-eslint/no-explicit-any': 'off',
     },
-  }
+  },
+  eslintConfigPrettier
 );
