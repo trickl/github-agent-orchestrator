@@ -13,7 +13,12 @@ from github_agent_orchestrator import __version__
 
 
 def _set_required_backend_env(monkeypatch) -> None:
-    monkeypatch.setenv("GITHUB_TOKEN", "ghp_test_token")
+    monkeypatch.setenv("BACKEND_REQUIRE_AUTH", "false")
+    monkeypatch.setenv("GITHUB_APP_ID", "123456")
+    monkeypatch.setenv(
+        "GITHUB_APP_PRIVATE_KEY",
+        "-----BEGIN PRIVATE KEY-----\\nTESTKEY\\n-----END PRIVATE KEY-----",
+    )
     monkeypatch.setenv("GITHUB_WEBHOOK_SECRET", "test-webhook-secret")
 
 
@@ -482,3 +487,54 @@ def test_recent_webhook_events_endpoint_returns_latest_entries(monkeypatch) -> N
     payload = recent.json()
     assert payload["count"] == 1
     assert payload["events"][0]["delivery_id"] == "delivery-2"
+
+
+def test_github_app_install_url_endpoint_uses_slug(monkeypatch) -> None:
+    monkeypatch.setenv("BACKEND_REQUIRE_AUTH", "false")
+    monkeypatch.setenv("GITHUB_APP_ID", "123456")
+    monkeypatch.setenv(
+        "GITHUB_APP_PRIVATE_KEY",
+        "-----BEGIN PRIVATE KEY-----\\nTESTKEY\\n-----END PRIVATE KEY-----",
+    )
+    monkeypatch.setenv("GITHUB_APP_SLUG", "github-agent-orchestrator")
+
+    import backend.app.routes.auth as auth_routes
+
+    auth_routes.get_settings.cache_clear()
+
+    client = TestClient(app)
+    response = client.get("/auth/github-app/install-url")
+
+    assert response.status_code == 200
+    assert (
+        response.json()["installUrl"]
+        == "https://github.com/apps/github-agent-orchestrator/installations/new"
+    )
+
+
+def test_repos_endpoint_requires_auth_when_enabled(monkeypatch) -> None:
+    monkeypatch.setenv("BACKEND_REQUIRE_AUTH", "true")
+    monkeypatch.setenv("GITHUB_APP_ID", "123456")
+    monkeypatch.setenv(
+        "GITHUB_APP_PRIVATE_KEY",
+        "-----BEGIN PRIVATE KEY-----\\nTESTKEY\\n-----END PRIVATE KEY-----",
+    )
+    monkeypatch.setenv("GITHUB_OAUTH_CLIENT_ID", "oauth-client-id")
+    monkeypatch.setenv("GITHUB_OAUTH_CLIENT_SECRET", "oauth-client-secret")
+    monkeypatch.setenv(
+        "GITHUB_OAUTH_REDIRECT_URI",
+        "https://github-agent-orchestrator.onrender.com/auth/github/callback",
+    )
+    monkeypatch.setenv("AUTH_SESSION_SECRET", "test-session-secret")
+
+    import backend.app.routes.auth as auth_routes
+    import backend.app.routes.repos as repos_routes
+
+    auth_routes.get_settings.cache_clear()
+    repos_routes.get_settings.cache_clear()
+
+    client = TestClient(app)
+    response = client.get("/repos")
+
+    assert response.status_code == 401
+    assert "Authentication required" in response.json()["detail"]

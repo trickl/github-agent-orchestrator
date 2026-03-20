@@ -278,8 +278,8 @@ In review mode:
 
 ### Lightweight local control-plane backend (pre-GitHub-App phase)
 
-For pre-GitHub-App validation, this repository includes a minimal FastAPI control-plane
-under `backend/app` that talks to **real GitHub repositories** using a **PAT**, while
+For GitHub App-based operation, this repository includes a minimal FastAPI control-plane
+under `backend/app` that talks to **real GitHub repositories** using **GitHub App installation tokens**, while
 executing orchestration **locally**.
 
 Run locally:
@@ -290,15 +290,35 @@ uvicorn backend.app.main:app --reload --port 8000
 
 Required environment variables:
 
-- `GITHUB_TOKEN` (PAT used for backend GitHub API calls)
+- `GITHUB_APP_ID` (GitHub App ID)
+- `GITHUB_APP_PRIVATE_KEY` (GitHub App private key PEM; `\n` escapes supported)
+- `GITHUB_APP_INSTALLATION_ID` (optional fixed installation id; repo-scoped lookup is used when omitted)
+- `GITHUB_APP_SLUG` (optional app slug used to build install URL for onboarding)
+- `GITHUB_APP_INSTALL_URL` (optional explicit install URL override)
+- `GITHUB_OAUTH_CLIENT_ID` (OAuth app client id for UI sign-in)
+- `GITHUB_OAUTH_CLIENT_SECRET` (OAuth app client secret)
+- `GITHUB_OAUTH_REDIRECT_URI` (typically `https://<backend>/auth/github/callback`)
+- `AUTH_FRONTEND_REDIRECT_URL` (typically your GitHub Pages URL)
+- `AUTH_SESSION_SECRET` (long random secret used to sign auth session cookies)
+- `AUTH_ALLOWED_GITHUB_USERS` (optional comma-separated GitHub login allowlist)
 - `GITHUB_API_URL` (optional, defaults to `https://api.github.com`)
 - `CORS_ORIGINS` (optional, comma-separated; include your GitHub Pages URL and local dev origin)
 - `GITHUB_WEBHOOK_SECRET` (required for `POST /webhooks/github` signature verification)
 - `GAO_CLI_COMMAND` (optional, defaults to `gao`)
 - `GAO_RUN_TIMEOUT_SECONDS` (optional, defaults to `1800`)
 
+Optional auth override flags (secure defaults already applied):
+
+- `BACKEND_REQUIRE_AUTH` (optional, defaults to `true`; set `false` only for local/dev bypass)
+- `AUTH_COOKIE_SECURE` (optional, defaults to `true`; set `false` only for non-HTTPS local testing)
+
 MVP endpoints:
 
+- `POST /auth/github/start`
+- `GET /auth/github-app/install-url`
+- `GET /auth/github/callback`
+- `GET /auth/me`
+- `POST /auth/logout`
 - `GET /repos`
 - `GET /version`
 - `POST /repos/{owner}/{repo}/target-state`
@@ -339,6 +359,12 @@ webhook deliveries (most-recent-first), useful for local debugging.
 - `buildTimeUtc` (from `BUILD_TIME_UTC` when set; otherwise runtime timestamp)
 
 Use this endpoint after Render auto-deploys to confirm the exact backend revision now serving traffic.
+
+When `BACKEND_REQUIRE_AUTH=true`, control-plane routes under `/repos/*` require a valid signed session
+from the OAuth login flow. This prevents anonymous web users from invoking repo mutations.
+
+For smoother first-time setup, the onboarding UI calls `GET /auth/github-app/install-url` and surfaces an
+"Install GitHub App" action when no repositories are visible yet.
 
 ### Automated versioning (main branch)
 

@@ -55,6 +55,7 @@ type Props = {
   onTargetStateChange: (value: string) => void;
   isConnecting: boolean;
   isStartingFirstIteration: boolean;
+  githubAppInstallUrl: string | null;
   initProgress: InitProgress;
   error: string | null;
   onGoToConnect: () => void;
@@ -86,6 +87,7 @@ export function OnboardingFlow({
   onTargetStateChange,
   isConnecting,
   isStartingFirstIteration,
+  githubAppInstallUrl,
   initProgress,
   error,
   onGoToConnect,
@@ -163,9 +165,22 @@ export function OnboardingFlow({
         </Typography>
 
         <Box>
-          <Button variant="contained" size="large" onClick={onConnectGithub} disabled={isConnecting}>
-            {isConnecting ? 'Connecting...' : 'Connect with GitHub'}
-          </Button>
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5}>
+            <Button variant="contained" size="large" onClick={onConnectGithub} disabled={isConnecting}>
+              {isConnecting ? 'Connecting...' : 'Connect with GitHub'}
+            </Button>
+            {githubAppInstallUrl ? (
+              <Button
+                component="a"
+                href={githubAppInstallUrl}
+                target="_blank"
+                rel="noreferrer"
+                variant="outlined"
+              >
+                Install GitHub App
+              </Button>
+            ) : null}
+          </Stack>
         </Box>
       </Stack>
     );
@@ -206,7 +221,18 @@ export function OnboardingFlow({
               <Typography variant="body2">
                 You may need to grant access to your repositories during setup.
               </Typography>
-              <Box>
+              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.25}>
+                {githubAppInstallUrl ? (
+                  <Button
+                    component="a"
+                    href={githubAppInstallUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    variant="contained"
+                  >
+                    Install GitHub App
+                  </Button>
+                ) : null}
                 <Button
                   component="a"
                   href="https://github.com/settings/installations"
@@ -216,7 +242,7 @@ export function OnboardingFlow({
                 >
                   Manage access in GitHub
                 </Button>
-              </Box>
+              </Stack>
             </Stack>
           </Alert>
         ) : (

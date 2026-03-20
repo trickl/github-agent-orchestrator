@@ -42,9 +42,10 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
 
   const resp = await fetch(url, {
     ...init,
+    credentials: 'include',
     headers: {
       ...(init?.headers ?? {}),
-      'Content-Type': 'application/json',
+      ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
     },
   });
 

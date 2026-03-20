@@ -1,6 +1,6 @@
 import React from 'react';
 import { Alert, Box, CircularProgress, Container, Snackbar, Stack, Typography } from '@mui/material';
-import { apiFetch } from '../lib/apiClient';
+import { ApiError, apiFetch } from '../lib/apiClient';
 import { endpoints } from '../lib/endpoints';
 import { DashboardView } from './DashboardView';
 import { OnboardingFlow } from './OnboardingFlow';
@@ -24,6 +24,20 @@ type RunResponse = {
   stdout: string;
   stderr: string;
   exit_code: number;
+};
+
+type AuthMeResponse = {
+  authenticated: boolean;
+  login: string;
+  id: number;
+};
+
+type AuthStartResponse = {
+  authorizationUrl: string;
+};
+
+type GithubAppInstallUrlResponse = {
+  installUrl: string;
 };
 
 export type OnboardingScene =
@@ -64,6 +78,8 @@ function normalizeStatus(status: string | null | undefined): 'idle' | 'running' 
 export function App(): React.JSX.Element {
   const colorMode = React.useContext(ColorModeContext);
   const [repos, setRepos] = React.useState<string[]>([]);
+  const [authLogin, setAuthLogin] = React.useState<string | null>(null);
+  const [githubAppInstallUrl, setGithubAppInstallUrl] = React.useState<string | null>(null);
   const [selectedRepo, setSelectedRepo] = React.useState<string>('');
   const [status, setStatus] = React.useState<RepoStatusResponse | null>(null);
   const [developmentPrs, setDevelopmentPrs] = React.useState<DevelopmentPullRequest[]>([]);
@@ -104,6 +120,29 @@ export function App(): React.JSX.Element {
     return data;
   }, []);
 
+  const loadAuthSession = React.useCallback(async () => {
+    try {
+      const me = await apiFetch<AuthMeResponse>(endpoints.authMe());
+      setAuthLogin(me.login);
+      return true;
+    } catch (err: unknown) {
+      if (err instanceof ApiError && err.status === 401) {
+        setAuthLogin(null);
+        return false;
+      }
+      throw err;
+    }
+  }, []);
+
+  const loadGithubAppInstallUrl = React.useCallback(async () => {
+    try {
+      const payload = await apiFetch<GithubAppInstallUrlResponse>(endpoints.authGithubAppInstallUrl());
+      setGithubAppInstallUrl(payload.installUrl);
+    } catch {
+      setGithubAppInstallUrl(null);
+    }
+  }, []);
+
   const loadRepoData = React.useCallback(async () => {
     if (!selectedRepoParts) return null;
     const { owner, repo } = selectedRepoParts;
@@ -120,32 +159,50 @@ export function App(): React.JSX.Element {
     let cancelled = false;
     setLoading(true);
     setError(null);
-    void loadRepos()
-      .catch((err: unknown) => {
-        if (cancelled) return;
-        setError(err instanceof Error ? err.message : String(err));
-      })
-      .finally(() => {
-        if (cancelled) return;
-        setLoading(false);
-      });
+
+    void (async () => {
+      try {
+        await loadGithubAppInstallUrl();
+        const isAuthed = await loadAuthSession();
+        if (!isAuthed) {
+          if (!cancelled) {
+            setRepos([]);
+            setSelectedRepo('');
+            setScene('welcome');
+          }
+          return;
+        }
+        await loadRepos();
+      } catch (err: unknown) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : String(err));
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    })();
+
     return () => {
       cancelled = true;
     };
-  }, [loadRepos]);
+  }, [loadAuthSession, loadGithubAppInstallUrl, loadRepos]);
 
   React.useEffect(() => {
     if (initialSceneResolved || loading) return;
 
     const onboardingComplete = window.localStorage.getItem(ONBOARDING_COMPLETE_KEY) === 'true';
-    if (onboardingComplete) {
+    if (!authLogin) {
+      setScene('welcome');
+    } else if (onboardingComplete) {
       setScene(selectedRepo ? 'dashboard' : 'repo');
     } else {
-      setScene('welcome');
+      setScene('repo');
     }
 
     setInitialSceneResolved(true);
-  }, [initialSceneResolved, loading, selectedRepo]);
+  }, [authLogin, initialSceneResolved, loading, selectedRepo]);
 
   React.useEffect(() => {
     if (!selectedRepo) return;
@@ -239,18 +296,35 @@ export function App(): React.JSX.Element {
     setIsConnecting(true);
     setError(null);
     try {
-      const data = await loadRepos();
-      if (data.length > 0) {
-        setScene('connected');
-      } else {
-        setScene('repo');
-      }
+      const payload = await apiFetch<AuthStartResponse>(endpoints.authGithubStart(), {
+        method: 'POST',
+        body: JSON.stringify({}),
+      });
+      window.location.assign(payload.authorizationUrl);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setIsConnecting(false);
     }
-  }, [loadRepos]);
+  }, []);
+
+  const handleLogout = React.useCallback(async () => {
+    try {
+      await apiFetch(endpoints.authLogout(), {
+        method: 'POST',
+        body: JSON.stringify({}),
+      });
+    } finally {
+      window.localStorage.removeItem(REPO_STORAGE_KEY);
+      window.localStorage.removeItem(ONBOARDING_COMPLETE_KEY);
+      setAuthLogin(null);
+      setRepos([]);
+      setSelectedRepo('');
+      setStatus(null);
+      setDevelopmentPrs([]);
+      setScene('connect');
+    }
+  }, []);
 
   const handleContinueFromRepoSelection = React.useCallback(async () => {
     if (!selectedRepoParts) {
@@ -347,6 +421,7 @@ export function App(): React.JSX.Element {
         onTargetStateChange={setTargetStateText}
         isConnecting={isConnecting}
         isStartingFirstIteration={isStartingFirstIteration}
+        githubAppInstallUrl={githubAppInstallUrl}
         initProgress={initProgress}
         error={error}
         onGoToConnect={() => setScene('connect')}
@@ -363,6 +438,7 @@ export function App(): React.JSX.Element {
     <>
       <DashboardView
         colorMode={colorMode}
+        authLogin={authLogin}
         repos={repos}
         selectedRepo={selectedRepo}
         onSelectRepo={setSelectedRepo}
@@ -373,6 +449,7 @@ export function App(): React.JSX.Element {
         onTargetStateChange={setTargetStateText}
         onSaveTargetState={() => void handleTargetStateSubmit()}
         onRunNextIteration={() => void handleRun()}
+        onLogout={() => void handleLogout()}
         showTour={showTour}
         onCloseTour={() => setShowTour(false)}
         onDisableTour={handleDisableTour}

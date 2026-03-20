@@ -11,6 +11,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.app.routes.actions import router as actions_router
+from backend.app.routes.auth import router as auth_router
 from backend.app.routes.events import router as events_router
 from backend.app.routes.repos import router as repos_router
 from backend.app.routes.status import router as status_router
@@ -94,3 +95,4 @@ app.include_router(actions_router)
 app.include_router(status_router)
 app.include_router(webhooks_router)
 app.include_router(events_router)
+app.include_router(auth_router)

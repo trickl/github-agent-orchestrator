@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from backend.app.config import Settings
 from backend.app.github.auth import create_github_client
 from backend.app.models.control_plane import RunOrchestratorResponse, UpdateOrchestratorResponse
+from backend.app.routes.auth import require_authenticated_user
 from backend.app.services.install import initialize_repo
 from backend.app.services.local_runner import run_orchestrator
 from backend.app.services.orchestrator_version import update_orchestrator_version
@@ -18,7 +19,7 @@ from backend.app.services.status import list_accessible_repositories, list_devel
 from backend.app.services.target_state import upsert_target_state
 
 
-router = APIRouter(tags=["repos"])
+router = APIRouter(tags=["repos"], dependencies=[Depends(require_authenticated_user)])
 
 
 @lru_cache(maxsize=1)
@@ -64,7 +65,7 @@ async def list_development_prs(
     settings: Settings = Depends(get_settings),
 ) -> list[dict[str, str]]:
     try:
-        client = await create_github_client(settings)
+        client = await create_github_client(settings, owner=owner, repo=repo)
         return await list_development_pull_requests(client, owner, repo)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Failed to list development PRs: {exc}") from exc
@@ -78,7 +79,7 @@ async def initialize_repository(
     settings: Settings = Depends(get_settings),
 ) -> dict[str, object]:
     try:
-        client = await create_github_client(settings)
+        client = await create_github_client(settings, owner=owner, repo=repo)
         return await initialize_repo(
             client,
             owner,
@@ -100,7 +101,7 @@ async def create_or_update_target_state(
     settings: Settings = Depends(get_settings),
 ) -> dict[str, object]:
     try:
-        client = await create_github_client(settings)
+        client = await create_github_client(settings, owner=owner, repo=repo)
         return await upsert_target_state(
             client,
             owner,
@@ -123,7 +124,7 @@ async def update_orchestrator_runtime(
     settings: Settings = Depends(get_settings),
 ) -> UpdateOrchestratorResponse:
     try:
-        client = await create_github_client(settings)
+        client = await create_github_client(settings, owner=owner, repo=repo)
         result = await update_orchestrator_version(client, owner, repo)
         return UpdateOrchestratorResponse.model_validate(result)
     except Exception as exc:

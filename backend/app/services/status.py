@@ -124,18 +124,17 @@ async def list_development_pull_requests(client: GitHubClient, owner: str, repo:
 
 
 async def list_accessible_repositories(client: GitHubClient) -> list[str]:
-    """List repositories visible to the configured PAT token."""
+    """List repositories available to the current GitHub App installation token."""
 
-    repos = await client.request(
+    payload = await client.request(
         "GET",
-        "/user/repos",
-        params={
-            "per_page": 100,
-            "sort": "full_name",
-            "direction": "asc",
-            "affiliation": "owner,collaborator,organization_member",
-        },
+        "/installation/repositories",
+        params={"per_page": 100},
     )
+    if not isinstance(payload, dict):
+        return []
+
+    repos = payload.get("repositories")
     if not isinstance(repos, list):
         return []
 

@@ -24,4 +24,10 @@ export const endpoints = {
     `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/run`,
   developmentPrs: (owner: string, repo: string): string =>
     `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/development-prs`,
+
+  // Auth endpoints
+  authGithubStart: (): string => `/auth/github/start`,
+  authGithubAppInstallUrl: (): string => `/auth/github-app/install-url`,
+  authMe: (): string => `/auth/me`,
+  authLogout: (): string => `/auth/logout`,
 } as const;

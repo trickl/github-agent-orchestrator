@@ -9,10 +9,11 @@ from pydantic import BaseModel, Field
 
 from backend.app.config import Settings
 from backend.app.github.auth import create_github_client
+from backend.app.routes.auth import require_authenticated_user
 from backend.app.services.workflows import cancel_latest_run, dispatch_workflow
 
 
-router = APIRouter(tags=["actions"])
+router = APIRouter(tags=["actions"], dependencies=[Depends(require_authenticated_user)])
 
 
 @lru_cache(maxsize=1)
@@ -38,7 +39,7 @@ async def start_loop(
 ) -> dict[str, object]:
     workflow_file = payload.workflow_file or settings.default_workflow_file
     try:
-        client = await create_github_client(settings)
+        client = await create_github_client(settings, owner=owner, repo=repo)
         return await dispatch_workflow(
             client,
             owner,
@@ -59,7 +60,7 @@ async def stop_loop(
 ) -> dict[str, object]:
     workflow_file = payload.workflow_file or settings.default_workflow_file
     try:
-        client = await create_github_client(settings)
+        client = await create_github_client(settings, owner=owner, repo=repo)
         return await cancel_latest_run(client, owner, repo, workflow_file=workflow_file)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Failed to cancel workflow run: {exc}") from exc

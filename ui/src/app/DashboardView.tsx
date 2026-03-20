@@ -49,6 +49,7 @@ type DevelopmentPullRequest = {
 
 type Props = {
   colorMode: ColorModeValue;
+  authLogin: string | null;
   repos: string[];
   selectedRepo: string;
   onSelectRepo: (repo: string) => void;
@@ -59,6 +60,7 @@ type Props = {
   onTargetStateChange: (value: string) => void;
   onSaveTargetState: () => void;
   onRunNextIteration: () => void;
+  onLogout: () => void;
   showTour: boolean;
   onCloseTour: () => void;
   onDisableTour: () => void;
@@ -98,6 +100,7 @@ function normalizeStatus(status: string | null | undefined): 'idle' | 'running' 
 
 export function DashboardView({
   colorMode,
+  authLogin,
   repos,
   selectedRepo,
   onSelectRepo,
@@ -108,6 +111,7 @@ export function DashboardView({
   onTargetStateChange,
   onSaveTargetState,
   onRunNextIteration,
+  onLogout,
   showTour,
   onCloseTour,
   onDisableTour,
@@ -147,11 +151,17 @@ export function DashboardView({
             <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} justifyContent="space-between">
               <Stack spacing={1}>
                 <Typography variant="h6">{selectedRepo}</Typography>
+                <Typography color="text.secondary">
+                  Signed in as: {authLogin ?? 'unknown'}
+                </Typography>
                 <Typography color="text.secondary">Branch: main</Typography>
                 <Typography color="text.secondary">Status: {normalizedStatus}</Typography>
               </Stack>
 
               <Stack direction="row" spacing={1} alignItems="center">
+                <Button variant="outlined" onClick={onLogout}>
+                  Log out
+                </Button>
                 <FormControl sx={{ minWidth: 280 }}>
                   <InputLabel id="repo-switch-label">Select repository</InputLabel>
                   <Select
