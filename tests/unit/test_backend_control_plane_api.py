@@ -327,6 +327,57 @@ def test_dispatch_workflow_run_endpoint(monkeypatch) -> None:
     assert payload["ref"] == "main"
 
 
+def test_dispatch_workflow_run_endpoint_bootstraps_missing_workflow(monkeypatch) -> None:
+    _set_required_backend_env(monkeypatch)
+
+    import backend.app.routes.repos as repos_routes
+
+    repos_routes.get_settings.cache_clear()
+
+    async def fake_create_client(*_args, **_kwargs):
+        return object()
+
+    calls = {"dispatch": 0, "bootstrap": 0}
+
+    async def fake_dispatch(*_args, **_kwargs):
+        calls["dispatch"] += 1
+        if calls["dispatch"] == 1:
+            raise ValueError(
+                "No GitHub Actions workflows found in target repository 'acme/widgets'. "
+                "The control plane dispatches workflows from the selected target repository "
+                "(not the github-agent-orchestrator control-plane repository). "
+                "Add a workflow file under '.github/workflows' in the target repository "
+                "and enable workflow_dispatch."
+            )
+        return {
+            "owner": "acme",
+            "repo": "widgets",
+            "workflow": "orchestrator.yml",
+            "ref": "main",
+            "dispatched": True,
+        }
+
+    async def fake_ensure_workflow(*_args, **_kwargs):
+        calls["bootstrap"] += 1
+        return {"status": "created"}
+
+    monkeypatch.setattr(repos_routes, "create_github_client", fake_create_client)
+    monkeypatch.setattr(repos_routes, "dispatch_workflow", fake_dispatch)
+    monkeypatch.setattr(repos_routes, "ensure_orchestrator_workflow", fake_ensure_workflow)
+
+    client = TestClient(app)
+    response = client.post("/repos/acme/widgets/run", json={"ref": "main"})
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "dispatched"
+    assert payload["repo"] == "acme/widgets"
+    assert payload["dispatched"] is True
+    assert payload["workflow"] == "orchestrator.yml"
+    assert payload["ref"] == "main"
+    assert calls["bootstrap"] == 1
+    assert calls["dispatch"] == 2
+
+
 def test_webhook_endpoint_accepts_valid_signature(monkeypatch) -> None:
     _set_required_backend_env(monkeypatch)
     _reset_event_log()

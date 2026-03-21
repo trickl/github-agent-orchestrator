@@ -12,7 +12,7 @@ from backend.app.github.auth import create_github_client
 from backend.app.models.control_plane import DispatchWorkflowResponse, UpdateOrchestratorResponse
 from backend.app.routes.auth import require_authenticated_user
 from backend.app.routes.dependencies import get_settings
-from backend.app.services.install import initialize_repo
+from backend.app.services.install import ensure_orchestrator_workflow, initialize_repo
 from backend.app.services.orchestrator_version import update_orchestrator_version
 from backend.app.services.run_state import set_repo_run_state
 from backend.app.services.status import list_accessible_repositories, list_development_pull_requests
@@ -189,13 +189,31 @@ async def dispatch_repo_workflow(
     try:
         set_repo_run_state(repo_full_name, status="running", current_step="Dispatching workflow")
         client = await create_github_client(settings, owner=owner, repo=repo)
-        dispatch_result = await dispatch_workflow(
-            client,
-            owner,
-            repo,
-            workflow_file=workflow_file,
-            ref=payload.ref,
-        )
+        try:
+            dispatch_result = await dispatch_workflow(
+                client,
+                owner,
+                repo,
+                workflow_file=workflow_file,
+                ref=payload.ref,
+            )
+        except ValueError as exc:
+            missing_workflow_error = "No GitHub Actions workflows found in target repository"
+            if missing_workflow_error not in str(exc):
+                raise
+
+            logger.warning(
+                "No workflow found in %s; bootstrapping orchestrator workflow and retrying dispatch",
+                repo_full_name,
+            )
+            await ensure_orchestrator_workflow(client, owner, repo)
+            dispatch_result = await dispatch_workflow(
+                client,
+                owner,
+                repo,
+                workflow_file=workflow_file,
+                ref=payload.ref,
+            )
         set_repo_run_state(repo_full_name, status="running", current_step="Workflow dispatched")
         return DispatchWorkflowResponse.model_validate(
             {

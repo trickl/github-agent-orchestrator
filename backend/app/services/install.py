@@ -134,3 +134,58 @@ async def initialize_repo(
         }
 
     return result
+
+
+async def ensure_orchestrator_workflow(client: GitHubClient, owner: str, repo: str) -> dict[str, Any]:
+    """Ensure the orchestrator workflow exists on the repository default branch."""
+
+    repo_data = await client.request("GET", f"/repos/{owner}/{repo}")
+    base_branch = repo_data["default_branch"]
+
+    response = await client.request(
+        "GET",
+        f"/repos/{owner}/{repo}/contents/{ORCHESTRATOR_WORKFLOW_PATH}",
+        params={"ref": base_branch},
+        expected_status={200, 404},
+    )
+
+    existing_sha: str | None = None
+    existing_text: str | None = None
+    if isinstance(response, dict) and response.get("message") != "Not Found":
+        sha = response.get("sha")
+        if isinstance(sha, str) and sha.strip():
+            existing_sha = sha
+        existing_text = _decode_content_payload(response)
+
+    workflow_text = render_orchestrator_workflow()
+    if existing_text == workflow_text:
+        return {
+            "owner": owner,
+            "repo": repo,
+            "branch": base_branch,
+            "workflowPath": ORCHESTRATOR_WORKFLOW_PATH,
+            "status": "unchanged",
+        }
+
+    encoded = base64.b64encode(workflow_text.encode("utf-8")).decode("utf-8")
+    payload: dict[str, Any] = {
+        "message": "Bootstrap orchestrator workflow",
+        "content": encoded,
+        "branch": base_branch,
+    }
+    if existing_sha:
+        payload["sha"] = existing_sha
+
+    await client.request(
+        "PUT",
+        f"/repos/{owner}/{repo}/contents/{ORCHESTRATOR_WORKFLOW_PATH}",
+        json=payload,
+    )
+
+    return {
+        "owner": owner,
+        "repo": repo,
+        "branch": base_branch,
+        "workflowPath": ORCHESTRATOR_WORKFLOW_PATH,
+        "status": "created" if existing_sha is None else "updated",
+    }
