@@ -1,6 +1,7 @@
 import type { DevelopmentPullRequest, OrchestratorMode, RepoStatusResponse } from './types';
 
 const MERGE_APPROVAL_STAGES = new Set(['1c', '2c', '3c']);
+const STATE_REFRESH_STAGES = new Set(['3a', '3b']);
 
 export type CanonicalIterationState =
   | 'idle'
@@ -21,6 +22,20 @@ function normalizeStage(stage: string | null | undefined): string {
   return (stage ?? '').trim().toLowerCase();
 }
 
+function hasActiveQueueWork(status: RepoStatusResponse | null): boolean {
+  const activeIssues = status?.status_artifact?.active_issue_ids?.length ?? status?.active_issue_ids?.length ?? 0;
+  const activePrs = status?.status_artifact?.active_pr_ids?.length ?? status?.active_pr_ids?.length ?? 0;
+  return activeIssues > 0 || activePrs > 0;
+}
+
+function hasMergedCapabilityOrStatePr(developmentPrs: DevelopmentPullRequest[]): boolean {
+  return developmentPrs.some((pr) => {
+    if (!pr.mergedAt) return false;
+    const title = pr.title.trim().toLowerCase();
+    return title.includes('capability') || title.includes('current state');
+  });
+}
+
 export function isAwaitingManualApproval(status: RepoStatusResponse | null, mode: OrchestratorMode): boolean {
   if (mode !== 'manual') return false;
   const stage = normalizeStage(status?.status_artifact?.stage);
@@ -29,7 +44,8 @@ export function isAwaitingManualApproval(status: RepoStatusResponse | null, mode
 
 export function getCanonicalIterationState(
   status: RepoStatusResponse | null,
-  mode: OrchestratorMode
+  mode: OrchestratorMode,
+  developmentPrs: DevelopmentPullRequest[]
 ): CanonicalIterationState {
   const backendStatus = normalizeBackendStatus(status?.status);
   if (backendStatus === 'error') return 'error';
@@ -39,13 +55,22 @@ export function getCanonicalIterationState(
     return 'awaiting_user_approval';
   }
 
+  const stage = normalizeStage(status?.status_artifact?.stage);
+  const hasPendingStateRefreshSignal =
+    STATE_REFRESH_STAGES.has(stage) ||
+    (stage === '3c' && mode === 'auto') ||
+    hasMergedCapabilityOrStatePr(developmentPrs);
+
   const currentStep = (status?.currentStep ?? '').trim().toLowerCase();
-  if (currentStep.includes('no actionable stage')) {
-    return 'complete_noop';
+  if (
+    hasPendingStateRefreshSignal &&
+    (currentStep.includes('current state') || currentStep.includes('capability') || hasActiveQueueWork(status))
+  ) {
+    return 'awaiting_state_refresh';
   }
 
-  if (currentStep.includes('current state') || currentStep.includes('capability')) {
-    return 'awaiting_state_refresh';
+  if (currentStep.includes('no actionable stage')) {
+    return 'complete_noop';
   }
 
   return 'idle';

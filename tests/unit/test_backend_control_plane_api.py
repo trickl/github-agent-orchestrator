@@ -250,6 +250,7 @@ def test_start_stop_status_and_list_repos_endpoints(monkeypatch) -> None:
         return {
             "owner": "acme",
             "repo": "widgets",
+            "defaultBranch": "main",
             "hasTargetState": True,
             "status": "idle",
             "currentStep": None,
@@ -293,6 +294,7 @@ def test_start_stop_status_and_list_repos_endpoints(monkeypatch) -> None:
     status_response = client.get("/repos/acme/widgets/status")
     assert status_response.status_code == 200
     assert status_response.json()["latest_run"]["id"] == 1001
+    assert status_response.json()["defaultBranch"] == "main"
     assert status_response.json()["hasTargetState"] is True
     assert status_response.json()["workflow"]["orchestratorVersion"]["latest"] == "0.3.1"
 

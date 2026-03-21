@@ -27,6 +27,7 @@ import {
 } from '@mui/material';
 import DarkModeOutlinedIcon from '@mui/icons-material/DarkModeOutlined';
 import LightModeOutlinedIcon from '@mui/icons-material/LightModeOutlined';
+import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import {
   getCanonicalIterationState,
   getCompletedWorkCount,
@@ -54,6 +55,7 @@ type Props = {
   onTargetStateChange: (value: string) => void;
   onSaveTargetState: () => void;
   onRunNextIteration: () => void;
+  onRefreshStatus: () => void;
   onLogout: () => void;
   showTour: boolean;
   onCloseTour: () => void;
@@ -100,19 +102,34 @@ export function DashboardView({
   onTargetStateChange,
   onSaveTargetState,
   onRunNextIteration,
+  onRefreshStatus,
   onLogout,
   showTour,
   onCloseTour,
   onDisableTour,
 }: Props): React.JSX.Element {
-  const canonicalStatus = getCanonicalIterationState(status, selectedMode);
+  const canonicalStatus = getCanonicalIterationState(status, selectedMode, developmentPrs);
   const [tourStep, setTourStep] = React.useState(0);
   const [dontShowAgain, setDontShowAgain] = React.useState(false);
+  const [isEditingTargetState, setIsEditingTargetState] = React.useState(false);
+  const [targetStateDraft, setTargetStateDraft] = React.useState(targetStateText);
+  const targetStateInputRef = React.useRef<HTMLTextAreaElement | null>(null);
 
   const completedWork = getCompletedWorkCount(developmentPrs);
   const remainingWork = status?.status_artifact?.active_issue_ids?.length ?? status?.active_issue_ids?.length ?? 0;
   const iterationCount = completedWork + (canonicalStatus === 'running' ? 1 : 0);
   const awaitingApproval = isAwaitingManualApproval(status, selectedMode);
+  const isTargetStateDirty = targetStateDraft.trim() !== targetStateText.trim();
+
+  React.useEffect(() => {
+    if (isEditingTargetState) return;
+    setTargetStateDraft(targetStateText);
+  }, [isEditingTargetState, targetStateText]);
+
+  React.useEffect(() => {
+    if (!isEditingTargetState) return;
+    targetStateInputRef.current?.focus();
+  }, [isEditingTargetState]);
 
   const handleCloseTour = () => {
     if (dontShowAgain) {
@@ -133,22 +150,39 @@ export function DashboardView({
 
   const firstPrUrl = developmentPrs[0]?.url;
 
+  const handleTargetStateSave = () => {
+    onTargetStateChange(targetStateDraft);
+    onSaveTargetState();
+    setIsEditingTargetState(false);
+  };
+
+  const handleTargetStateCancel = () => {
+    setTargetStateDraft(targetStateText);
+    setIsEditingTargetState(false);
+  };
+
   return (
-    <Container maxWidth="lg" sx={{ py: 4 }}>
+    <Container maxWidth="lg" sx={{ py: 4, minHeight: '100vh' }}>
       <Stack spacing={3}>
         <Card variant="outlined">
           <CardContent>
             <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} justifyContent="space-between">
               <Stack spacing={1}>
-                <Typography variant="h6">{selectedRepo}</Typography>
+                <Typography variant="h6">GitHub Agent Orchestrator</Typography>
+                <Typography color="text.secondary">Repository: {selectedRepo}</Typography>
                 <Typography color="text.secondary">
                   Signed in as: {authLogin ?? 'unknown'}
                 </Typography>
-                <Typography color="text.secondary">Branch: main</Typography>
+                <Typography color="text.secondary">Branch: {status?.defaultBranch?.trim() || '—'}</Typography>
                 <Typography color="text.secondary">Status: {canonicalStatus}</Typography>
               </Stack>
 
-              <Stack direction="row" spacing={1} alignItems="center">
+              <Stack
+                direction={{ xs: 'column', sm: 'row' }}
+                spacing={1}
+                alignItems={{ xs: 'stretch', sm: 'center' }}
+                justifyContent={{ xs: 'flex-start', md: 'flex-end' }}
+              >
                 <Button variant="outlined" onClick={onLogout}>
                   Log out
                 </Button>
@@ -159,6 +193,7 @@ export function DashboardView({
                     label="Select repository"
                     value={selectedRepo}
                     onChange={(event) => onSelectRepo(event.target.value)}
+                    inputProps={{ 'aria-label': 'Select repository' }}
                   >
                     {repos.map((repoName) => (
                       <MenuItem key={repoName} value={repoName}>
@@ -179,11 +214,16 @@ export function DashboardView({
           <Alert
             severity="warning"
             action={
-              firstPrUrl ? (
-                <Button color="inherit" size="small" component="a" href={firstPrUrl} target="_blank" rel="noreferrer">
-                  Open PR
+              <Stack direction="row" spacing={1}>
+                {firstPrUrl ? (
+                  <Button color="inherit" size="small" component="a" href={firstPrUrl} target="_blank" rel="noreferrer">
+                    Open PR
+                  </Button>
+                ) : null}
+                <Button color="inherit" size="small" onClick={onRefreshStatus}>
+                  Refresh status
                 </Button>
-              ) : undefined
+              </Stack>
             }
           >
             Action required: manual approval is needed to merge the current PR before this iteration can complete.
@@ -197,12 +237,24 @@ export function DashboardView({
                 <Typography variant="subtitle2" color="text.secondary" gutterBottom>
                   Target State
                 </Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                  {isEditingTargetState ? 'Editing enabled. Save to persist changes.' : 'Read-only mode. Select Edit to modify.'}
+                </Typography>
                 <TextField
                   multiline
                   rows={8}
                   fullWidth
-                  value={targetStateText}
-                  onChange={(event) => onTargetStateChange(event.target.value)}
+                  inputRef={targetStateInputRef}
+                  value={targetStateDraft}
+                  onChange={(event) => setTargetStateDraft(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Escape' && isEditingTargetState) {
+                      event.preventDefault();
+                      handleTargetStateCancel();
+                    }
+                  }}
+                  aria-label="Target state editor"
+                  InputProps={{ readOnly: !isEditingTargetState }}
                   sx={{
                     '& textarea': {
                       overflowY: 'scroll',
@@ -211,12 +263,23 @@ export function DashboardView({
                   }}
                 />
                 <Stack direction="row" spacing={1} sx={{ mt: 2 }}>
-                  <Button variant="contained" onClick={onSaveTargetState}>
-                    Save target state
-                  </Button>
-                  <Button variant="outlined" disabled>
-                    Pause
-                  </Button>
+                  {isEditingTargetState ? (
+                    <>
+                      <Button variant="contained" onClick={handleTargetStateSave} disabled={!isTargetStateDirty}>
+                        Save changes
+                      </Button>
+                      <Button variant="outlined" onClick={handleTargetStateCancel}>
+                        Cancel
+                      </Button>
+                      <Typography variant="body2" color={isTargetStateDirty ? 'warning.main' : 'text.secondary'} sx={{ alignSelf: 'center' }}>
+                        {isTargetStateDirty ? 'Unsaved changes' : 'No changes'}
+                      </Typography>
+                    </>
+                  ) : (
+                    <Button variant="outlined" onClick={() => setIsEditingTargetState(true)}>
+                      Edit target state
+                    </Button>
+                  )}
                 </Stack>
               </CardContent>
             </Card>
@@ -251,7 +314,7 @@ export function DashboardView({
                 Recent Activity
               </Typography>
 
-              <Stack direction="row" spacing={1}>
+              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
                 <FormControl size="small" sx={{ minWidth: 250 }}>
                   <InputLabel id="mode-select-label">Run mode</InputLabel>
                   <Select
@@ -260,6 +323,7 @@ export function DashboardView({
                     value={selectedMode}
                     onChange={(event) => onModeChange(event.target.value as OrchestratorMode)}
                     disabled={running || canonicalStatus === 'running'}
+                    inputProps={{ 'aria-label': 'Run mode' }}
                   >
                     <MenuItem value="manual">Manual Approve</MenuItem>
                     <MenuItem value="auto">Auto-Approve (Continuous)</MenuItem>
@@ -269,6 +333,7 @@ export function DashboardView({
                   variant="contained"
                   disabled={running || canonicalStatus === 'running'}
                   onClick={onRunNextIteration}
+                  aria-label="Run iteration"
                 >
                   Run iteration
                 </Button>
@@ -288,10 +353,17 @@ export function DashboardView({
                   <ListItem
                     key={`${pr.url}-${pr.createdAt}`}
                     disablePadding
-                    secondaryAction={<Typography color="text.secondary">{formatTimestamp(pr.createdAt)}</Typography>}
+                    secondaryAction={
+                      <Stack direction="row" spacing={1} alignItems="center" sx={{ pr: 1 }}>
+                        <Typography color="text.secondary">{formatTimestamp(pr.createdAt)}</Typography>
+                        <IconButton size="small" component="a" href={pr.url} target="_blank" rel="noreferrer" aria-label={`Open PR: ${pr.title}`}>
+                          <OpenInNewIcon fontSize="inherit" />
+                        </IconButton>
+                      </Stack>
+                    }
                   >
                     <ListItemButton component="a" href={pr.url} target="_blank" rel="noreferrer">
-                      <ListItemText primary={pr.title} />
+                      <ListItemText primary={pr.title} secondary="Open pull request in GitHub" />
                     </ListItemButton>
                   </ListItem>
                 ))}

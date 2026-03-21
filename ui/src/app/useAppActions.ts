@@ -242,9 +242,18 @@ export function useAppActions(data: AppDataResult) {
     setShowTour(false);
   }, [setShowTour]);
 
+  const handleRefreshStatus = React.useCallback(async () => {
+    try {
+      await loadRepoData();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }, [loadRepoData, setError]);
+
   return {
     handleTargetStateSubmit,
     handleRun,
+    handleRefreshStatus,
     handleConnectGithub,
     handleLogout,
     handleContinueFromRepoSelection,

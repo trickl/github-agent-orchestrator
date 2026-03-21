@@ -1,6 +1,7 @@
 export type RepoStatusResponse = {
   hasTargetState: boolean;
   status: string;
+  defaultBranch?: string | null;
   currentStep?: string | null;
   status_artifact?: {
     stage?: string | null;

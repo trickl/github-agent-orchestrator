@@ -61,6 +61,7 @@ class RepositoryStatusResponse(BaseModel):
 
     owner: str | None = None
     repo: str | None = None
+    defaultBranch: str | None = None
     hasTargetState: bool = False
     status: str = "idle"
     currentStep: str | None = None

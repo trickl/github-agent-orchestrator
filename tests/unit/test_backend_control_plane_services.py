@@ -292,6 +292,7 @@ async def test_get_status_includes_latest_run_and_parsed_artifact() -> None:
 
     assert result["owner"] == "acme"
     assert result["repo"] == "widgets"
+    assert result["defaultBranch"] == "main"
     assert result["hasTargetState"] is True
     assert result["status"] == "running"
     assert result["currentStep"] == "Creating PR"
@@ -345,6 +346,7 @@ async def test_get_status_uses_repository_default_branch_for_target_state_reads(
         "widgets",
     )
 
+    assert result["defaultBranch"] == "master"
     assert result["hasTargetState"] is True
 
     target_state_calls = [

@@ -39,16 +39,17 @@ def _extract_non_empty_text(contents_response: Any) -> str:
     return decoded.strip()
 
 
-async def _target_state_has_content(client: GitHubClient, owner: str, repo: str, path: str) -> bool:
-    repo_payload = await client.request("GET", f"/repos/{owner}/{repo}")
-    default_branch = repo_payload.get("default_branch") if isinstance(repo_payload, dict) else None
-    if not isinstance(default_branch, str) or not default_branch.strip():
-        raise RuntimeError(f"Repository '{owner}/{repo}' did not include a valid default_branch")
-
+async def _target_state_has_content(
+    client: GitHubClient,
+    owner: str,
+    repo: str,
+    path: str,
+    default_branch: str,
+) -> bool:
     response = await client.request(
         "GET",
         f"/repos/{owner}/{repo}/contents/{path}",
-        params={"ref": default_branch.strip()},
+        params={"ref": default_branch},
         expected_status={200, 403, 404},
     )
     if isinstance(response, dict):
@@ -58,11 +59,11 @@ async def _target_state_has_content(client: GitHubClient, owner: str, repo: str,
     return bool(_extract_non_empty_text(response))
 
 
-async def _has_target_state(client: GitHubClient, owner: str, repo: str) -> bool:
-    if await _target_state_has_content(client, owner, repo, TARGET_STATE_PATH):
+async def _has_target_state(client: GitHubClient, owner: str, repo: str, default_branch: str) -> bool:
+    if await _target_state_has_content(client, owner, repo, TARGET_STATE_PATH, default_branch):
         return True
     for legacy_path in LEGACY_TARGET_STATE_PATHS:
-        if await _target_state_has_content(client, owner, repo, legacy_path):
+        if await _target_state_has_content(client, owner, repo, legacy_path, default_branch):
             return True
     return False
 
@@ -81,12 +82,19 @@ async def get_status(
 ) -> dict[str, Any]:
     """Get local control-plane status for a repository."""
 
-    has_target_state = await _has_target_state(client, owner, repo)
+    repo_payload = await client.request("GET", f"/repos/{owner}/{repo}")
+    default_branch = repo_payload.get("default_branch") if isinstance(repo_payload, dict) else None
+    if not isinstance(default_branch, str) or not default_branch.strip():
+        raise RuntimeError(f"Repository '{owner}/{repo}' did not include a valid default_branch")
+
+    resolved_default_branch = default_branch.strip()
+    has_target_state = await _has_target_state(client, owner, repo, resolved_default_branch)
     repo_state = get_repo_run_state(f"{owner}/{repo}")
 
     return {
         "owner": owner,
         "repo": repo,
+        "defaultBranch": resolved_default_branch,
         "hasTargetState": has_target_state,
         "status": repo_state.status,
         "currentStep": repo_state.current_step,

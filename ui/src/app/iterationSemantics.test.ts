@@ -20,7 +20,7 @@ test('manual mode reports awaiting approval on merge stage', () => {
   });
 
   expect(isAwaitingManualApproval(status, 'manual')).toBe(true);
-  expect(getCanonicalIterationState(status, 'manual')).toBe('awaiting_user_approval');
+  expect(getCanonicalIterationState(status, 'manual', [])).toBe('awaiting_user_approval');
 });
 
 test('auto mode does not block on merge stage', () => {
@@ -29,7 +29,7 @@ test('auto mode does not block on merge stage', () => {
   });
 
   expect(isAwaitingManualApproval(status, 'auto')).toBe(false);
-  expect(getCanonicalIterationState(status, 'auto')).toBe('idle');
+  expect(getCanonicalIterationState(status, 'auto', [])).toBe('idle');
 });
 
 test('complete_noop is derived from current step text', () => {
@@ -37,7 +37,33 @@ test('complete_noop is derived from current step text', () => {
     currentStep: 'No actionable stage detected; treating as successful no-op.',
   });
 
-  expect(getCanonicalIterationState(status, 'manual')).toBe('complete_noop');
+  expect(getCanonicalIterationState(status, 'manual', [])).toBe('complete_noop');
+});
+
+test('awaiting_state_refresh when stage indicates capability update work', () => {
+  const status = statusWith({
+    status_artifact: { stage: '3a', active_issue_ids: [42] },
+    currentStep: 'Updating current state',
+  });
+
+  expect(getCanonicalIterationState(status, 'manual', [])).toBe('awaiting_state_refresh');
+});
+
+test('awaiting_state_refresh when a capability PR is merged and queue work remains', () => {
+  const status = statusWith({
+    active_issue_ids: [99],
+  });
+  const prs = [
+    {
+      title: 'Update capability summary and current state',
+      url: 'https://example/pr/3',
+      createdAt: '2026-03-21T03:00:00Z',
+      state: 'closed' as const,
+      mergedAt: '2026-03-21T04:00:00Z',
+    },
+  ];
+
+  expect(getCanonicalIterationState(status, 'manual', prs)).toBe('awaiting_state_refresh');
 });
 
 test('completed work counts only merged PRs', () => {

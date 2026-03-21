@@ -42,6 +42,7 @@ export function App(): React.JSX.Element {
     handleSaveForLater,
     handleTargetStateSubmit,
     handleRun,
+    handleRefreshStatus,
     handleDisableTour,
   } = useAppController();
 
@@ -102,6 +103,7 @@ export function App(): React.JSX.Element {
         onTargetStateChange={setTargetStateText}
         onSaveTargetState={() => void handleTargetStateSubmit()}
         onRunNextIteration={() => void handleRun()}
+        onRefreshStatus={() => void handleRefreshStatus()}
         onLogout={() => void handleLogout()}
         showTour={showTour}
         onCloseTour={() => setShowTour(false)}
