@@ -4,12 +4,31 @@ from __future__ import annotations
 
 import base64
 import re
+import tomllib
+from pathlib import Path
 from typing import Any
 
 from backend.app.github.client import GitHubClient
-from github_agent_orchestrator import __version__
 
-LATEST_ORCHESTRATOR_VERSION = __version__
+
+def _load_project_version() -> str:
+    pyproject_path = Path(__file__).resolve().parents[3] / "pyproject.toml"
+    if not pyproject_path.exists():
+        return "0.0.0"
+
+    try:
+        data = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
+    except Exception:
+        return "0.0.0"
+
+    project = data.get("project", {})
+    version = project.get("version") if isinstance(project, dict) else None
+    if isinstance(version, str) and version.strip():
+        return version.strip()
+    return "0.0.0"
+
+
+LATEST_ORCHESTRATOR_VERSION = _load_project_version()
 WORKFLOW_PATH = ".github/workflows/orchestrator.yml"
 UPDATE_BRANCH = "gao/update-orchestrator-version"
 VERSION_REGEX = re.compile(r"github-agent-orchestrator==([0-9]+\.[0-9]+\.[0-9]+)")

@@ -45,8 +45,7 @@ export function OnboardingTargetCard({
 
       <TextField
         multiline
-        minRows={8}
-        maxRows={14}
+        rows={10}
         value={targetStateText}
         onChange={(event) => onTargetStateChange(event.target.value)}
         placeholder="Implement a REST API for user authentication with login, registration, and tests."
@@ -59,8 +58,9 @@ export function OnboardingTargetCard({
             maxHeight: '100%',
             alignItems: 'stretch',
           },
-          '& .MuiInputBase-inputMultiline': {
-            overflowY: 'auto !important',
+          '& textarea': {
+            overflowY: 'scroll !important',
+            resize: 'none',
           },
         }}
       />

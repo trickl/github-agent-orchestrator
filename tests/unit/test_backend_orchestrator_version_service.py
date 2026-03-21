@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import base64
+import tomllib
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -13,7 +15,6 @@ from backend.app.services.orchestrator_version import (
     is_update_available,
     update_orchestrator_version,
 )
-from github_agent_orchestrator import __version__
 
 
 class FakeVersionGitHubClient:
@@ -67,7 +68,12 @@ def test_extract_orchestrator_version() -> None:
 
 
 def test_latest_orchestrator_version_tracks_package_version() -> None:
-    assert LATEST_ORCHESTRATOR_VERSION == __version__
+    pyproject_path = Path(__file__).resolve().parents[2] / "pyproject.toml"
+    data = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
+    project = data.get("project", {})
+    expected = project.get("version") if isinstance(project, dict) else None
+    assert isinstance(expected, str)
+    assert LATEST_ORCHESTRATOR_VERSION == expected
 
 
 def test_is_update_available() -> None:

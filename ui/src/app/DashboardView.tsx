@@ -194,10 +194,16 @@ export function DashboardView({
                 </Typography>
                 <TextField
                   multiline
-                  minRows={5}
+                  rows={8}
                   fullWidth
                   value={targetStateText}
                   onChange={(event) => onTargetStateChange(event.target.value)}
+                  sx={{
+                    '& textarea': {
+                      overflowY: 'scroll',
+                      resize: 'none',
+                    },
+                  }}
                 />
                 <Stack direction="row" spacing={1} sx={{ mt: 2 }}>
                   <Button variant="contained" onClick={onSaveTargetState}>
