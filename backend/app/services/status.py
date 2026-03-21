@@ -40,10 +40,15 @@ def _extract_non_empty_text(contents_response: Any) -> str:
 
 
 async def _target_state_has_content(client: GitHubClient, owner: str, repo: str, path: str) -> bool:
+    repo_payload = await client.request("GET", f"/repos/{owner}/{repo}")
+    default_branch = repo_payload.get("default_branch") if isinstance(repo_payload, dict) else None
+    if not isinstance(default_branch, str) or not default_branch.strip():
+        raise RuntimeError(f"Repository '{owner}/{repo}' did not include a valid default_branch")
+
     response = await client.request(
         "GET",
         f"/repos/{owner}/{repo}/contents/{path}",
-        params={"ref": "main"},
+        params={"ref": default_branch.strip()},
         expected_status={200, 403, 404},
     )
     if isinstance(response, dict):

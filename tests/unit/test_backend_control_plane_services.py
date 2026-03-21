@@ -28,6 +28,9 @@ class FakeGitHubClient:
         if method == "GET" and path_or_url == "/repos/acme/widgets":
             return {"default_branch": "main"}
 
+        if method == "GET" and path_or_url == "/repos/acme/private":
+            return {"default_branch": "master"}
+
         if method == "GET" and path_or_url == "/repos/acme/widgets/git/ref/heads/main":
             return {"object": {"sha": "base-sha"}}
 
@@ -311,6 +314,49 @@ async def test_get_status_handles_target_state_403_as_missing() -> None:
     assert result["hasTargetState"] is False
 
 
+class FakeStatusDefaultBranchClient:
+    """Client stub to assert status checks use the repository default branch."""
+
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    async def request(self, method: str, path_or_url: str, **kwargs: Any) -> Any:
+        self.calls.append({"method": method, "path": path_or_url, "kwargs": kwargs})
+
+        if method == "GET" and path_or_url == "/repos/acme/widgets":
+            return {"default_branch": "master"}
+
+        if method == "GET" and path_or_url == "/repos/acme/widgets/contents/.agent-orchestrator/state/target_state.md":
+            return {
+                "sha": "target-sha",
+                "content": base64.b64encode(b"# Target State\nBuild system\n").decode("utf-8"),
+            }
+
+        raise AssertionError(f"Unexpected request: {method} {path_or_url}")
+
+
+@pytest.mark.asyncio
+async def test_get_status_uses_repository_default_branch_for_target_state_reads() -> None:
+    client = FakeStatusDefaultBranchClient()
+
+    result = await get_status(
+        client,
+        "acme",
+        "widgets",
+    )
+
+    assert result["hasTargetState"] is True
+
+    target_state_calls = [
+        call
+        for call in client.calls
+        if call["method"] == "GET"
+        and call["path"] == "/repos/acme/widgets/contents/.agent-orchestrator/state/target_state.md"
+    ]
+    assert target_state_calls
+    assert target_state_calls[0]["kwargs"]["params"]["ref"] == "master"
+
+
 @pytest.mark.asyncio
 async def test_list_development_pull_requests_filters_meta_prs() -> None:
     client = FakeGitHubClient()
@@ -468,3 +514,9 @@ async def test_dispatch_workflow_surfaces_actionable_422_errors() -> None:
             workflow_file="orchestrator.yml",
             ref="main",
         )
+
+
+def test_rendered_orchestrator_workflow_does_not_default_ref_to_main() -> None:
+    rendered = render_orchestrator_workflow()
+    assert "default: ''" in rendered
+    assert "default: main" not in rendered

@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from backend.app.config import Settings
 from backend.app.main import app
 from backend.app.services.event_log import clear_events
+from backend.app.services.run_state import get_repo_run_state
 from github_agent_orchestrator import __version__
 
 
@@ -264,6 +265,43 @@ def test_start_stop_status_and_list_repos_endpoints(monkeypatch) -> None:
     assert repos_response.json() == ["acme/widgets"]
 
 
+def test_start_endpoint_uses_repo_default_branch_when_ref_omitted(monkeypatch) -> None:
+    _set_required_backend_env(monkeypatch)
+
+    import backend.app.routes.actions as actions_routes
+
+    actions_routes.get_settings.cache_clear()
+
+    class _Client:
+        async def request(self, method, path_or_url, **_kwargs):
+            if method == "GET" and path_or_url == "/repos/acme/widgets":
+                return {"default_branch": "master"}
+            raise AssertionError(f"Unexpected request: {method} {path_or_url}")
+
+    async def fake_create_client(*_args, **_kwargs):
+        return _Client()
+
+    async def fake_dispatch(*_args, **kwargs):
+        return {
+            "owner": "acme",
+            "repo": "widgets",
+            "workflow": "orchestrator.yml",
+            "ref": kwargs["ref"],
+            "dispatched": True,
+        }
+
+    monkeypatch.setattr(actions_routes, "create_github_client", fake_create_client)
+    monkeypatch.setattr(actions_routes, "dispatch_workflow", fake_dispatch)
+
+    client = TestClient(app)
+    response = client.post("/repos/acme/widgets/start", json={})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["dispatched"] is True
+    assert payload["ref"] == "master"
+
+
 def test_development_prs_endpoint(monkeypatch) -> None:
     _set_required_backend_env(monkeypatch)
 
@@ -457,6 +495,33 @@ def test_dispatch_workflow_run_endpoint_returns_actionable_error_on_bootstrap_40
     assert "lacks required permissions" in detail
     assert "Contents: Read and write" in detail
     assert "Workflows: Read and write" in detail
+
+
+def test_dispatch_workflow_run_endpoint_persists_failure_reason_in_run_state(monkeypatch) -> None:
+    _set_required_backend_env(monkeypatch)
+
+    import backend.app.routes.repos as repos_routes
+
+    repos_routes.get_settings.cache_clear()
+
+    async def fake_create_client(*_args, **_kwargs):
+        return object()
+
+    async def fake_dispatch(*_args, **_kwargs):
+        raise ValueError("No ref found for: main")
+
+    monkeypatch.setattr(repos_routes, "create_github_client", fake_create_client)
+    monkeypatch.setattr(repos_routes, "dispatch_workflow", fake_dispatch)
+
+    client = TestClient(app)
+    response = client.post("/repos/acme/widgets/run", json={"ref": "main"})
+
+    assert response.status_code == 502
+    run_state = get_repo_run_state("acme/widgets")
+    assert run_state.status == "error"
+    assert isinstance(run_state.current_step, str)
+    assert "Workflow dispatch failed:" in run_state.current_step
+    assert "No ref found for: main" in run_state.current_step
 
 
 def test_webhook_endpoint_accepts_valid_signature(monkeypatch) -> None:

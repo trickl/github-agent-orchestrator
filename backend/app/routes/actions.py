@@ -17,7 +17,7 @@ router = APIRouter(tags=["actions"], dependencies=[Depends(require_authenticated
 
 class StartLoopRequest(BaseModel):
     workflow_file: str | None = None
-    ref: str = Field(default="main")
+    ref: str | None = Field(default=None)
 
 
 class StopLoopRequest(BaseModel):
@@ -34,12 +34,21 @@ async def start_loop(
     workflow_file = payload.workflow_file or settings.default_workflow_file
     try:
         client = await create_github_client(settings, owner=owner, repo=repo)
+        requested_ref = payload.ref.strip() if isinstance(payload.ref, str) else ""
+        effective_ref = requested_ref
+        if not effective_ref:
+            repo_data = await client.request("GET", f"/repos/{owner}/{repo}")
+            default_branch = repo_data.get("default_branch") if isinstance(repo_data, dict) else None
+            if not isinstance(default_branch, str) or not default_branch.strip():
+                raise RuntimeError(f"Repository '{owner}/{repo}' did not include a valid default_branch")
+            effective_ref = default_branch.strip()
+
         return await dispatch_workflow(
             client,
             owner,
             repo,
             workflow_file=workflow_file,
-            ref=payload.ref,
+            ref=effective_ref,
         )
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Failed to dispatch workflow: {exc}") from exc

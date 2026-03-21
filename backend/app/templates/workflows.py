@@ -17,7 +17,7 @@ on:
       ref:
         description: Git ref to run orchestration against
         required: false
-        default: main
+        default: ''
         type: string
 
 permissions:
@@ -33,6 +33,13 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.inputs.ref || github.ref_name }}
+
+      - name: Report resolved branch/ref
+        run: |
+          echo "workflow_input_ref=${{ github.event.inputs.ref || '<empty>' }}"
+          echo "github_ref=${{ github.ref }}"
+          echo "github_ref_name=${{ github.ref_name }}"
+          echo "repository=${{ github.repository }}"
 
       - name: Setup Python
         uses: actions/setup-python@v5

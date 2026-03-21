@@ -197,7 +197,9 @@ async def dispatch_repo_workflow(
             if isinstance(default_branch, str) and default_branch.strip():
                 effective_ref = default_branch.strip()
             else:
-                effective_ref = "main"
+                raise RuntimeError(
+                    f"Repository '{repo_full_name}' did not include a valid default_branch"
+                )
         try:
             dispatch_result = await dispatch_workflow(
                 client,
@@ -235,7 +237,8 @@ async def dispatch_repo_workflow(
         )
     except Exception as exc:
         logger.exception("Failed to run orchestrator for %s: %s", repo_full_name, exc)
-        set_repo_run_state(repo_full_name, status="error", current_step="Workflow dispatch failed")
+        error_step = f"Workflow dispatch failed: {exc}"
+        set_repo_run_state(repo_full_name, status="error", current_step=error_step)
         raise HTTPException(
             status_code=502,
             detail=f"Failed to run orchestrator: {exc}",

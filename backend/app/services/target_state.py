@@ -56,7 +56,7 @@ async def _resolve_target_branch(
         default_branch = repo_payload.get("default_branch")
         if isinstance(default_branch, str) and default_branch.strip():
             return default_branch.strip()
-    return "main"
+    raise RuntimeError(f"Repository '{owner}/{repo}' did not include a valid default_branch")
 
 
 async def upsert_target_state(
