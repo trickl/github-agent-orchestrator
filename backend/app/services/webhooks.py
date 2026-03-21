@@ -82,6 +82,29 @@ def _handle_installation(action: str | None, payload: dict[str, Any]) -> dict[st
     }
 
 
+def _handle_pull_request(action: str | None, payload: dict[str, Any]) -> dict[str, Any]:
+    pr = _as_dict(payload.get("pull_request"))
+    repository = _as_dict(payload.get("repository"))
+    base = _as_dict(pr.get("base"))
+    merged = bool(pr.get("merged"))
+    should_trigger_run = action == "closed" and merged
+
+    return {
+        "kind": "pull_request",
+        "action": action,
+        "should_trigger_run": should_trigger_run,
+        "repository": repository.get("full_name"),
+        "pull_request": {
+            "number": pr.get("number"),
+            "state": pr.get("state"),
+            "merged": merged,
+            "merge_commit_sha": pr.get("merge_commit_sha"),
+            "base_ref": base.get("ref"),
+        },
+        "summary": f"pull_request:{action or 'unknown'}",
+    }
+
+
 def _handle_ping(payload: dict[str, Any]) -> dict[str, Any]:
     hook = _as_dict(payload.get("hook"))
     return {
@@ -102,6 +125,8 @@ def handle_webhook_event(event: str | None, payload: dict[str, Any]) -> dict[str
         return _handle_installation_repositories(action, payload)
     if event == "installation":
         return _handle_installation(action, payload)
+    if event == "pull_request":
+        return _handle_pull_request(action, payload)
     if event == "ping":
         return _handle_ping(payload)
 

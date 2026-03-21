@@ -64,7 +64,7 @@ jobs:
           ORCHESTRATOR_GITHUB_TOKEN: ${{ secrets.ORCHESTRATOR_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
           set +e
-          orchestrator run --repo ${{ github.repository }}
+          orchestrator run --repo ${{ github.repository }} --heal-orphans
           exit_code=$?
           set -e
 

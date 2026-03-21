@@ -26,6 +26,10 @@ class Settings(BaseSettings):
         default="orchestrator.yml", alias="GITHUB_ORCHESTRATOR_WORKFLOW_FILE"
     )
     github_webhook_secret: str = Field(default="", alias="GITHUB_WEBHOOK_SECRET")
+    webhook_auto_run_on_pr_merge: bool = Field(
+        default=False,
+        alias="WEBHOOK_AUTO_RUN_ON_PR_MERGE",
+    )
 
     backend_require_auth: bool = Field(default=True, alias="BACKEND_REQUIRE_AUTH")
     github_oauth_client_id: str = Field(default="", alias="GITHUB_OAUTH_CLIENT_ID")
