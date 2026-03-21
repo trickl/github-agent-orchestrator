@@ -19,6 +19,9 @@ on:
         required: false
         default: ''
         type: string
+  workflow_run:
+    workflows: ["Copilot coding agent"]
+    types: [completed]
 
 permissions:
   contents: write
@@ -64,7 +67,7 @@ jobs:
           ORCHESTRATOR_GITHUB_TOKEN: ${{ secrets.ORCHESTRATOR_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
           set +e
-          gao run --repo ${{ github.repository }} --heal-orphans
+          gao run --repo ${{ github.repository }} --mode auto --heal-orphans
           exit_code=$?
           set -e
 

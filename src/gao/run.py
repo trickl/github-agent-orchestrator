@@ -81,8 +81,7 @@ def _stage_reason(status: dict[str, Any]) -> str:
 
 def _work_remaining(status: dict[str, Any]) -> bool:
     stage = _stage(status)
-    reason = _stage_reason(status)
-    if stage == "1a" and reason == _NO_WORK_STAGE_REASON:
+    if not stage:
         return False
     return True
 
