@@ -1272,6 +1272,66 @@ def _try_merge_next_ready_review_update_pull_request(
     )
 
 
+def _propagate_pending_files_from_work_branch(
+    *,
+    settings: ServerSettings,
+    repo: str,
+    pr_data: dict[str, Any],
+    default_branch: str,
+) -> list[str]:
+    """Copy pending queue files from a work branch to the default branch.
+
+    When a gap-analysis or review-consumption PR is merged into an intermediate
+    work branch (e.g. ``orchestrator/work/issue-N``), the pending queue files it
+    created are stranded there.  The orchestrator's stage detection reads the
+    default branch, so these files must be propagated.
+
+    Returns:
+        List of pending file paths that were propagated.
+    """
+    base = pr_data.get("base", {})
+    base_ref = base.get("ref", "") if isinstance(base, dict) else ""
+    if not base_ref or base_ref == default_branch:
+        return []
+
+    pending_dir = ".agent-orchestrator/issue_queue/pending"
+    work_branch_files = _list_repo_markdown_files_under(
+        settings=settings,
+        repository=repo,
+        dir_path=pending_dir,
+        ref=base_ref,
+    )
+    if not work_branch_files:
+        return []
+
+    default_branch_files = set(
+        _list_repo_markdown_files_under(
+            settings=settings,
+            repository=repo,
+            dir_path=pending_dir,
+            ref=default_branch,
+        )
+    )
+
+    propagated: list[str] = []
+    for file_path in work_branch_files:
+        if file_path in default_branch_files:
+            continue
+        content, _sha = _get_repo_text_file(
+            settings, repository=repo, path=file_path, ref=base_ref
+        )
+        _ensure_repo_text_file_present(
+            settings,
+            repository=repo,
+            path=file_path,
+            content_text=content,
+            branch=default_branch,
+            message=f"Propagate {file_path.split('/')[-1]} from work branch",
+        )
+        propagated.append(file_path)
+    return propagated
+
+
 def _try_merge_next_ready_gap_analysis_pull_request(
     *, settings: ServerSettings, repo: str
 ) -> dict[str, object] | None:
@@ -1333,6 +1393,13 @@ def _try_merge_next_ready_gap_analysis_pull_request(
         pr_data=selected_pr_data,
     )
 
+    propagated = _propagate_pending_files_from_work_branch(
+        settings=settings,
+        repo=repo,
+        pr_data=selected_pr_data,
+        default_branch=branch,
+    )
+
     issue_closed, issue_close_error = _close_issue_best_effort(
         settings=settings,
         repo=repo,
@@ -1340,6 +1407,8 @@ def _try_merge_next_ready_gap_analysis_pull_request(
     )
 
     summary = f"Merged PR #{pr_number}; closed gap analysis issue #{selected_issue_num}"
+    if propagated:
+        summary = f"{summary}; propagated {len(propagated)} pending queue file(s)"
     if issue_close_error:
         summary = f"{summary} (warning: failed to close issue: {issue_close_error})"
 
@@ -1421,6 +1490,13 @@ def _try_merge_next_ready_review_consumption_pull_request(
         pr_data=selected_pr_data,
     )
 
+    propagated = _propagate_pending_files_from_work_branch(
+        settings=settings,
+        repo=repo,
+        pr_data=selected_pr_data,
+        default_branch=branch,
+    )
+
     issue_closed, issue_close_error = _close_issue_best_effort(
         settings=settings,
         repo=repo,
@@ -1428,6 +1504,8 @@ def _try_merge_next_ready_review_consumption_pull_request(
     )
 
     summary = f"Merged PR #{pr_number}; closed review consumption issue #{selected_issue_num}"
+    if propagated:
+        summary = f"{summary}; propagated {len(propagated)} pending queue file(s)"
     if issue_close_error:
         summary = f"{summary} (warning: failed to close issue: {issue_close_error})"
 
