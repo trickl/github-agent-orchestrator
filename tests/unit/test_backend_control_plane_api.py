@@ -351,8 +351,12 @@ def test_dispatch_workflow_run_endpoint(monkeypatch) -> None:
             "dispatched": True,
         }
 
+    async def fake_ensure_workflow(*_args, **_kwargs):
+        return {"status": "updated"}
+
     monkeypatch.setattr(repos_routes, "create_github_client", fake_create_client)
     monkeypatch.setattr(repos_routes, "dispatch_workflow", fake_dispatch)
+    monkeypatch.setattr(repos_routes, "ensure_orchestrator_workflow", fake_ensure_workflow)
 
     client = TestClient(app)
     response = client.post("/repos/acme/widgets/run", json={"ref": "main"})
@@ -390,8 +394,12 @@ def test_dispatch_workflow_run_endpoint_uses_repo_default_branch_when_ref_omitte
             "dispatched": True,
         }
 
+    async def fake_ensure_workflow(*_args, **_kwargs):
+        return {"status": "updated"}
+
     monkeypatch.setattr(repos_routes, "create_github_client", fake_create_client)
     monkeypatch.setattr(repos_routes, "dispatch_workflow", fake_dispatch)
+    monkeypatch.setattr(repos_routes, "ensure_orchestrator_workflow", fake_ensure_workflow)
 
     client = TestClient(app)
     response = client.post("/repos/acme/widgets/run", json={})
@@ -451,7 +459,7 @@ def test_dispatch_workflow_run_endpoint_bootstraps_missing_workflow(monkeypatch)
     assert payload["dispatched"] is True
     assert payload["workflow"] == "orchestrator.yml"
     assert payload["ref"] == "main"
-    assert calls["bootstrap"] == 1
+    assert calls["bootstrap"] == 2
     assert calls["dispatch"] == 2
 
 
@@ -467,16 +475,20 @@ def test_dispatch_workflow_run_endpoint_returns_actionable_error_on_bootstrap_40
     async def fake_create_client(*_args, **_kwargs):
         return object()
 
+    calls = {"dispatch": 0, "bootstrap": 0}
+
     async def fake_dispatch(*_args, **_kwargs):
-        raise ValueError(
-            "No GitHub Actions workflows found in target repository 'acme/widgets'. "
-            "The control plane dispatches workflows from the selected target repository "
-            "(not the github-agent-orchestrator control-plane repository). "
-            "Add a workflow file under '.github/workflows' in the target repository "
-            "and enable workflow_dispatch."
-        )
+        calls["dispatch"] += 1
+        return {
+            "owner": "acme",
+            "repo": "widgets",
+            "workflow": "orchestrator.yml",
+            "ref": "main",
+            "dispatched": True,
+        }
 
     async def fake_ensure_workflow(*_args, **_kwargs):
+        calls["bootstrap"] += 1
         raise ValueError(
             "Cannot create or update '.github/workflows/orchestrator.yml' in target repository "
             "'acme/widgets' because the GitHub App lacks required permissions. "
@@ -495,6 +507,8 @@ def test_dispatch_workflow_run_endpoint_returns_actionable_error_on_bootstrap_40
     assert "lacks required permissions" in detail
     assert "Contents: Read and write" in detail
     assert "Workflows: Read and write" in detail
+    assert calls["bootstrap"] == 1
+    assert calls["dispatch"] == 0
 
 
 def test_dispatch_workflow_run_endpoint_persists_failure_reason_in_run_state(monkeypatch) -> None:
@@ -510,8 +524,12 @@ def test_dispatch_workflow_run_endpoint_persists_failure_reason_in_run_state(mon
     async def fake_dispatch(*_args, **_kwargs):
         raise ValueError("No ref found for: main")
 
+    async def fake_ensure_workflow(*_args, **_kwargs):
+        return {"status": "updated"}
+
     monkeypatch.setattr(repos_routes, "create_github_client", fake_create_client)
     monkeypatch.setattr(repos_routes, "dispatch_workflow", fake_dispatch)
+    monkeypatch.setattr(repos_routes, "ensure_orchestrator_workflow", fake_ensure_workflow)
 
     client = TestClient(app)
     response = client.post("/repos/acme/widgets/run", json={"ref": "main"})

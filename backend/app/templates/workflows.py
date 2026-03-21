@@ -46,14 +46,32 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Setup GitHub Agent Orchestrator runtime
-        uses: trickl/github-agent-orchestrator/.github/actions/setup-orchestrator@main
+      - name: Checkout orchestrator runtime source
+        uses: actions/checkout@v4
         with:
-          version: latest
+          repository: trickl/github-agent-orchestrator
+          ref: main
+          path: .orchestrator-runtime
+
+      - name: Install GitHub Agent Orchestrator runtime (editable)
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade --no-cache-dir -e ./.orchestrator-runtime
+          python -c 'import github_agent_orchestrator as g; print(f"orchestrator_version={g.__version__}")'
 
       - name: Run orchestrator iteration
         env:
-          ORCHESTRATOR_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ORCHESTRATOR_GITHUB_TOKEN: ${{ secrets.ORCHESTRATOR_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
+          set +e
           orchestrator run --repo ${{ github.repository }}
+          exit_code=$?
+          set -e
+
+          if [[ "$exit_code" -eq 3 ]]; then
+            echo "No actionable stage detected; treating as successful no-op."
+            exit 0
+          fi
+
+          exit "$exit_code"
 """

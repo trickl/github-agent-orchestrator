@@ -520,3 +520,6 @@ def test_rendered_orchestrator_workflow_does_not_default_ref_to_main() -> None:
     rendered = render_orchestrator_workflow()
     assert "default: ''" in rendered
     assert "default: main" not in rendered
+    assert "repository: trickl/github-agent-orchestrator" in rendered
+    assert "python -m pip install --upgrade --no-cache-dir -e ./.orchestrator-runtime" in rendered
+    assert "No actionable stage detected; treating as successful no-op." in rendered

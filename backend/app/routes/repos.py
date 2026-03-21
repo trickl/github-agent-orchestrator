@@ -200,6 +200,8 @@ async def dispatch_repo_workflow(
                 raise RuntimeError(
                     f"Repository '{repo_full_name}' did not include a valid default_branch"
                 )
+
+        await ensure_orchestrator_workflow(client, owner, repo)
         try:
             dispatch_result = await dispatch_workflow(
                 client,
