@@ -526,3 +526,5 @@ def test_rendered_orchestrator_workflow_does_not_default_ref_to_main() -> None:
     assert "python -m pip install --upgrade --no-cache-dir -e ./.orchestrator-runtime" in rendered
     assert "gao run --repo ${{ github.repository }} --mode auto --heal-orphans" in rendered
     assert "No actionable stage detected; treating as successful no-op." in rendered
+    assert "schedule:" in rendered
+    assert "cron:" in rendered

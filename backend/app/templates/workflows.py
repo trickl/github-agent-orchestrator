@@ -22,6 +22,8 @@ on:
   workflow_run:
     workflows: ["Copilot coding agent"]
     types: [completed]
+  schedule:
+    - cron: '*/10 * * * *'
 
 permissions:
   contents: write
@@ -63,6 +65,7 @@ jobs:
           python -c 'import github_agent_orchestrator as g; print(f"orchestrator_version={g.__version__}")'
 
       - name: Run orchestrator iteration
+        id: orchestrate
         env:
           ORCHESTRATOR_GITHUB_TOKEN: ${{ secrets.ORCHESTRATOR_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
@@ -71,10 +74,21 @@ jobs:
           exit_code=$?
           set -e
 
+          echo "exit_code=$exit_code" >> "$GITHUB_OUTPUT"
+
           if [[ "$exit_code" -eq 3 ]]; then
             echo "No actionable stage detected; treating as successful no-op."
             exit 0
           fi
 
           exit "$exit_code"
+
+      - name: Re-dispatch orchestrator for follow-up
+        if: steps.orchestrate.outputs.exit_code == '0'
+        env:
+          GH_TOKEN: ${{ secrets.ORCHESTRATOR_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Orchestrator took action; scheduling follow-up dispatch..."
+          sleep 10
+          gh workflow run orchestrator.yml --repo ${{ github.repository }} || echo "Self-dispatch failed; rely on schedule trigger."
 """
