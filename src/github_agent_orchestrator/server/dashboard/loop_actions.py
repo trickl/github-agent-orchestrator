@@ -701,6 +701,74 @@ def _heal_orphaned_processed_queue_items(
     branch = _get_default_branch(settings, repository=repo)
     mode = getattr(settings, "loop_mode", "build")
 
+    # Recovery: if a promotion crashed after creating the issue but before moving the
+    # file from pending → processed, pending files can be title-matched to open issues
+    # even though no processed file exists.  Detect and fix this first.
+    pending_paths = _list_repo_markdown_files_under(
+        settings=settings,
+        repository=repo,
+        dir_path=DEVELOPMENT_QUEUE_PENDING_DIR,
+        ref=branch,
+    )
+    if pending_paths:
+        raw_issues = _list_open_issues_raw(settings, repository=repo)
+        open_issues_for_match = [it for it in raw_issues if isinstance(it, dict)]
+        recovered: list[dict[str, object]] = []
+        for ppath in sorted(pending_paths):
+            content, sha = _get_repo_text_file(
+                settings, repository=repo, path=ppath, ref=branch,
+            )
+            title_norm = _first_markdown_line_as_title(content)
+            matched_issue = _best_match_issue_number(title_norm, open_issues_for_match)
+            if not isinstance(matched_issue, int):
+                queue_id = _queue_filename(ppath)
+                matched_issue = _search_issue_number_by_queue_marker(
+                    settings, repository=repo, queue_id=queue_id,
+                )
+            if not isinstance(matched_issue, int):
+                continue
+            # Stalled pending file — move to processed and try to assign Copilot.
+            queue_id = _queue_filename(ppath)
+            processed_path = f".agent-orchestrator/issue_queue/processed/{queue_id}"
+            _ensure_repo_file_present_in_processed(
+                settings,
+                repository=repo,
+                processed_path=processed_path,
+                content_text=content,
+                branch=branch,
+                message=f"Recover stalled pending file: move {queue_id} to processed",
+            )
+            _delete_repo_file_if_present(
+                settings,
+                repository=repo,
+                path=ppath,
+                sha=sha,
+                branch=branch,
+                message=f"Recover stalled pending file: remove {queue_id} from pending",
+            )
+            assigned: list[str] = []
+            with suppress(Exception):
+                assigned = _assign_issue_to_copilot(
+                    settings,
+                    repository=repo,
+                    issue_number=matched_issue,
+                    target_repo=repo,
+                    base_branch=branch,
+                    instructions="",
+                )
+            recovered.append({
+                "queueId": queue_id,
+                "issueNumber": matched_issue,
+                "assigned": assigned,
+            })
+        if recovered:
+            return {
+                "repo": repo,
+                "branch": branch,
+                "mode": mode,
+                "recoveredStalledPending": recovered,
+            }
+
     processed_paths = _list_repo_markdown_files_under(
         settings=settings,
         repository=repo,
@@ -1648,15 +1716,8 @@ def _promote_next_unpromoted_development_queue_item(
         existing_issue_num = issue_num
         created = True
 
-    assigned = _assign_issue_to_copilot(
-        settings,
-        repository=repo,
-        issue_number=existing_issue_num,
-        target_repo=repo,
-        base_branch=branch,
-        instructions="",
-    )
-
+    # Move file to processed BEFORE assigning Copilot. This ensures the queue
+    # state is consistent even if the assignment call fails (e.g. transient 404).
     processed_path = f".agent-orchestrator/issue_queue/processed/{queue_id}"
     _ensure_repo_file_present_in_processed(
         settings,
@@ -1673,6 +1734,15 @@ def _promote_next_unpromoted_development_queue_item(
         sha=selected_sha,
         branch=branch,
         message=f"Remove {queue_id} from issue_queue/pending (promoted)",
+    )
+
+    assigned = _assign_issue_to_copilot(
+        settings,
+        repository=repo,
+        issue_number=existing_issue_num,
+        target_repo=repo,
+        base_branch=branch,
+        instructions="",
     )
 
     issue_url = _make_github_issue_url(repo, existing_issue_num)
@@ -1787,15 +1857,8 @@ def _promote_next_unpromoted_capability_queue_item(
         existing_issue_num = issue_num
         created = True
 
-    assigned = _assign_issue_to_copilot(
-        settings,
-        repository=repo,
-        issue_number=existing_issue_num,
-        target_repo=repo,
-        base_branch=branch,
-        instructions="",
-    )
-
+    # Move file to processed BEFORE assigning Copilot. This ensures the queue
+    # state is consistent even if the assignment call fails (e.g. transient 404).
     processed_path = f".agent-orchestrator/issue_queue/processed/{queue_id}"
     _ensure_repo_file_present_in_processed(
         settings,
@@ -1812,6 +1875,15 @@ def _promote_next_unpromoted_capability_queue_item(
         sha=selected_sha,
         branch=branch,
         message=f"Remove {queue_id} from issue_queue/pending (promoted)",
+    )
+
+    assigned = _assign_issue_to_copilot(
+        settings,
+        repository=repo,
+        issue_number=existing_issue_num,
+        target_repo=repo,
+        base_branch=branch,
+        instructions="",
     )
 
     issue_url = _make_github_issue_url(repo, existing_issue_num)
