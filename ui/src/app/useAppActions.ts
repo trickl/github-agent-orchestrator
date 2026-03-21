@@ -2,7 +2,13 @@ import React from 'react';
 import { apiFetch } from '../lib/apiClient';
 import { endpoints } from '../lib/endpoints';
 import { DASHBOARD_TOUR_DISABLED_KEY, ONBOARDING_COMPLETE_KEY, REPO_STORAGE_KEY } from './types';
-import type { AuthStartResponse, DevelopmentPullRequest, RepoInitializeResponse, RepoRunResponse } from './types';
+import type {
+  AuthStartResponse,
+  DevelopmentPullRequest,
+  OrchestratorMode,
+  RepoInitializeResponse,
+  RepoRunResponse,
+} from './types';
 import type { AppDataResult } from './useAppData';
 
 function isRepoRunResponse(value: unknown): value is RepoRunResponse {
@@ -23,6 +29,7 @@ function isRepoRunResponse(value: unknown): value is RepoRunResponse {
 export function useAppActions(data: AppDataResult) {
   const {
     selectedRepoParts,
+    selectedMode,
     targetStateText,
     running,
     loadRepoData,
@@ -41,6 +48,10 @@ export function useAppActions(data: AppDataResult) {
     setInitProgress,
     setShowTour,
   } = data;
+
+  const resolveBackendMode = React.useCallback((mode: OrchestratorMode): 'manual' | 'auto' => {
+    return mode === 'auto' ? 'auto' : 'manual';
+  }, []);
 
   const handleTargetStateSubmit = React.useCallback(async () => {
     if (!selectedRepoParts) return;
@@ -66,7 +77,13 @@ export function useAppActions(data: AppDataResult) {
     setError(null);
     setRunToast(null);
     const { owner, repo } = selectedRepoParts;
+    const backendMode = resolveBackendMode(selectedMode);
     try {
+      await apiFetch(String(endpoints.repoOrchestratorMode(owner, repo)), {
+        method: 'POST',
+        body: JSON.stringify({ mode: backendMode }),
+      });
+
       const runResultRaw = await apiFetch<unknown>(String(endpoints.repoRun(owner, repo)), {
         method: 'POST',
         body: JSON.stringify({}),
@@ -96,7 +113,17 @@ export function useAppActions(data: AppDataResult) {
     } finally {
       setRunning(false);
     }
-  }, [loadRepoData, running, selectedRepoParts, setDevelopmentPrs, setError, setRunToast, setRunning]);
+  }, [
+    loadRepoData,
+    resolveBackendMode,
+    running,
+    selectedMode,
+    selectedRepoParts,
+    setDevelopmentPrs,
+    setError,
+    setRunToast,
+    setRunning,
+  ]);
 
   const handleConnectGithub = React.useCallback(async () => {
     setIsConnecting(true);
@@ -166,7 +193,7 @@ export function useAppActions(data: AppDataResult) {
         method: 'POST',
         body: JSON.stringify({
           target_state: content,
-          orchestrator_config: 'mode: semi\n',
+          orchestrator_config: `mode: ${resolveBackendMode(selectedMode)}\n`,
           open_pr: false,
           apply_directly: true,
         }),
@@ -194,7 +221,9 @@ export function useAppActions(data: AppDataResult) {
     setInitProgress,
     setIsStartingFirstIteration,
     setScene,
+    selectedMode,
     targetStateText,
+    resolveBackendMode,
   ]);
 
   const handleSaveForLater = React.useCallback(async () => {

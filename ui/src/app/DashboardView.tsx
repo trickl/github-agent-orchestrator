@@ -27,25 +27,17 @@ import {
 } from '@mui/material';
 import DarkModeOutlinedIcon from '@mui/icons-material/DarkModeOutlined';
 import LightModeOutlinedIcon from '@mui/icons-material/LightModeOutlined';
+import {
+  getCanonicalIterationState,
+  getCompletedWorkCount,
+  isAwaitingManualApproval,
+} from './iterationSemantics';
+import type { DevelopmentPullRequest, OrchestratorMode, RepoStatusResponse } from './types';
 
 type ColorModeValue = {
   mode: 'light' | 'dark';
   toggle: () => void;
 } | null;
-
-type RepoStatusResponse = {
-  hasTargetState: boolean;
-  status: string;
-  currentStep?: string | null;
-  active_issue_ids?: number[];
-  active_pr_ids?: number[];
-};
-
-type DevelopmentPullRequest = {
-  title: string;
-  url: string;
-  createdAt: string;
-};
 
 type Props = {
   colorMode: ColorModeValue;
@@ -55,6 +47,8 @@ type Props = {
   onSelectRepo: (repo: string) => void;
   status: RepoStatusResponse | null;
   running: boolean;
+  selectedMode: OrchestratorMode;
+  onModeChange: (mode: OrchestratorMode) => void;
   developmentPrs: DevelopmentPullRequest[];
   targetStateText: string;
   onTargetStateChange: (value: string) => void;
@@ -91,13 +85,6 @@ function formatTimestamp(iso: string): string {
   return date.toLocaleString();
 }
 
-function normalizeStatus(status: string | null | undefined): 'idle' | 'running' | 'error' {
-  const normalized = (status ?? '').trim().toLowerCase();
-  if (normalized === 'running') return 'running';
-  if (normalized === 'error') return 'error';
-  return 'idle';
-}
-
 export function DashboardView({
   colorMode,
   authLogin,
@@ -106,6 +93,8 @@ export function DashboardView({
   onSelectRepo,
   status,
   running,
+  selectedMode,
+  onModeChange,
   developmentPrs,
   targetStateText,
   onTargetStateChange,
@@ -116,13 +105,14 @@ export function DashboardView({
   onCloseTour,
   onDisableTour,
 }: Props): React.JSX.Element {
-  const normalizedStatus = normalizeStatus(status?.status);
+  const canonicalStatus = getCanonicalIterationState(status, selectedMode);
   const [tourStep, setTourStep] = React.useState(0);
   const [dontShowAgain, setDontShowAgain] = React.useState(false);
 
-  const completedWork = developmentPrs.length;
-  const remainingWork = status?.active_issue_ids?.length ?? 0;
-  const iterationCount = completedWork + (normalizedStatus === 'running' ? 1 : 0);
+  const completedWork = getCompletedWorkCount(developmentPrs);
+  const remainingWork = status?.status_artifact?.active_issue_ids?.length ?? status?.active_issue_ids?.length ?? 0;
+  const iterationCount = completedWork + (canonicalStatus === 'running' ? 1 : 0);
+  const awaitingApproval = isAwaitingManualApproval(status, selectedMode);
 
   const handleCloseTour = () => {
     if (dontShowAgain) {
@@ -155,7 +145,7 @@ export function DashboardView({
                   Signed in as: {authLogin ?? 'unknown'}
                 </Typography>
                 <Typography color="text.secondary">Branch: main</Typography>
-                <Typography color="text.secondary">Status: {normalizedStatus}</Typography>
+                <Typography color="text.secondary">Status: {canonicalStatus}</Typography>
               </Stack>
 
               <Stack direction="row" spacing={1} alignItems="center">
@@ -184,6 +174,21 @@ export function DashboardView({
             </Stack>
           </CardContent>
         </Card>
+
+        {awaitingApproval ? (
+          <Alert
+            severity="warning"
+            action={
+              firstPrUrl ? (
+                <Button color="inherit" size="small" component="a" href={firstPrUrl} target="_blank" rel="noreferrer">
+                  Open PR
+                </Button>
+              ) : undefined
+            }
+          >
+            Action required: manual approval is needed to merge the current PR before this iteration can complete.
+          </Alert>
+        ) : null}
 
         <Grid container spacing={2}>
           <Grid item xs={12} md={8}>
@@ -247,12 +252,25 @@ export function DashboardView({
               </Typography>
 
               <Stack direction="row" spacing={1}>
+                <FormControl size="small" sx={{ minWidth: 250 }}>
+                  <InputLabel id="mode-select-label">Run mode</InputLabel>
+                  <Select
+                    labelId="mode-select-label"
+                    label="Run mode"
+                    value={selectedMode}
+                    onChange={(event) => onModeChange(event.target.value as OrchestratorMode)}
+                    disabled={running || canonicalStatus === 'running'}
+                  >
+                    <MenuItem value="manual">Manual Approve</MenuItem>
+                    <MenuItem value="auto">Auto-Approve (Continuous)</MenuItem>
+                  </Select>
+                </FormControl>
                 <Button
                   variant="contained"
-                  disabled={running || normalizedStatus === 'running'}
+                  disabled={running || canonicalStatus === 'running'}
                   onClick={onRunNextIteration}
                 >
-                  Run next iteration
+                  Run iteration
                 </Button>
                 <Button variant="outlined" component="a" href={firstPrUrl} target="_blank" rel="noreferrer" disabled={!firstPrUrl}>
                   View pull requests

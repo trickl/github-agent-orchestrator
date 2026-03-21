@@ -24,6 +24,8 @@ export const endpoints = {
     `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/target-state`,
   repoRun: (owner: string, repo: string): string =>
     `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/run`,
+  repoOrchestratorMode: (owner: string, repo: string): string =>
+    `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/orchestrator-mode`,
   developmentPrs: (owner: string, repo: string): string =>
     `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/development-prs`,
 

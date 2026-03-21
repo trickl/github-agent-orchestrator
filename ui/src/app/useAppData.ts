@@ -4,6 +4,7 @@ import { endpoints } from '../lib/endpoints';
 import {
   DASHBOARD_TOUR_DISABLED_KEY,
   IDLE_POLL_MS,
+  MODE_STORAGE_KEY,
   ONBOARDING_COMPLETE_KEY,
   REPO_STORAGE_KEY,
   RUNNING_POLL_MS,
@@ -14,6 +15,7 @@ import type {
   DevelopmentPullRequest,
   GithubAppInstallUrlResponse,
   OnboardingScene,
+  OrchestratorMode,
   RepoStatusResponse,
   RunToast,
 } from './types';
@@ -41,6 +43,11 @@ export function isNoInstallationsError(err: unknown): boolean {
   );
 }
 
+function normalizeMode(mode: string | null): OrchestratorMode {
+  if (mode === 'auto') return 'auto';
+  return 'manual';
+}
+
 export type AppDataResult = ReturnType<typeof useAppData>;
 
 export function useAppData() {
@@ -52,6 +59,9 @@ export function useAppData() {
   const [developmentPrs, setDevelopmentPrs] = React.useState<DevelopmentPullRequest[]>([]);
   const [targetStateText, setTargetStateText] = React.useState(
     () => window.localStorage.getItem(TARGET_DRAFT_STORAGE_KEY) ?? ''
+  );
+  const [selectedMode, setSelectedMode] = React.useState<OrchestratorMode>(() =>
+    normalizeMode(window.localStorage.getItem(MODE_STORAGE_KEY))
   );
   const [scene, setScene] = React.useState<OnboardingScene>('welcome');
   const [initialSceneResolved, setInitialSceneResolved] = React.useState(false);
@@ -230,6 +240,10 @@ export function useAppData() {
     window.localStorage.setItem(TARGET_DRAFT_STORAGE_KEY, targetStateText);
   }, [targetStateText]);
 
+  React.useEffect(() => {
+    window.localStorage.setItem(MODE_STORAGE_KEY, selectedMode);
+  }, [selectedMode]);
+
   const markOnboardingCompleted = React.useCallback(() => {
     window.localStorage.setItem(ONBOARDING_COMPLETE_KEY, 'true');
     if (window.localStorage.getItem(DASHBOARD_TOUR_DISABLED_KEY) !== 'true') {
@@ -245,6 +259,7 @@ export function useAppData() {
     status,
     developmentPrs,
     targetStateText,
+    selectedMode,
     scene,
     repoSearch,
     loading,
@@ -262,6 +277,7 @@ export function useAppData() {
     setRepos,
     setSelectedRepo,
     setTargetStateText,
+    setSelectedMode,
     setRunToast,
     setScene,
     setShowTour,

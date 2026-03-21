@@ -17,6 +17,7 @@ export function App(): React.JSX.Element {
     targetStateText,
     scene,
     repoSearch,
+    selectedMode,
     loading,
     running,
     isConnecting,
@@ -29,6 +30,7 @@ export function App(): React.JSX.Element {
     setRepoSearch,
     setSelectedRepo,
     setTargetStateText,
+    setSelectedMode,
     setRunToast,
     setScene,
     setShowTour,
@@ -93,6 +95,8 @@ export function App(): React.JSX.Element {
         onSelectRepo={setSelectedRepo}
         status={status}
         running={running}
+        selectedMode={selectedMode}
+        onModeChange={setSelectedMode}
         developmentPrs={developmentPrs}
         targetStateText={targetStateText}
         onTargetStateChange={setTargetStateText}

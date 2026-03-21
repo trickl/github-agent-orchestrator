@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -16,7 +17,7 @@ from backend.app.services.install import ensure_orchestrator_workflow, initializ
 from backend.app.services.orchestrator_version import update_orchestrator_version
 from backend.app.services.run_state import set_repo_run_state
 from backend.app.services.status import list_accessible_repositories, list_development_pull_requests
-from backend.app.services.target_state import upsert_target_state
+from backend.app.services.target_state import upsert_orchestrator_mode, upsert_target_state
 from backend.app.services.workflows import dispatch_workflow
 
 
@@ -28,7 +29,7 @@ router = APIRouter(tags=["repos"], dependencies=[Depends(require_authenticated_u
 
 class InitializeRepoRequest(BaseModel):
     target_state: str = Field(default="# Target State\n\nDescribe the intended end state.\n")
-    orchestrator_config: str = Field(default="mode: semi\n")
+    orchestrator_config: str = Field(default="mode: manual\n")
     branch_name: str | None = Field(default=None)
     open_pr: bool = Field(default=True)
     apply_directly: bool = Field(default=False)
@@ -36,6 +37,11 @@ class InitializeRepoRequest(BaseModel):
 
 class UpsertTargetStateRequest(BaseModel):
     content: str = Field(..., min_length=1)
+    branch: str | None = Field(default=None)
+
+
+class UpsertOrchestratorModeRequest(BaseModel):
+    mode: Literal["manual", "semi", "auto"] = Field(default="manual")
     branch: str | None = Field(default=None)
 
 
@@ -94,7 +100,7 @@ async def list_development_prs(
     owner: str,
     repo: str,
     settings: Settings = Depends(get_settings),
-) -> list[dict[str, str]]:
+) -> list[dict[str, str | None]]:
     try:
         client = await create_github_client(settings, owner=owner, repo=repo)
         return await list_development_pull_requests(client, owner, repo)
@@ -149,6 +155,28 @@ async def create_or_update_target_state(
         diagnosed = _diagnose_github_app_failure(exc)
         logger.exception("Failed to upsert target state for %s/%s: %s", owner, repo, diagnosed)
         raise HTTPException(status_code=502, detail=f"Failed to upsert target state: {diagnosed}") from exc
+
+
+@router.post("/repos/{owner}/{repo}/orchestrator-mode")
+async def create_or_update_orchestrator_mode(
+    owner: str,
+    repo: str,
+    payload: UpsertOrchestratorModeRequest,
+    settings: Settings = Depends(get_settings),
+) -> dict[str, object]:
+    try:
+        client = await create_github_client(settings, owner=owner, repo=repo)
+        return await upsert_orchestrator_mode(
+            client,
+            owner,
+            repo,
+            mode=payload.mode,
+            branch=payload.branch,
+        )
+    except Exception as exc:
+        diagnosed = _diagnose_github_app_failure(exc)
+        logger.exception("Failed to upsert orchestrator mode for %s/%s: %s", owner, repo, diagnosed)
+        raise HTTPException(status_code=502, detail=f"Failed to upsert orchestrator mode: {diagnosed}") from exc
 
 
 @router.post(

@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from backend.app.services.target_state import upsert_target_state
+from backend.app.services.target_state import upsert_orchestrator_mode, upsert_target_state
 
 
 class FakeGitHubClient:
@@ -116,3 +116,79 @@ async def test_upsert_target_state_uses_repo_default_branch_when_branch_not_prov
         and c["path"].endswith("/.agent-orchestrator/state/target_state.md")
     ][0]
     assert target_put["kwargs"]["json"]["branch"] == "develop"
+
+
+class FakeModeGitHubClient:
+    def __init__(self, *, config_content: str | None, config_sha: str | None) -> None:
+        self.config_content = config_content
+        self.config_sha = config_sha
+        self.calls: list[dict[str, Any]] = []
+
+    async def request(self, method: str, path_or_url: str, **kwargs: Any) -> Any:
+        self.calls.append({"method": method, "path": path_or_url, "kwargs": kwargs})
+
+        if method == "GET" and path_or_url == "/repos/acme/widgets":
+            return {"default_branch": "main"}
+
+        if method == "GET" and path_or_url.endswith("/.agent-orchestrator/config.yml"):
+            if self.config_sha is None:
+                return {"message": "Not Found"}
+            payload = {"sha": self.config_sha}
+            if self.config_content is not None:
+                payload["content"] = base64.b64encode(self.config_content.encode("utf-8")).decode("utf-8")
+            return payload
+
+        if method == "PUT" and path_or_url.endswith("/.agent-orchestrator/config.yml"):
+            return {"content": {"path": ".agent-orchestrator/config.yml"}}
+
+        raise AssertionError(f"Unexpected request: {method} {path_or_url}")
+
+
+@pytest.mark.asyncio
+async def test_upsert_orchestrator_mode_creates_config_when_missing() -> None:
+    client = FakeModeGitHubClient(config_content=None, config_sha=None)
+
+    result = await upsert_orchestrator_mode(
+        client,
+        "acme",
+        "widgets",
+        mode="auto",
+    )
+
+    assert result["config_created"] is True
+    assert result["mode"] == "auto"
+    assert result["updated"] is True
+
+    config_put = [
+        c
+        for c in client.calls
+        if c["method"] == "PUT" and c["path"].endswith("/.agent-orchestrator/config.yml")
+    ][0]
+    encoded = config_put["kwargs"]["json"]["content"]
+    assert base64.b64decode(encoded).decode("utf-8") == "mode: auto\n"
+
+
+@pytest.mark.asyncio
+async def test_upsert_orchestrator_mode_updates_existing_mode_line() -> None:
+    client = FakeModeGitHubClient(config_content="mode: semi\nauto_heal: true\n", config_sha="cfg-sha")
+
+    result = await upsert_orchestrator_mode(
+        client,
+        "acme",
+        "widgets",
+        mode="manual",
+    )
+
+    assert result["config_created"] is False
+    assert result["mode"] == "manual"
+    assert result["updated"] is True
+
+    config_put = [
+        c
+        for c in client.calls
+        if c["method"] == "PUT" and c["path"].endswith("/.agent-orchestrator/config.yml")
+    ][0]
+    payload = config_put["kwargs"]["json"]
+    assert payload["sha"] == "cfg-sha"
+    updated = base64.b64decode(payload["content"]).decode("utf-8")
+    assert updated == "mode: manual\nauto_heal: true\n"

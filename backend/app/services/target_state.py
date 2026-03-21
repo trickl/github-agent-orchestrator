@@ -4,16 +4,25 @@ from __future__ import annotations
 
 import base64
 from typing import Any
+from typing import Literal
 
 from backend.app.github.client import GitHubClient
 
 TARGET_STATE_PATH = ".agent-orchestrator/state/target_state.md"
 ORCHESTRATOR_CONFIG_PATH = ".agent-orchestrator/config.yml"
-DEFAULT_ORCHESTRATOR_CONFIG = "mode: semi\n"
+DEFAULT_ORCHESTRATOR_CONFIG = "mode: manual\n"
+ALLOWED_ORCHESTRATOR_MODES = ("manual", "semi", "auto")
 
 
 def _encode_content(content: str) -> str:
     return base64.b64encode(content.encode("utf-8")).decode("utf-8")
+
+
+def _decode_content(content: str) -> str:
+    try:
+        return base64.b64decode(content.encode("utf-8")).decode("utf-8")
+    except Exception:
+        return ""
 
 
 def _extract_sha(get_content_response: Any) -> str | None:
@@ -23,6 +32,34 @@ def _extract_sha(get_content_response: Any) -> str | None:
     if isinstance(sha, str) and sha.strip():
         return sha
     return None
+
+
+def _extract_content(get_content_response: Any) -> str | None:
+    if not isinstance(get_content_response, dict):
+        return None
+    encoded = get_content_response.get("content")
+    if not isinstance(encoded, str) or not encoded.strip():
+        return None
+    return _decode_content(encoded)
+
+
+def _upsert_mode_in_config(config_text: str, mode: Literal["manual", "semi", "auto"]) -> str:
+    lines = config_text.splitlines()
+    updated = False
+    normalized_lines: list[str] = []
+
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("mode:"):
+            normalized_lines.append(f"mode: {mode}")
+            updated = True
+            continue
+        normalized_lines.append(line)
+
+    if not updated:
+        normalized_lines.append(f"mode: {mode}")
+
+    return "\n".join(normalized_lines).rstrip() + "\n"
 
 
 async def _get_file_sha_if_exists(
@@ -123,4 +160,58 @@ async def upsert_target_state(
         "target_state_created": target_sha is None,
         "config_path": ORCHESTRATOR_CONFIG_PATH,
         "config_created": config_created,
+    }
+
+
+async def upsert_orchestrator_mode(
+    client: GitHubClient,
+    owner: str,
+    repo: str,
+    mode: Literal["manual", "semi", "auto"],
+    branch: str | None = None,
+) -> dict[str, Any]:
+    """Create or update orchestrator mode in repository config."""
+
+    if mode not in ALLOWED_ORCHESTRATOR_MODES:
+        raise ValueError(f"Unsupported orchestrator mode: {mode}")
+
+    resolved_branch = await _resolve_target_branch(client, owner, repo, branch)
+    config_response = await client.request(
+        "GET",
+        f"/repos/{owner}/{repo}/contents/{ORCHESTRATOR_CONFIG_PATH}",
+        params={"ref": resolved_branch},
+        expected_status={200, 404},
+    )
+
+    config_sha = _extract_sha(config_response)
+    existing_config = _extract_content(config_response)
+    if existing_config is None:
+        existing_config = DEFAULT_ORCHESTRATOR_CONFIG
+
+    updated_config = _upsert_mode_in_config(existing_config, mode)
+    is_noop = config_sha is not None and updated_config == existing_config
+
+    if not is_noop:
+        config_payload: dict[str, Any] = {
+            "message": f"Update orchestrator mode to {mode}",
+            "content": _encode_content(updated_config),
+            "branch": resolved_branch,
+        }
+        if config_sha:
+            config_payload["sha"] = config_sha
+
+        await client.request(
+            "PUT",
+            f"/repos/{owner}/{repo}/contents/{ORCHESTRATOR_CONFIG_PATH}",
+            json=config_payload,
+        )
+
+    return {
+        "owner": owner,
+        "repo": repo,
+        "branch": resolved_branch,
+        "mode": mode,
+        "config_path": ORCHESTRATOR_CONFIG_PATH,
+        "config_created": config_sha is None,
+        "updated": not is_noop,
     }

@@ -97,7 +97,11 @@ async def get_status(
     }
 
 
-async def list_development_pull_requests(client: GitHubClient, owner: str, repo: str) -> list[dict[str, str]]:
+async def list_development_pull_requests(
+    client: GitHubClient,
+    owner: str,
+    repo: str,
+) -> list[dict[str, str | None]]:
     """Return development pull requests (newest first), excluding orchestration/meta PRs."""
 
     pulls = await client.request(
@@ -108,14 +112,20 @@ async def list_development_pull_requests(client: GitHubClient, owner: str, repo:
     if not isinstance(pulls, list):
         return []
 
-    timeline: list[dict[str, str]] = []
+    timeline: list[dict[str, str | None]] = []
     for pr in pulls:
         if not isinstance(pr, dict):
             continue
         title = pr.get("title")
         url = pr.get("html_url")
         created_at = pr.get("created_at")
+        state = pr.get("state")
+        merged_at = pr.get("merged_at")
         if not isinstance(title, str) or not isinstance(url, str) or not isinstance(created_at, str):
+            continue
+        if state is not None and not isinstance(state, str):
+            continue
+        if merged_at is not None and not isinstance(merged_at, str):
             continue
         if not _is_development_pr(title):
             continue
@@ -124,6 +134,8 @@ async def list_development_pull_requests(client: GitHubClient, owner: str, repo:
                 "title": title,
                 "url": url,
                 "createdAt": created_at,
+                "state": state,
+                "mergedAt": merged_at,
             }
         )
 

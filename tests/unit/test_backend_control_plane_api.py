@@ -151,6 +151,42 @@ def test_upsert_target_state_endpoint(monkeypatch) -> None:
     assert payload["target_state_updated"] is True
 
 
+def test_upsert_orchestrator_mode_endpoint(monkeypatch) -> None:
+    _set_required_backend_env(monkeypatch)
+
+    import backend.app.routes.repos as repos_routes
+
+    repos_routes.get_settings.cache_clear()
+
+    async def fake_create_client(*_args, **_kwargs):
+        return object()
+
+    async def fake_upsert_mode(*_args, **_kwargs):
+        return {
+            "owner": "acme",
+            "repo": "widgets",
+            "branch": "main",
+            "mode": "auto",
+            "config_path": ".agent-orchestrator/config.yml",
+            "config_created": False,
+            "updated": True,
+        }
+
+    monkeypatch.setattr(repos_routes, "create_github_client", fake_create_client)
+    monkeypatch.setattr(repos_routes, "upsert_orchestrator_mode", fake_upsert_mode)
+
+    client = TestClient(app)
+    response = client.post(
+        "/repos/acme/widgets/orchestrator-mode",
+        json={"mode": "auto"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["owner"] == "acme"
+    assert payload["repo"] == "widgets"
+    assert payload["mode"] == "auto"
+
+
 def test_update_orchestrator_endpoint(monkeypatch) -> None:
     _set_required_backend_env(monkeypatch)
 
