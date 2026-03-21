@@ -6,7 +6,7 @@ Phase 1/1A provides a minimal, local-first CLI with:
 - GitHub issue creation with local JSON persistence
 """
 
-__version__ = "0.1.16"
+__version__ = "0.1.17"
 
 from github_agent_orchestrator.orchestrator.config import OrchestratorSettings
 
