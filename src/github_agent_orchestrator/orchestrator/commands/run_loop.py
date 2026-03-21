@@ -12,6 +12,11 @@ from github_agent_orchestrator.orchestrator.config import OrchestratorSettings
 MERGE_STAGES = {"1c", "2c", "3c"}
 
 
+def _stage_from_status(status: dict[str, Any]) -> str:
+    raw_stage = status.get("stage") if isinstance(status, dict) else None
+    return raw_stage if isinstance(raw_stage, str) else ""
+
+
 def run_once(
     *,
     repo: str,
@@ -49,7 +54,7 @@ def run_once(
         active_repo=repo,
         ref=ref,
     )
-    stage = status.get("stage") if isinstance(status, dict) else None
+    stage = _stage_from_status(status)
 
     try:
         if stage == "1a":
@@ -67,9 +72,28 @@ def run_once(
             if heal_orphans or getattr(
                 server_settings, "auto_heal_orphaned_processed_queue_items", False
             ):
-                result = _heal_orphaned_processed_queue_items(
-                    settings=server_settings, repo=repo
-                )
+                try:
+                    result = _heal_orphaned_processed_queue_items(
+                        settings=server_settings, repo=repo
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    # When stage classification changes as a side-effect (e.g., auto-linking a PR
+                    # to its issue), a refreshed status may become merge-ready immediately.
+                    if getattr(exc, "status_code", None) == 409:
+                        refreshed_status: dict[str, Any] = _loop_status_for_repo(
+                            settings=server_settings,
+                            active_repo=repo,
+                            ref=ref,
+                        )
+                        refreshed_stage = _stage_from_status(refreshed_status)
+                        if refreshed_stage in MERGE_STAGES:
+                            if not auto_approve:
+                                return 0, None, "Waiting for manual approval before merge."
+                            result = _merge_next_ready_pull_request(settings=server_settings, repo=repo)
+                        else:
+                            return 3, None, str(getattr(exc, "detail", "No action taken."))
+                    else:
+                        raise
             else:
                 return (
                     3,
