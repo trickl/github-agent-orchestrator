@@ -6,6 +6,8 @@ import base64
 from datetime import UTC, datetime
 from typing import Any
 
+import httpx
+
 from backend.app.github.client import GitHubClient
 from backend.app.templates.workflows import ORCHESTRATOR_WORKFLOW_PATH, render_orchestrator_workflow
 
@@ -139,15 +141,31 @@ async def initialize_repo(
 async def ensure_orchestrator_workflow(client: GitHubClient, owner: str, repo: str) -> dict[str, Any]:
     """Ensure the orchestrator workflow exists on the repository default branch."""
 
+    def _raise_workflow_permissions_error(exc: httpx.HTTPStatusError) -> None:
+        if exc.response.status_code != 403:
+            raise exc
+
+        raise ValueError(
+            (
+                f"Cannot create or update '{ORCHESTRATOR_WORKFLOW_PATH}' in target repository "
+                f"'{owner}/{repo}' because the GitHub App lacks required permissions. "
+                "Grant the app 'Contents: Read and write' and 'Workflows: Read and write', "
+                "then reinstall or refresh app access for the repository and retry."
+            )
+        ) from exc
+
     repo_data = await client.request("GET", f"/repos/{owner}/{repo}")
     base_branch = repo_data["default_branch"]
 
-    response = await client.request(
-        "GET",
-        f"/repos/{owner}/{repo}/contents/{ORCHESTRATOR_WORKFLOW_PATH}",
-        params={"ref": base_branch},
-        expected_status={200, 404},
-    )
+    try:
+        response = await client.request(
+            "GET",
+            f"/repos/{owner}/{repo}/contents/{ORCHESTRATOR_WORKFLOW_PATH}",
+            params={"ref": base_branch},
+            expected_status={200, 404},
+        )
+    except httpx.HTTPStatusError as exc:
+        _raise_workflow_permissions_error(exc)
 
     existing_sha: str | None = None
     existing_text: str | None = None
@@ -176,11 +194,14 @@ async def ensure_orchestrator_workflow(client: GitHubClient, owner: str, repo: s
     if existing_sha:
         payload["sha"] = existing_sha
 
-    await client.request(
-        "PUT",
-        f"/repos/{owner}/{repo}/contents/{ORCHESTRATOR_WORKFLOW_PATH}",
-        json=payload,
-    )
+    try:
+        await client.request(
+            "PUT",
+            f"/repos/{owner}/{repo}/contents/{ORCHESTRATOR_WORKFLOW_PATH}",
+            json=payload,
+        )
+    except httpx.HTTPStatusError as exc:
+        _raise_workflow_permissions_error(exc)
 
     return {
         "owner": owner,

@@ -378,6 +378,48 @@ def test_dispatch_workflow_run_endpoint_bootstraps_missing_workflow(monkeypatch)
     assert calls["dispatch"] == 2
 
 
+def test_dispatch_workflow_run_endpoint_returns_actionable_error_on_bootstrap_403(
+    monkeypatch,
+) -> None:
+    _set_required_backend_env(monkeypatch)
+
+    import backend.app.routes.repos as repos_routes
+
+    repos_routes.get_settings.cache_clear()
+
+    async def fake_create_client(*_args, **_kwargs):
+        return object()
+
+    async def fake_dispatch(*_args, **_kwargs):
+        raise ValueError(
+            "No GitHub Actions workflows found in target repository 'acme/widgets'. "
+            "The control plane dispatches workflows from the selected target repository "
+            "(not the github-agent-orchestrator control-plane repository). "
+            "Add a workflow file under '.github/workflows' in the target repository "
+            "and enable workflow_dispatch."
+        )
+
+    async def fake_ensure_workflow(*_args, **_kwargs):
+        raise ValueError(
+            "Cannot create or update '.github/workflows/orchestrator.yml' in target repository "
+            "'acme/widgets' because the GitHub App lacks required permissions. "
+            "Grant the app 'Contents: Read and write' and 'Workflows: Read and write', "
+            "then reinstall or refresh app access for the repository and retry."
+        )
+
+    monkeypatch.setattr(repos_routes, "create_github_client", fake_create_client)
+    monkeypatch.setattr(repos_routes, "dispatch_workflow", fake_dispatch)
+    monkeypatch.setattr(repos_routes, "ensure_orchestrator_workflow", fake_ensure_workflow)
+
+    client = TestClient(app)
+    response = client.post("/repos/acme/widgets/run", json={"ref": "main"})
+    assert response.status_code == 502
+    detail = response.json()["detail"]
+    assert "lacks required permissions" in detail
+    assert "Contents: Read and write" in detail
+    assert "Workflows: Read and write" in detail
+
+
 def test_webhook_endpoint_accepts_valid_signature(monkeypatch) -> None:
     _set_required_backend_env(monkeypatch)
     _reset_event_log()
