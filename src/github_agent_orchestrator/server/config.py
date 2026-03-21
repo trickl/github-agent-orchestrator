@@ -70,6 +70,28 @@ class ServerSettings(BaseSettings):
         le=20,
     )
 
+    copilot_job_error_log_max_bytes: int = Field(
+        default=2_000_000,
+        validation_alias="ORCHESTRATOR_COPILOT_JOB_ERROR_LOG_MAX_BYTES",
+        description=(
+            "Maximum number of bytes to download for Copilot job logs while extracting error "
+            "snippets. Larger logs are skipped to protect server memory."
+        ),
+        ge=64 * 1024,
+        le=50_000_000,
+    )
+
+    copilot_job_error_scan_max_lines: int = Field(
+        default=4000,
+        validation_alias="ORCHESTRATOR_COPILOT_JOB_ERROR_SCAN_MAX_LINES",
+        description=(
+            "Maximum number of log lines retained in-memory while scanning Copilot job logs "
+            "for error snippets."
+        ),
+        ge=100,
+        le=100_000,
+    )
+
     auto_promote_enabled: bool = Field(
         default=False,
         validation_alias="ORCHESTRATOR_AUTO_PROMOTE_ENABLED",

@@ -16,6 +16,7 @@ from __future__ import annotations
 import io
 import re
 import zipfile
+from collections import deque
 from dataclasses import dataclass
 from typing import Any
 
@@ -1225,18 +1226,28 @@ def _select_latest_failed_job(jobs: list[dict[str, Any]]) -> dict[str, Any] | No
     return failed_jobs[0]
 
 
-def _extract_log_lines(log_bytes: bytes) -> list[str]:
+def _extract_log_lines(log_bytes: bytes, *, max_scan_lines: int) -> list[str]:
+    tail: deque[str] = deque(maxlen=max_scan_lines)
+
+    def _append_line(raw_line: str) -> None:
+        line = raw_line.strip()
+        if line:
+            tail.append(line)
+
     try:
         with zipfile.ZipFile(io.BytesIO(log_bytes)) as archive:
-            lines: list[str] = []
             for name in archive.namelist():
                 if name.endswith("/"):
                     continue
-                data = archive.read(name)
-                lines.extend(data.decode("utf-8", errors="replace").splitlines())
-            return lines
+                with archive.open(name) as entry:
+                    text_stream = io.TextIOWrapper(entry, encoding="utf-8", errors="replace")
+                    for raw_line in text_stream:
+                        _append_line(raw_line)
+            return list(tail)
     except zipfile.BadZipFile:
-        return log_bytes.decode("utf-8", errors="replace").splitlines()
+        for raw_line in log_bytes.decode("utf-8", errors="replace").splitlines():
+            _append_line(raw_line)
+        return list(tail)
 
 
 def _select_error_snippet(lines: list[str], max_lines: int) -> list[str]:
@@ -1264,6 +1275,11 @@ def _format_copilot_job_error(exc: HTTPException, context: str) -> str:
         return (
             "Unable to fetch Copilot Actions logs; ensure ORCHESTRATOR_GITHUB_TOKEN has "
             f"actions:read access (HTTP {status} during {context})."
+        )
+    if status == 413:
+        return (
+            "Skipping Copilot Actions log inspection because logs exceed the configured "
+            f"safe memory limit (HTTP 413 during {context})."
         )
     return f"Unable to fetch Copilot Actions logs (HTTP {status} during {context})."
 
@@ -1330,12 +1346,20 @@ def _append_copilot_job_error_warning(
 
     job_name = _job_name(job)
     try:
-        log_bytes = _download_workflow_job_logs(settings, repository=repository, job_id=job_id)
+        log_bytes = _download_workflow_job_logs(
+            settings,
+            repository=repository,
+            job_id=job_id,
+            max_bytes=settings.copilot_job_error_log_max_bytes,
+        )
     except HTTPException as exc:
         warnings.append(_format_copilot_job_error(exc, "job logs"))
         return
 
-    log_lines = _extract_log_lines(log_bytes)
+    log_lines = _extract_log_lines(
+        log_bytes,
+        max_scan_lines=settings.copilot_job_error_scan_max_lines,
+    )
     snippet = _select_error_snippet(log_lines, settings.copilot_job_error_max_lines)
 
     warning = _format_copilot_job_warning(run_id=run_id, job_name=job_name, snippet=snippet)
@@ -1420,23 +1444,28 @@ def _loop_status_for_repo(
             "runningJob": None,
             "lastAction": None,
         }
+    tree_cache: dict[str, Any] = {}
+
     pending_paths = _list_repo_markdown_files_under(
         settings=settings,
         repository=active_repo,
         dir_path=".agent-orchestrator/issue_queue/pending",
         ref=ref,
+        tree_cache=tree_cache,
     )
     processed_paths = _list_repo_markdown_files_under(
         settings=settings,
         repository=active_repo,
         dir_path=".agent-orchestrator/issue_queue/processed",
         ref=ref,
+        tree_cache=tree_cache,
     )
     complete_paths = _list_repo_markdown_files_under(
         settings=settings,
         repository=active_repo,
         dir_path=".agent-orchestrator/issue_queue/complete",
         ref=ref,
+        tree_cache=tree_cache,
     )
 
     pending_count = len(pending_paths)

@@ -122,15 +122,48 @@ def download_workflow_job_logs(
     *,
     repository: str,
     job_id: int,
+    max_bytes: int = 2_000_000,
 ) -> bytes:
     url = _repo_api_url(settings, repository=repository, path=f"actions/jobs/{job_id}/logs")
-    resp = requests.get(url, headers=_github_headers(settings), timeout=30, allow_redirects=True)
-    if resp.status_code >= 400:
-        raise HTTPException(
-            status_code=resp.status_code,
-            detail=f"GitHub API request failed with HTTP {resp.status_code} for {url}.",
-        )
-    return resp.content
+    with requests.get(
+        url,
+        headers=_github_headers(settings),
+        timeout=30,
+        allow_redirects=True,
+        stream=True,
+    ) as resp:
+        if resp.status_code >= 400:
+            raise HTTPException(
+                status_code=resp.status_code,
+                detail=f"GitHub API request failed with HTTP {resp.status_code} for {url}.",
+            )
+
+        header_content_length = resp.headers.get("Content-Length")
+        if isinstance(header_content_length, str) and header_content_length.strip().isdigit():
+            if int(header_content_length) > max_bytes:
+                raise HTTPException(
+                    status_code=413,
+                    detail=(
+                        "Copilot workflow logs are too large to inspect safely "
+                        f"({header_content_length} bytes > {max_bytes} byte limit)."
+                    ),
+                )
+
+        out = bytearray()
+        for chunk in resp.iter_content(chunk_size=64 * 1024):
+            if not chunk:
+                continue
+            out.extend(chunk)
+            if len(out) > max_bytes:
+                raise HTTPException(
+                    status_code=413,
+                    detail=(
+                        "Copilot workflow logs exceed the safe in-memory limit "
+                        f"({max_bytes} bytes)."
+                    ),
+                )
+
+    return bytes(out)
 
 
 def get_pull_request(
@@ -294,6 +327,7 @@ def list_repo_markdown_files_under(
     repository: str,
     dir_path: str,
     ref: str,
+    tree_cache: dict[str, Any] | None = None,
 ) -> list[str]:
     """List markdown file paths under a directory in a GitHub repo (recursive).
 
@@ -304,13 +338,26 @@ def list_repo_markdown_files_under(
     """
 
     resolved_ref = ref.strip() or get_default_branch(settings, repository=repository)
-    commit_sha = get_branch_head_commit_sha(
-        settings,
-        repository=repository,
-        branch=resolved_ref,
-    )
-    tree_sha = get_commit_tree_sha(settings, repository=repository, commit_sha=commit_sha)
-    items = get_repo_tree_recursive(settings, repository=repository, tree_sha=tree_sha)
+    cache_key = f"{repository}@{resolved_ref}"
+
+    items: list[dict[str, Any]] | None = None
+    if isinstance(tree_cache, dict):
+        cached_key = tree_cache.get("key")
+        cached_items = tree_cache.get("items")
+        if cached_key == cache_key and isinstance(cached_items, list):
+            items = [it for it in cached_items if isinstance(it, dict)]
+
+    if items is None:
+        commit_sha = get_branch_head_commit_sha(
+            settings,
+            repository=repository,
+            branch=resolved_ref,
+        )
+        tree_sha = get_commit_tree_sha(settings, repository=repository, commit_sha=commit_sha)
+        items = get_repo_tree_recursive(settings, repository=repository, tree_sha=tree_sha)
+        if isinstance(tree_cache, dict):
+            tree_cache["key"] = cache_key
+            tree_cache["items"] = items
 
     prefix = dir_path.strip().lstrip("/").rstrip("/") + "/"
     out: list[str] = []

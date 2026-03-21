@@ -463,6 +463,105 @@ def test_loop_status_includes_copilot_job_error_warning(
     assert any("Something bad" in warning for warning in warnings)
 
 
+def test_loop_status_warns_and_continues_when_copilot_logs_are_oversized(
+    monkeypatch, tmp_path: Path
+) -> None:
+    planning = tmp_path / ".agent-orchestrator"
+    agent_state = tmp_path / "agent_state"
+
+    monkeypatch.setenv("ORCHESTRATOR_PLANNING_ROOT", str(planning))
+    monkeypatch.setenv("AGENT_STATE_PATH", str(agent_state))
+    monkeypatch.setenv("ORCHESTRATOR_UI_DIST", str(tmp_path / "ui" / "dist"))
+    monkeypatch.setenv("ORCHESTRATOR_DEFAULT_REPO", "acme/repo")
+    monkeypatch.setenv("ORCHESTRATOR_INCLUDE_COPILOT_JOB_ERRORS", "true")
+
+    def fake_list_repo_md(*_args, **kwargs):
+        dir_path = kwargs.get("dir_path")
+        if dir_path == ".agent-orchestrator/issue_queue/pending":
+            return [".agent-orchestrator/issue_queue/pending/dev-1.md"]
+        if dir_path in {
+            ".agent-orchestrator/issue_queue/processed",
+            ".agent-orchestrator/issue_queue/complete",
+        }:
+            return []
+        return []
+
+    _dual_patch(monkeypatch, "_list_repo_markdown_files_under", fake_list_repo_md)
+    _dual_patch(
+        monkeypatch,
+        "_get_repo_text_file",
+        _repo_text_with_target_state(
+            {".agent-orchestrator/issue_queue/pending/dev-1.md": ("Dev: One\n\nBody\n", "sha-1")}
+        ),
+    )
+    _dual_patch(
+        monkeypatch,
+        "_list_open_issues_raw",
+        lambda *_a, **_k: [{"number": 101, "title": "Dev: One", "state": "open"}],
+    )
+    _dual_patch(monkeypatch, "_list_open_pull_requests_raw", lambda *_a, **_k: [])
+    _dual_patch(
+        monkeypatch,
+        "_list_issue_timeline_raw",
+        lambda *_a, **_k: [
+            {
+                "event": "cross-referenced",
+                "source": {"issue": {"number": 5, "pull_request": {}}},
+            }
+        ],
+    )
+    _dual_patch(
+        monkeypatch,
+        "_get_pull_request",
+        lambda *_a, **_k: {
+            "number": 5,
+            "state": "open",
+            "draft": False,
+            "title": "Dev: One",
+            "requested_reviewers": [],
+            "requested_teams": [],
+            "mergeable_state": "clean",
+            "head": {"sha": "abc123"},
+        },
+    )
+    _dual_patch(
+        monkeypatch,
+        "_list_workflow_runs_for_head_sha",
+        lambda *_a, **_k: [
+            {
+                "id": 77,
+                "status": "completed",
+                "conclusion": "failure",
+                "run_started_at": "2024-01-01T00:00:00Z",
+            }
+        ],
+    )
+    _dual_patch(
+        monkeypatch,
+        "_list_workflow_jobs_for_run",
+        lambda *_a, **_k: [
+            {
+                "id": 88,
+                "name": "Copilot SWE Agent",
+                "status": "completed",
+                "conclusion": "failure",
+                "completed_at": "2024-01-01T01:00:00Z",
+            }
+        ],
+    )
+
+    def _fake_download_logs(*_a, **_k):
+        raise HTTPException(status_code=413, detail="too large")
+
+    _dual_patch(monkeypatch, "_download_workflow_job_logs", _fake_download_logs)
+
+    client = TestClient(create_app())
+    loop = client.get("/api/loop").json()
+
+    warnings = loop.get("warnings", [])
+    assert any("Skipping Copilot Actions log inspection" in warning for warning in warnings)
+
+
 def test_loop_status_stage_d_when_processed_has_ready_pr(monkeypatch, tmp_path: Path) -> None:
     planning = tmp_path / ".agent-orchestrator"
     agent_state = tmp_path / "agent_state"
