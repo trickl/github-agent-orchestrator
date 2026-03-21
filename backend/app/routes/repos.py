@@ -45,7 +45,7 @@ class UpdateOrchestratorRequest(BaseModel):
 
 class DispatchWorkflowRequest(BaseModel):
     workflow_file: str | None = Field(default=None)
-    ref: str = Field(default="main")
+    ref: str | None = Field(default=None)
 
 
 def _diagnose_github_app_failure(exc: Exception) -> str:
@@ -189,13 +189,22 @@ async def dispatch_repo_workflow(
     try:
         set_repo_run_state(repo_full_name, status="running", current_step="Dispatching workflow")
         client = await create_github_client(settings, owner=owner, repo=repo)
+        requested_ref = payload.ref.strip() if isinstance(payload.ref, str) else ""
+        effective_ref = requested_ref
+        if not effective_ref:
+            repo_data = await client.request("GET", f"/repos/{owner}/{repo}")
+            default_branch = repo_data.get("default_branch") if isinstance(repo_data, dict) else None
+            if isinstance(default_branch, str) and default_branch.strip():
+                effective_ref = default_branch.strip()
+            else:
+                effective_ref = "main"
         try:
             dispatch_result = await dispatch_workflow(
                 client,
                 owner,
                 repo,
                 workflow_file=workflow_file,
-                ref=payload.ref,
+                ref=effective_ref,
             )
         except ValueError as exc:
             missing_workflow_error = "No GitHub Actions workflows found in target repository"
@@ -212,7 +221,7 @@ async def dispatch_repo_workflow(
                 owner,
                 repo,
                 workflow_file=workflow_file,
-                ref=payload.ref,
+                ref=effective_ref,
             )
         set_repo_run_state(repo_full_name, status="running", current_step="Workflow dispatched")
         return DispatchWorkflowResponse.model_validate(
@@ -221,7 +230,7 @@ async def dispatch_repo_workflow(
                 "repo": repo_full_name,
                 "dispatched": bool(dispatch_result.get("dispatched", False)),
                 "workflow": str(dispatch_result.get("workflow", workflow_file)),
-                "ref": str(dispatch_result.get("ref", payload.ref)),
+                "ref": str(dispatch_result.get("ref", effective_ref)),
             }
         )
     except Exception as exc:

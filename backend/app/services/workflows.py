@@ -69,12 +69,33 @@ async def _dispatch_by_identifier(
     workflow_identifier: str,
     ref: str,
 ) -> None:
-    await client.request(
-        "POST",
-        f"/repos/{owner}/{repo}/actions/workflows/{workflow_identifier}/dispatches",
-        json={"ref": ref},
-        expected_status={204},
-    )
+    try:
+        await client.request(
+            "POST",
+            f"/repos/{owner}/{repo}/actions/workflows/{workflow_identifier}/dispatches",
+            json={"ref": ref},
+            expected_status={204},
+        )
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code != 422:
+            raise
+
+        github_message = ""
+        try:
+            payload = exc.response.json()
+            message = payload.get("message") if isinstance(payload, dict) else None
+            if isinstance(message, str) and message.strip():
+                github_message = message.strip()
+        except Exception:
+            github_message = ""
+
+        details = (
+            f"GitHub returned 422 while dispatching workflow '{workflow_identifier}' "
+            f"on ref '{ref}' in '{owner}/{repo}'."
+        )
+        if github_message:
+            details = f"{details} {github_message}"
+        raise ValueError(details) from exc
 
 
 async def dispatch_workflow(

@@ -433,3 +433,38 @@ async def test_dispatch_workflow_falls_back_to_available_workflow_paths() -> Non
             workflow_file="orchestrator.yml",
             ref="main",
         )
+
+
+class FakeDispatch422Client:
+    """Client stub that returns 422 when dispatching a workflow."""
+
+    async def request(self, method: str, path_or_url: str, **kwargs: Any) -> Any:
+        import httpx
+
+        if (
+            method == "POST"
+            and path_or_url == "/repos/acme/widgets/actions/workflows/orchestrator.yml/dispatches"
+        ):
+            request = httpx.Request("POST", f"https://api.github.com{path_or_url}")
+            response = httpx.Response(
+                422,
+                request=request,
+                json={"message": "No ref found for: main"},
+            )
+            raise httpx.HTTPStatusError("unprocessable", request=request, response=response)
+
+        raise AssertionError(f"Unexpected request: {method} {path_or_url}")
+
+
+@pytest.mark.asyncio
+async def test_dispatch_workflow_surfaces_actionable_422_errors() -> None:
+    client = FakeDispatch422Client()
+
+    with pytest.raises(ValueError, match="No ref found for: main"):
+        await dispatch_workflow(
+            client,
+            "acme",
+            "widgets",
+            workflow_file="orchestrator.yml",
+            ref="main",
+        )

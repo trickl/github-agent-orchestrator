@@ -327,6 +327,45 @@ def test_dispatch_workflow_run_endpoint(monkeypatch) -> None:
     assert payload["ref"] == "main"
 
 
+def test_dispatch_workflow_run_endpoint_uses_repo_default_branch_when_ref_omitted(monkeypatch) -> None:
+    _set_required_backend_env(monkeypatch)
+
+    import backend.app.routes.repos as repos_routes
+
+    repos_routes.get_settings.cache_clear()
+
+    class _Client:
+        async def request(self, method, path_or_url, **_kwargs):
+            if method == "GET" and path_or_url == "/repos/acme/widgets":
+                return {"default_branch": "master"}
+            raise AssertionError(f"Unexpected request: {method} {path_or_url}")
+
+    async def fake_create_client(*_args, **_kwargs):
+        return _Client()
+
+    async def fake_dispatch(*_args, **kwargs):
+        return {
+            "owner": "acme",
+            "repo": "widgets",
+            "workflow": "orchestrator.yml",
+            "ref": kwargs["ref"],
+            "dispatched": True,
+        }
+
+    monkeypatch.setattr(repos_routes, "create_github_client", fake_create_client)
+    monkeypatch.setattr(repos_routes, "dispatch_workflow", fake_dispatch)
+
+    client = TestClient(app)
+    response = client.post("/repos/acme/widgets/run", json={})
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "dispatched"
+    assert payload["repo"] == "acme/widgets"
+    assert payload["dispatched"] is True
+    assert payload["workflow"] == "orchestrator.yml"
+    assert payload["ref"] == "master"
+
+
 def test_dispatch_workflow_run_endpoint_bootstraps_missing_workflow(monkeypatch) -> None:
     _set_required_backend_env(monkeypatch)
 
