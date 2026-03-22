@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "github-agent-orchestrator"
-version = "0.1.31"
+version = "0.1.32"
 description = "A stateful orchestration engine that manages plans, critiques, issues, and incremental PRs using GitHub's coding agents"
 readme = "README.md"
 requires-python = ">=3.11"
