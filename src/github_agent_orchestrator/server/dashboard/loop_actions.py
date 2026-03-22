@@ -1231,6 +1231,72 @@ def _delete_head_branch_best_effort(
         return False
 
 
+def _merge_work_branch_to_default_best_effort(
+    *,
+    settings: ServerSettings,
+    repo: str,
+    pr_data: dict[str, Any],
+    default_branch: str,
+) -> tuple[bool, str | None]:
+    """Merge the work branch back into the default branch after a PR is squash-merged.
+
+    When Copilot PRs target an intermediate work branch (e.g. ``orchestrator/work/issue-N``),
+    the squash-merged code lives only on that work branch.  This function merges the work
+    branch into the default branch so that code changes accumulate on the mainline.
+
+    Returns:
+        (merged, error_message) – True if merged (or no merge needed), else False with detail.
+    """
+    try:
+        base = pr_data.get("base", {})
+        base_ref = base.get("ref", "") if isinstance(base, dict) else ""
+        if not base_ref or base_ref == default_branch:
+            return True, None
+
+        merge_url = _repo_api_url(settings, repository=repo, path="merges")
+        status, body = _github_post_json(
+            settings,
+            url=merge_url,
+            payload={
+                "base": default_branch,
+                "head": base_ref,
+                "commit_message": f"Merge work branch {base_ref} into {default_branch}",
+            },
+        )
+        if status in {200, 201}:
+            _delete_work_branch_best_effort(
+                settings=settings, repo=repo, branch_ref=base_ref
+            )
+            return True, None
+        if status == 204:
+            # Already up to date – nothing to merge.
+            return True, None
+        if status == 409:
+            detail = body.get("message", "") if isinstance(body, dict) else str(body)
+            return False, f"Merge conflict merging {base_ref} into {default_branch}: {detail}"
+        detail = body.get("message", "") if isinstance(body, dict) else str(body)
+        return False, f"HTTP {status} merging {base_ref} into {default_branch}: {detail}"
+    except Exception as exc:
+        return False, f"Exception merging work branch: {exc}"
+
+
+def _delete_work_branch_best_effort(
+    *,
+    settings: ServerSettings,
+    repo: str,
+    branch_ref: str,
+) -> bool:
+    """Delete a work branch after it has been merged into the default branch."""
+    try:
+        if branch_ref in {"main", "master"}:
+            return False
+        del_url = _repo_api_url(settings, repository=repo, path=f"git/refs/heads/{branch_ref}")
+        status, _body = _github_delete_json(settings, url=del_url)
+        return status in {200, 204, 404}
+    except Exception:
+        return False
+
+
 def _close_issue_best_effort(
     *,
     settings: ServerSettings,
@@ -1296,6 +1362,13 @@ def _try_merge_next_ready_labeled_issue_pull_request(
     )
     branch_deleted = _delete_head_branch_best_effort(settings=settings, repo=repo, pr_data=selected_pr_data)
 
+    work_merged, work_merge_error = _merge_work_branch_to_default_best_effort(
+        settings=settings,
+        repo=repo,
+        pr_data=selected_pr_data,
+        default_branch=branch,
+    )
+
     issue_closed, issue_close_error = _close_issue_best_effort(
         settings=settings,
         repo=repo,
@@ -1303,6 +1376,8 @@ def _try_merge_next_ready_labeled_issue_pull_request(
     )
 
     summary = f"Merged PR #{pr_number}; closed {issue_kind_for_summary} issue #{selected_issue_num}"
+    if work_merge_error:
+        summary = f"{summary} (warning: work branch merge: {work_merge_error})"
     if issue_close_error:
         summary = f"{summary} (warning: failed to close issue: {issue_close_error})"
 
@@ -1319,6 +1394,7 @@ def _try_merge_next_ready_labeled_issue_pull_request(
         "approved": approved,
         "approvalError": approval_error,
         "headBranchDeleted": branch_deleted,
+        "workBranchMerged": work_merged,
         # Reuse existing schema fields for UI linkage.
         "capabilityIssueNumber": int(selected_issue_num),
         "capabilityIssueCreated": False,
@@ -1468,6 +1544,13 @@ def _try_merge_next_ready_gap_analysis_pull_request(
         default_branch=branch,
     )
 
+    work_merged, work_merge_error = _merge_work_branch_to_default_best_effort(
+        settings=settings,
+        repo=repo,
+        pr_data=selected_pr_data,
+        default_branch=branch,
+    )
+
     issue_closed, issue_close_error = _close_issue_best_effort(
         settings=settings,
         repo=repo,
@@ -1477,6 +1560,8 @@ def _try_merge_next_ready_gap_analysis_pull_request(
     summary = f"Merged PR #{pr_number}; closed gap analysis issue #{selected_issue_num}"
     if propagated:
         summary = f"{summary}; propagated {len(propagated)} pending queue file(s)"
+    if work_merge_error:
+        summary = f"{summary} (warning: work branch merge: {work_merge_error})"
     if issue_close_error:
         summary = f"{summary} (warning: failed to close issue: {issue_close_error})"
 
@@ -1493,6 +1578,7 @@ def _try_merge_next_ready_gap_analysis_pull_request(
         "approved": approved,
         "approvalError": approval_error,
         "headBranchDeleted": branch_deleted,
+        "workBranchMerged": work_merged,
         # Reuse existing schema fields for UI linkage.
         "capabilityIssueNumber": int(selected_issue_num),
         "capabilityIssueCreated": False,
@@ -1565,6 +1651,13 @@ def _try_merge_next_ready_review_consumption_pull_request(
         default_branch=branch,
     )
 
+    work_merged, work_merge_error = _merge_work_branch_to_default_best_effort(
+        settings=settings,
+        repo=repo,
+        pr_data=selected_pr_data,
+        default_branch=branch,
+    )
+
     issue_closed, issue_close_error = _close_issue_best_effort(
         settings=settings,
         repo=repo,
@@ -1574,6 +1667,8 @@ def _try_merge_next_ready_review_consumption_pull_request(
     summary = f"Merged PR #{pr_number}; closed review consumption issue #{selected_issue_num}"
     if propagated:
         summary = f"{summary}; propagated {len(propagated)} pending queue file(s)"
+    if work_merge_error:
+        summary = f"{summary} (warning: work branch merge: {work_merge_error})"
     if issue_close_error:
         summary = f"{summary} (warning: failed to close issue: {issue_close_error})"
 
@@ -1589,6 +1684,7 @@ def _try_merge_next_ready_review_consumption_pull_request(
         "approved": approved,
         "approvalError": approval_error,
         "headBranchDeleted": branch_deleted,
+        "workBranchMerged": work_merged,
         # Reuse existing schema fields for UI linkage.
         "capabilityIssueNumber": int(selected_issue_num),
         "capabilityIssueCreated": False,
@@ -2216,6 +2312,13 @@ def _merge_next_ready_development_pull_request(
 
     branch_deleted = _delete_head_branch_best_effort(settings=settings, repo=repo, pr_data=pr_data)
 
+    work_merged, work_merge_error = _merge_work_branch_to_default_best_effort(
+        settings=settings,
+        repo=repo,
+        pr_data=pr_data,
+        default_branch=branch,
+    )
+
     # Create a follow-up issue and assign it to Copilot.
     raw_title = pr_data.get("title")
     raw_body = pr_data.get("body")
@@ -2247,6 +2350,10 @@ def _merge_next_ready_development_pull_request(
             instructions="",
         )
 
+    work_merge_summary = ""
+    if work_merge_error:
+        work_merge_summary = f" (warning: work branch merge: {work_merge_error})"
+
     return {
         "repo": repo,
         "branch": branch,
@@ -2259,6 +2366,7 @@ def _merge_next_ready_development_pull_request(
         "approved": approved,
         "approvalError": approval_error,
         "headBranchDeleted": branch_deleted,
+        "workBranchMerged": work_merged,
         "capabilityIssueNumber": follow_issue_number,
         "capabilityIssueCreated": follow_issue_created,
         "capabilityIssueUrl": (
@@ -2268,8 +2376,8 @@ def _merge_next_ready_development_pull_request(
         ),
         "capabilityIssueAssigned": assigned,
         "summary": (
-            f"Merged PR #{pr_number}; created {follow_issue_label.lower()} issue #{follow_issue_number}"
+            f"Merged PR #{pr_number}; created {follow_issue_label.lower()} issue #{follow_issue_number}{work_merge_summary}"
             if follow_issue_created
-            else f"Merged PR #{pr_number}; ensured {follow_issue_label.lower()} issue #{follow_issue_number}"
+            else f"Merged PR #{pr_number}; ensured {follow_issue_label.lower()} issue #{follow_issue_number}{work_merge_summary}"
         ),
     }

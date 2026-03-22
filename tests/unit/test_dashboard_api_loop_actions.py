@@ -1776,3 +1776,76 @@ def test_review_consumption_ignores_non_timestamped_complete_when_issue_has_time
     )
 
     assert produced is False
+
+
+def test_merge_work_branch_to_default_best_effort_merges_and_deletes(monkeypatch) -> None:
+    """When a PR targets a work branch, _merge_work_branch_to_default merges it into default."""
+    import github_agent_orchestrator.server.dashboard.loop_actions as loop_actions
+
+    post_calls: list[dict] = []
+    delete_calls: list[str] = []
+
+    def fake_post(*_a, **kwargs):
+        url = str(kwargs.get("url") or "")
+        payload = kwargs.get("payload", {})
+        post_calls.append({"url": url, "payload": payload})
+        return 201, {"sha": "merged-sha"}
+
+    def fake_delete(*_a, **kwargs):
+        url = str(kwargs.get("url") or "")
+        delete_calls.append(url)
+        return 204, None
+
+    monkeypatch.setattr(loop_actions, "_github_post_json", fake_post)
+    monkeypatch.setattr(loop_actions, "_github_delete_json", fake_delete)
+
+    settings = loop_actions.ServerSettings()
+    pr_data = {"base": {"ref": "orchestrator/work/issue-10"}}
+
+    merged, error = loop_actions._merge_work_branch_to_default_best_effort(
+        settings=settings, repo="acme/repo", pr_data=pr_data, default_branch="main"
+    )
+
+    assert merged is True
+    assert error is None
+    assert len(post_calls) == 1
+    assert post_calls[0]["payload"]["base"] == "main"
+    assert post_calls[0]["payload"]["head"] == "orchestrator/work/issue-10"
+    assert len(delete_calls) == 1
+    assert "orchestrator/work/issue-10" in delete_calls[0]
+
+
+def test_merge_work_branch_to_default_skips_when_base_is_default(monkeypatch) -> None:
+    """When the PR already targets the default branch, no merge-back is needed."""
+    import github_agent_orchestrator.server.dashboard.loop_actions as loop_actions
+
+    settings = loop_actions.ServerSettings()
+    pr_data = {"base": {"ref": "main"}}
+
+    merged, error = loop_actions._merge_work_branch_to_default_best_effort(
+        settings=settings, repo="acme/repo", pr_data=pr_data, default_branch="main"
+    )
+
+    assert merged is True
+    assert error is None
+
+
+def test_merge_work_branch_to_default_returns_error_on_conflict(monkeypatch) -> None:
+    """When GitHub returns 409 (conflict), error message is returned."""
+    import github_agent_orchestrator.server.dashboard.loop_actions as loop_actions
+
+    def fake_post(*_a, **kwargs):
+        return 409, {"message": "Merge conflict"}
+
+    monkeypatch.setattr(loop_actions, "_github_post_json", fake_post)
+
+    settings = loop_actions.ServerSettings()
+    pr_data = {"base": {"ref": "orchestrator/work/issue-10"}}
+
+    merged, error = loop_actions._merge_work_branch_to_default_best_effort(
+        settings=settings, repo="acme/repo", pr_data=pr_data, default_branch="main"
+    )
+
+    assert merged is False
+    assert error is not None
+    assert "conflict" in error.lower()
