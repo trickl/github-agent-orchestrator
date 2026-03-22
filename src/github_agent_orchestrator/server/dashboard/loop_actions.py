@@ -2319,6 +2319,13 @@ def _merge_next_ready_development_pull_request(
         default_branch=branch,
     )
 
+    # Close the development issue now that its PR has been merged.
+    dev_issue_closed, dev_issue_close_error = _close_issue_best_effort(
+        settings=settings,
+        repo=repo,
+        issue_number=int(issue_number),
+    )
+
     # Create a follow-up issue and assign it to Copilot.
     raw_title = pr_data.get("title")
     raw_body = pr_data.get("body")
@@ -2350,9 +2357,11 @@ def _merge_next_ready_development_pull_request(
             instructions="",
         )
 
-    work_merge_summary = ""
+    warnings = ""
     if work_merge_error:
-        work_merge_summary = f" (warning: work branch merge: {work_merge_error})"
+        warnings += f" (warning: work branch merge: {work_merge_error})"
+    if dev_issue_close_error:
+        warnings += f" (warning: failed to close dev issue: {dev_issue_close_error})"
 
     return {
         "repo": repo,
@@ -2362,6 +2371,7 @@ def _merge_next_ready_development_pull_request(
         "queuePath": source_path,
         "completePath": complete_path,
         "developmentIssueNumber": int(issue_number),
+        "developmentIssueClosed": dev_issue_closed,
         "pullNumber": pr_number,
         "approved": approved,
         "approvalError": approval_error,
@@ -2376,8 +2386,8 @@ def _merge_next_ready_development_pull_request(
         ),
         "capabilityIssueAssigned": assigned,
         "summary": (
-            f"Merged PR #{pr_number}; created {follow_issue_label.lower()} issue #{follow_issue_number}{work_merge_summary}"
+            f"Merged PR #{pr_number}; closed issue #{issue_number}; created {follow_issue_label.lower()} issue #{follow_issue_number}{warnings}"
             if follow_issue_created
-            else f"Merged PR #{pr_number}; ensured {follow_issue_label.lower()} issue #{follow_issue_number}{work_merge_summary}"
+            else f"Merged PR #{pr_number}; closed issue #{issue_number}; ensured {follow_issue_label.lower()} issue #{follow_issue_number}{warnings}"
         ),
     }
