@@ -1849,3 +1849,163 @@ def test_merge_work_branch_to_default_returns_error_on_conflict(monkeypatch) -> 
     assert merged is False
     assert error is not None
     assert "conflict" in error.lower()
+
+
+def test_heal_moves_abandoned_processed_file_to_complete_when_no_issue_found(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """When a processed file has no matching issue at all, heal moves it to complete."""
+    planning = tmp_path / ".agent-orchestrator"
+    agent_state = tmp_path / "agent_state"
+
+    monkeypatch.setenv("ORCHESTRATOR_PLANNING_ROOT", str(planning))
+    monkeypatch.setenv("AGENT_STATE_PATH", str(agent_state))
+    monkeypatch.setenv("ORCHESTRATOR_UI_DIST", str(tmp_path / "ui" / "dist"))
+    monkeypatch.setenv("ORCHESTRATOR_DEFAULT_REPO", "acme/repo")
+    monkeypatch.setenv("ORCHESTRATOR_GITHUB_TOKEN", "test-token")
+    monkeypatch.setenv("COPILOT_ASSIGNEE", "copilot-swe-agent[bot]")
+
+    import github_agent_orchestrator.server.dashboard.loop_actions as loop_actions
+    import github_agent_orchestrator.server.dashboard_router as dashboard_router
+
+    monkeypatch.setattr(dashboard_router, "_get_default_branch", lambda *_a, **_k: "main")
+    monkeypatch.setattr(loop_actions, "_get_default_branch", lambda *_a, **_k: "main")
+
+    def fake_list_repo_md(*_a, **kwargs):
+        dir_path = kwargs.get("dir_path")
+        if dir_path == ".agent-orchestrator/issue_queue/processed":
+            return [".agent-orchestrator/issue_queue/processed/stale-item.md"]
+        return []
+
+    monkeypatch.setattr(dashboard_router, "_list_repo_markdown_files_under", fake_list_repo_md)
+    monkeypatch.setattr(loop_actions, "_list_repo_markdown_files_under", fake_list_repo_md)
+
+    def fake_get_repo_text_file(*_a, **kwargs):
+        if kwargs.get("path") == ".agent-orchestrator/issue_queue/processed/stale-item.md":
+            return "Stale item title\n\nBody\n", "sha-stale"
+        raise FileNotFoundError(str(kwargs.get("path")))
+
+    monkeypatch.setattr(dashboard_router, "_get_repo_text_file", fake_get_repo_text_file)
+    monkeypatch.setattr(loop_actions, "_get_repo_text_file", fake_get_repo_text_file)
+
+    # No open issues.
+    monkeypatch.setattr(dashboard_router, "_list_open_issues_raw", lambda *_a, **_k: [])
+    monkeypatch.setattr(loop_actions, "_list_open_issues_raw", lambda *_a, **_k: [])
+
+    # No issue found by queue marker either.
+    monkeypatch.setattr(
+        dashboard_router, "_search_issue_number_by_queue_marker", lambda *_a, **_k: None
+    )
+    monkeypatch.setattr(loop_actions, "_search_issue_number_by_queue_marker", lambda *_a, **_k: None)
+
+    moved: dict[str, object] = {}
+    deleted: dict[str, object] = {}
+    monkeypatch.setattr(
+        loop_actions,
+        "_ensure_repo_file_present_in_complete",
+        lambda *_a, **kwargs: moved.update(kwargs),
+    )
+    monkeypatch.setattr(
+        loop_actions,
+        "_delete_repo_file_if_present",
+        lambda *_a, **kwargs: deleted.update(kwargs),
+    )
+
+    client = TestClient(create_app())
+    resp = client.post("/api/loop/heal")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["healed"]
+    healed_item = data["healed"][0]
+    assert healed_item["queueId"] == "stale-item.md"
+    assert healed_item["historicalIssueNumber"] is None
+    assert "abandoned" in healed_item["reason"]
+    assert moved.get("complete_path") == ".agent-orchestrator/issue_queue/complete/stale-item.md"
+    assert deleted.get("path") == ".agent-orchestrator/issue_queue/processed/stale-item.md"
+
+
+def test_heal_moves_processed_file_to_complete_when_issue_closed_without_merged_pr(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """When a processed file's issue is closed but has no merged PR, heal moves it to complete."""
+    planning = tmp_path / ".agent-orchestrator"
+    agent_state = tmp_path / "agent_state"
+
+    monkeypatch.setenv("ORCHESTRATOR_PLANNING_ROOT", str(planning))
+    monkeypatch.setenv("AGENT_STATE_PATH", str(agent_state))
+    monkeypatch.setenv("ORCHESTRATOR_UI_DIST", str(tmp_path / "ui" / "dist"))
+    monkeypatch.setenv("ORCHESTRATOR_DEFAULT_REPO", "acme/repo")
+    monkeypatch.setenv("ORCHESTRATOR_GITHUB_TOKEN", "test-token")
+    monkeypatch.setenv("COPILOT_ASSIGNEE", "copilot-swe-agent[bot]")
+
+    import github_agent_orchestrator.server.dashboard.loop_actions as loop_actions
+    import github_agent_orchestrator.server.dashboard_router as dashboard_router
+
+    monkeypatch.setattr(dashboard_router, "_get_default_branch", lambda *_a, **_k: "main")
+    monkeypatch.setattr(loop_actions, "_get_default_branch", lambda *_a, **_k: "main")
+
+    def fake_list_repo_md(*_a, **kwargs):
+        dir_path = kwargs.get("dir_path")
+        if dir_path == ".agent-orchestrator/issue_queue/processed":
+            return [".agent-orchestrator/issue_queue/processed/closed-no-pr.md"]
+        return []
+
+    monkeypatch.setattr(dashboard_router, "_list_repo_markdown_files_under", fake_list_repo_md)
+    monkeypatch.setattr(loop_actions, "_list_repo_markdown_files_under", fake_list_repo_md)
+
+    def fake_get_repo_text_file(*_a, **kwargs):
+        if kwargs.get("path") == ".agent-orchestrator/issue_queue/processed/closed-no-pr.md":
+            return "Closed without PR\n\nBody\n", "sha-closed"
+        raise FileNotFoundError(str(kwargs.get("path")))
+
+    monkeypatch.setattr(dashboard_router, "_get_repo_text_file", fake_get_repo_text_file)
+    monkeypatch.setattr(loop_actions, "_get_repo_text_file", fake_get_repo_text_file)
+
+    # No open issues.
+    monkeypatch.setattr(dashboard_router, "_list_open_issues_raw", lambda *_a, **_k: [])
+    monkeypatch.setattr(loop_actions, "_list_open_issues_raw", lambda *_a, **_k: [])
+
+    # Queue marker finds a historical issue.
+    monkeypatch.setattr(
+        dashboard_router, "_search_issue_number_by_queue_marker", lambda *_a, **_k: 200
+    )
+    monkeypatch.setattr(loop_actions, "_search_issue_number_by_queue_marker", lambda *_a, **_k: 200)
+
+    # Issue is closed.
+    def fake_get_json(*_a, **kwargs):
+        url = str(kwargs.get("url") or "")
+        if url.endswith("/repos/acme/repo/issues/200"):
+            return {"number": 200, "state": "closed", "title": "Closed without PR"}
+        raise AssertionError(f"Unexpected GET url: {url}")
+
+    monkeypatch.setattr(dashboard_router, "_github_get_json", fake_get_json)
+    monkeypatch.setattr(loop_actions, "_github_get_json", fake_get_json)
+
+    # No linked PRs from timeline.
+    monkeypatch.setattr(dashboard_router, "_list_issue_timeline_raw", lambda *_a, **_k: [])
+    monkeypatch.setattr(loop_actions, "_list_issue_timeline_raw", lambda *_a, **_k: [])
+
+    moved: dict[str, object] = {}
+    deleted: dict[str, object] = {}
+    monkeypatch.setattr(
+        loop_actions,
+        "_ensure_repo_file_present_in_complete",
+        lambda *_a, **kwargs: moved.update(kwargs),
+    )
+    monkeypatch.setattr(
+        loop_actions,
+        "_delete_repo_file_if_present",
+        lambda *_a, **kwargs: deleted.update(kwargs),
+    )
+
+    client = TestClient(create_app())
+    resp = client.post("/api/loop/heal")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["healed"]
+    healed_item = data["healed"][0]
+    assert healed_item["queueId"] == "closed-no-pr.md"
+    assert healed_item["historicalIssueNumber"] == 200
+    assert "abandoned" in healed_item["reason"]
+    assert moved.get("complete_path") == ".agent-orchestrator/issue_queue/complete/closed-no-pr.md"
+    assert deleted.get("path") == ".agent-orchestrator/issue_queue/processed/closed-no-pr.md"

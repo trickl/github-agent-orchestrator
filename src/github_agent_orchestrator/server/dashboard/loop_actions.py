@@ -809,11 +809,33 @@ def _heal_orphaned_processed_queue_items(
                 settings, repository=repo, queue_id=queue_id
             )
             if not isinstance(issue_num, int):
-                skipped.append(
+                # No issue exists for this processed file — it is abandoned.
+                # Move it to complete so it stops blocking the loop.
+                complete_path = f".agent-orchestrator/issue_queue/complete/{queue_id}"
+                _ensure_repo_file_present_in_complete(
+                    settings,
+                    repository=repo,
+                    complete_path=complete_path,
+                    content_text=content,
+                    branch=branch,
+                    message=f"Heal abandoned processed artefact: move {queue_id} to complete (no issue found)",
+                )
+                _delete_repo_file_if_present(
+                    settings,
+                    repository=repo,
+                    path=processed_path,
+                    sha=sha,
+                    branch=branch,
+                    message=f"Heal abandoned processed artefact: remove {queue_id} from processed",
+                )
+                healed.append(
                     {
                         "queueId": queue_id,
                         "queuePath": processed_path,
-                        "reason": "no issue found containing the queue marker; refusing to auto-heal",
+                        "completePath": complete_path,
+                        "historicalIssueNumber": None,
+                        "mergedPullNumber": None,
+                        "reason": "no issue found; moved to complete as abandoned",
                     }
                 )
                 continue
@@ -862,6 +884,40 @@ def _heal_orphaned_processed_queue_items(
             continue
 
         if merged_pr_data is None or merged_pr_number is None:
+            issue_state = issue_data.get("state") if isinstance(issue_data, dict) else None
+            if issue_state == "closed":
+                # Issue is closed but no merged PR — abandoned work.  Move to complete.
+                complete_path = f".agent-orchestrator/issue_queue/complete/{queue_id}"
+                _ensure_repo_file_present_in_complete(
+                    settings,
+                    repository=repo,
+                    complete_path=complete_path,
+                    content_text=content,
+                    branch=branch,
+                    message=(
+                        f"Heal abandoned processed artefact: move {queue_id} to complete"
+                        f" (issue #{issue_num} closed, no merged PR)"
+                    ),
+                )
+                _delete_repo_file_if_present(
+                    settings,
+                    repository=repo,
+                    path=processed_path,
+                    sha=sha,
+                    branch=branch,
+                    message=f"Heal abandoned processed artefact: remove {queue_id} from processed",
+                )
+                healed.append(
+                    {
+                        "queueId": queue_id,
+                        "queuePath": processed_path,
+                        "completePath": complete_path,
+                        "historicalIssueNumber": issue_num,
+                        "mergedPullNumber": None,
+                        "reason": f"issue #{issue_num} closed without merged PR; moved to complete as abandoned",
+                    }
+                )
+                continue
             skipped.append(
                 {
                     "queueId": queue_id,
