@@ -1131,11 +1131,50 @@ def _apply_best_effort_automations(
     active_repo: str,
     focus: dict[str, object] | None,
     raw_open_prs: list[dict[str, Any]],
+    open_issue_dicts: list[dict[str, Any]],
+    pr_cache: dict[int, dict[str, Any]],
     warnings: list[str],
 ) -> None:
+    # --- Dedup: close duplicate follow-up issues and orphaned PRs ---
+    from github_agent_orchestrator.server.dashboard.automation_auto_dedup import (
+        maybe_auto_close_duplicate_issues as _maybe_auto_close_duplicate_issues,
+        maybe_auto_close_orphaned_prs as _maybe_auto_close_orphaned_prs,
+    )
+
+    dedup_msgs = _maybe_auto_close_duplicate_issues(
+        settings=settings,
+        repository=active_repo,
+        open_issues=open_issue_dicts,
+    )
+    warnings.extend(dedup_msgs)
+
+    orphan_msgs = _maybe_auto_close_orphaned_prs(
+        settings=settings,
+        repository=active_repo,
+        raw_open_prs=raw_open_prs,
+        open_issues=open_issue_dicts,
+        work_branch_prefix=getattr(settings, "work_branch_prefix", "orchestrator/work"),
+    )
+    warnings.extend(orphan_msgs)
+
     if not isinstance(focus, dict):
         return
 
+    # --- Auto-mark draft PRs ready for review ---
+    from github_agent_orchestrator.server.dashboard.automation_auto_mark_ready import (
+        maybe_auto_mark_focused_pr_ready as _maybe_auto_mark_focused_pr_ready,
+    )
+
+    mark_msg = _maybe_auto_mark_focused_pr_ready(
+        settings=settings,
+        repository=active_repo,
+        focus=focus,
+        pr_cache=pr_cache,
+    )
+    if isinstance(mark_msg, str) and mark_msg.strip():
+        warnings.append(mark_msg)
+
+    # --- Auto-link issue to PR ---
     from github_agent_orchestrator.server.dashboard.automation_auto_link import (
         maybe_auto_link_focused_issue_to_pr as _maybe_auto_link_focused_issue_to_pr,
     )
@@ -1770,6 +1809,8 @@ def _loop_status_for_repo(
         active_repo=active_repo,
         focus=focus if isinstance(focus, dict) else None,
         raw_open_prs=raw_open_prs,
+        open_issue_dicts=open_issue_dicts,
+        pr_cache=pr_cache,
         warnings=warnings,
     )
 

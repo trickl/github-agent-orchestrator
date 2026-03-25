@@ -149,6 +149,26 @@ class ServerSettings(BaseSettings):
         ),
     )
 
+    auto_mark_draft_pr_ready: bool = Field(
+        default=False,
+        validation_alias="ORCHESTRATOR_AUTO_MARK_DRAFT_PR_READY",
+        description=(
+            "If true, the server may automatically mark a focused draft PR as ready for review "
+            "when Copilot has signalled completion (review_requested). This prevents the loop "
+            "from stalling at merge stages when Copilot creates draft PRs."
+        ),
+    )
+
+    auto_close_duplicate_issues: bool = Field(
+        default=False,
+        validation_alias="ORCHESTRATOR_AUTO_CLOSE_DUPLICATE_ISSUES",
+        description=(
+            "If true, the server may automatically close duplicate follow-up issues "
+            "(e.g. duplicate 'Update Capability' issues created by concurrent dispatches) "
+            "and close orphaned PRs targeting closed issues."
+        ),
+    )
+
     auto_resume_copilot_max_nudges: int = Field(
         default=3,
         validation_alias="ORCHESTRATOR_AUTO_RESUME_COPILOT_MAX_NUDGES",
