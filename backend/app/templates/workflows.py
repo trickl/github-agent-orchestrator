@@ -30,6 +30,10 @@ permissions:
   pull-requests: write
   issues: write
 
+concurrency:
+  group: orchestrator
+  cancel-in-progress: false
+
 jobs:
   orchestrate:
     runs-on: ubuntu-latest
@@ -68,6 +72,9 @@ jobs:
         id: orchestrate
         env:
           ORCHESTRATOR_GITHUB_TOKEN: ${{ secrets.ORCHESTRATOR_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
+          ORCHESTRATOR_AUTO_LINK_FOCUSED_ISSUE_PR: 'true'
+          ORCHESTRATOR_AUTO_MARK_DRAFT_PR_READY: 'true'
+          ORCHESTRATOR_AUTO_CLOSE_DUPLICATE_ISSUES: 'true'
         run: |
           set +e
           gao run --repo ${{ github.repository }} --mode auto --heal-orphans
