@@ -183,11 +183,28 @@ def run_auto_loop(
 ) -> int:
     """Run continuous automatic iterations until stop condition is reached."""
 
+    prev_stage: str | None = None
+    consecutive_same_stage = 0
+    max_consecutive_same_stage = 3
+
     for iteration in range(1, max_iterations + 1):
         status = _status_for_repo(repo=repo, ref=ref)
         if not _work_remaining(status):
             _log("Stopping (auto mode complete: no remaining work)")
             return 0
+
+        current_stage = _stage(status)
+        if current_stage == prev_stage:
+            consecutive_same_stage += 1
+            if consecutive_same_stage >= max_consecutive_same_stage:
+                _log(
+                    f"Stopping (auto mode: stage {current_stage!r} unchanged "
+                    f"for {consecutive_same_stage} consecutive iterations)"
+                )
+                return 3
+        else:
+            consecutive_same_stage = 0
+        prev_stage = current_stage
 
         exit_code = run_single_iteration(
             repo=repo,

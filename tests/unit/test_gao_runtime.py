@@ -115,3 +115,62 @@ def test_main_defaults_to_semi_mode_when_config_missing(
     assert rc == 0
     assert captured["repo"] == "acme/repo"
     assert captured["mode"] == Mode.SEMI
+
+
+def test_auto_loop_stops_on_consecutive_same_stage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Auto loop must stop when stage is unchanged for 3 consecutive iterations."""
+
+    call_count = 0
+
+    def _fake_status(*, repo: str, ref: str):
+        return {"stage": "1a", "stageReason": "spin"}
+
+    def _fake_iteration(
+        *, repo: str, ref: str, heal_orphans: bool, mode: Mode,
+        max_steps: int, iteration_number: int,
+    ) -> int:
+        nonlocal call_count
+        call_count += 1
+        return 0
+
+    monkeypatch.setattr(gao_run, "_status_for_repo", _fake_status)
+    monkeypatch.setattr(gao_run, "run_single_iteration", _fake_iteration)
+
+    rc = gao_run.run_auto_loop(
+        repo="acme/repo", ref="", heal_orphans=False, max_steps=5, max_iterations=50,
+    )
+    assert rc == 3
+    assert call_count == 3
+
+
+def test_auto_loop_resets_counter_on_stage_change(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Counter resets when stage changes, allowing continued iteration."""
+
+    stages = iter(["1a", "1a", "2a", "2a", "2a", "2a"])
+
+    def _fake_status(*, repo: str, ref: str):
+        return {"stage": next(stages, "")}
+
+    call_count = 0
+
+    def _fake_iteration(
+        *, repo: str, ref: str, heal_orphans: bool, mode: Mode,
+        max_steps: int, iteration_number: int,
+    ) -> int:
+        nonlocal call_count
+        call_count += 1
+        return 0
+
+    monkeypatch.setattr(gao_run, "_status_for_repo", _fake_status)
+    monkeypatch.setattr(gao_run, "run_single_iteration", _fake_iteration)
+
+    rc = gao_run.run_auto_loop(
+        repo="acme/repo", ref="", heal_orphans=False, max_steps=5, max_iterations=50,
+    )
+    # 1a(new,run), 1a(same=1,run), 2a(new,reset,run), 2a(same=1,run), 2a(same=2,run), 2a(same=3,stop)
+    assert rc == 3
+    assert call_count == 5
