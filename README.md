@@ -1,15 +1,13 @@
 # GitHub Agent Orchestrator
+
 <img src="docs/github-agent-orchestrator.svg" alt="GitHub Agent Orchestrator diagram" width="600" />
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A Git-native **control loop for long-horizon, AI-assisted software development**, built around
-**bounded context**, **explicit state**, and **Copilot-only cognition**.
+A Git-native **control loop for long-horizon, AI-assisted software development**, built around **bounded context**, **explicit state**, and **Copilot-only cognition**.
 
-This project is intentionally **not** a monolithic agent and does **not** rely on growing conversational context.
-Instead, all planning, execution, and reflection are driven by **Git-tracked artefacts** and executed entirely via
-**GitHub Copilot**.
+This project is intentionally **not** a monolithic chat agent and does **not** rely on a growing conversational context. Instead, planning, execution, and reflection are driven by **Git-tracked artefacts** and executed entirely via **GitHub Copilot**.
 
 ---
 
@@ -17,27 +15,63 @@ Instead, all planning, execution, and reflection are driven by **Git-tracked art
 
 Most agent systems follow a familiar pattern:
 
-> Keep adding requests and responses to a growing context window and ask the model what to do next.
+> Keep appending requests and responses to a growing context window and ask the model what to do next.
 
-This approach does not scale:
+That pattern does not scale well for long-horizon software development.
 
-- Context grows without bound
-- Costs increase over time
-- Summarisation becomes necessary
-- Detail is lost
-- State becomes implicit and hallucinated
-- Long-running tasks drift or collapse
+As context grows:
 
-**GitHub Agent Orchestrator enforces a different invariant:**
+- token cost grows
+- summarisation becomes necessary
+- details are lost
+- state becomes implicit
+- drift increases
+- errors compound
+
+There is also a deeper problem:
+
+> **LLMs are path-dependent within a single conversational trajectory.**
+
+In practice, once an early conclusion, diagnosis, or design assumption enters the context, later responses often become biased toward **preserving and elaborating that trajectory** rather than reconsidering it cleanly.
+
+That creates a real risk in coding systems:
+
+- early architectural mistakes become sticky
+- weak assumptions get rationalised instead of challenged
+- incorrect diagnoses propagate into later implementation steps
+- coherence is rewarded over correction
+- long-running chat loops become harder to steer back onto the best path
+
+This matters for unsupervised development. A system that keeps working inside one expanding conversation can become **entrenched** in a flawed line of reasoning.
+
+**GitHub Agent Orchestrator is designed specifically to resist that failure mode.**
+
+It enforces a different invariant:
 
 > **The LLM context is always bounded.**
 
 All long-term state lives in the repository.
-Each iteration operates over a fixed, minimal context derived from explicit files, not accumulated conversation.
 
-This is a **development control loop** for building out applications and services not a chat loop. 
-The goal is stable, unsupervised productive development over a period of up to 12 hours.
-This unlocks significant producitvity gains as it can be run **overnight** and **while at work**.
+Each iteration operates over a **small, explicit, task-specific context** derived from files, not accumulated conversation. That makes the system easier to inspect, easier to correct, and less vulnerable to reasoning lock-in.
+
+This is a **development control loop**, not a chat loop.
+
+The goal is stable, unsupervised, productive development over periods of up to roughly 12 hours. That makes it useful **overnight** and **while you are away from the keyboard**.
+
+---
+
+## Design principles
+
+GitHub Agent Orchestrator is built around a few strong constraints:
+
+- **Bounded context**: no unbounded prompt growth
+- **Explicit state**: long-term memory lives in versioned files
+- **Task isolation**: each step is small, concrete, and independently framed
+- **Git-native control**: repository artefacts are the source of truth
+- **Copilot-only cognition**: reasoning and implementation are performed via GitHub Copilot
+- **Stateless orchestration**: the orchestrator script coordinates the loop without becoming a second memory store
+
+These constraints are deliberate. They are what make the system more stable over long horizons than a single persistent conversational thread.
 
 ---
 
@@ -53,37 +87,39 @@ The Ralph Wiggum loop works from a predefined list of requirements and iterates 
 
 GitHub Agent Orchestrator instead behaves more like **gradient descent**:
 
-- It computes the difference between **Target State** and **Current State**
-- It derives the next Issue from that difference
-- It updates the Current State after merge
-- It recomputes the next step from the new delta
+- it computes the difference between **Target State** and **Current State**
+- it derives the next issue from that difference
+- it updates the Current State after merge
+- it recomputes the next step from the new delta
 
 There is no fixed canonical task list.  
-Work emerges from the gap.
+Work emerges from the gap between the desired system and the current system.
+
+Just as importantly, GitHub Agent Orchestrator is explicitly designed to avoid the failure mode of a single growing conversational context. Each iteration is re-grounded from repository state rather than inherited from an ever-longer chat transcript.
 
 ---
 
 ### What do I need to run this?
 
-- A Python environment  
-- A GitHub account  
+- a Python environment
+- a GitHub account
 
-That’s it.
+That is it.
 
 ---
 
 ## Mental model
 
-- **Github Copilot**: does all reasoning and software development
-- **GitHub Target Repository**: comtains code plus orchestration state
-- **The orchestrator script**: oversees and manages the control loop (stateless)
+- **GitHub Copilot**: does the reasoning and software development
+- **GitHub target repository**: contains code plus orchestration state
+- **The orchestrator script**: manages the control loop and remains stateless
 
 Concretely:
 
 - Issues = **intent**
 - PRs = **execution**
 - Reviews = **reflection**
-- Orchestrator Repository files = **memory**
+- Repository artefacts = **memory**
 
 ![GitHub Agent Orchestrator loop](docs/github-agent-orchestrator-loop.png)
 
@@ -93,19 +129,25 @@ Concretely:
 
 The system continuously iterates over two explicit states:
 
-- **Target state**: `/.orchestrator-agent/state/target_state.md`
-- **Current state**: `/.agent-orchestrator/state/current_state.md`
+- **Target State**: `/.agent-orchestrator/state/target_state.md`
+- **Current State**: `/.agent-orchestrator/state/current_state.md`
 
 Each loop:
 
 1. Compare target vs current
-2. Identify a single concrete gap
+2. Identify a single concrete next development step
 3. Produce one task artefact
-4. Execute it via Copilot (issue → PR)
-5. Update the current state upon completion
+4. Execute it via Copilot (issue -> PR)
+5. Update the current state after completion
 6. Repeat
 
-There is **no growing prompt comtext**.
+There is **no growing prompt context**.
+
+Each iteration is intentionally narrow. The model is not asked to carry forward a large conversational narrative. Instead, it is asked to act on explicit repository state.
+
+That is a core part of the design, not an incidental implementation detail.
+
+---
 
 ## Canonical artefacts
 
@@ -124,53 +166,86 @@ The entire loop is driven by a small, explicit set of Git-tracked artefacts:
         complete/
 ```
 
-The `/.agent-orchestrator/issue_queue` directory is the handoff boundary between Copilot’s reasoning and the orchestrator’s
-control.
+The `/.agent-orchestrator/issue_queue` directory is the handoff boundary between Copilot's reasoning and the orchestrator's control loop.
 
 ---
 
 ## Canonical task types
 
-These are never mixed.
+These are kept distinct on purpose.
 
 ### 1. Gap analysis
 
-- Compares target vs current
-- Produces exactly one task artefact
-- No code changes
+- compares target vs current
+- produces exactly one task artefact
+- makes no code changes
 
 ### 2. Development task
 
-- Implements one concrete change
-- Updates `current_state.md` when a capability refresh is requested
+- implements one concrete change
+- updates `current_state.md` when a capability refresh is requested
 
 ### 3. Review task
 
-- Critique only (architecture, complexity, coverage, etc.)
-- Produces a review artefact
+- critique only
+- focuses on architecture, complexity, correctness, coverage, or maintainability
+- produces a review artefact
 
 ### 4. Review consumption
 
-- Translates critique into candidate tasks
-- No execution
+- translates critique into candidate tasks
+- does not execute them directly
+
+This separation is one of the ways GitHub Agent Orchestrator avoids entrenchment. Generation, critique, and follow-up are not collapsed into one continuously self-reinforcing thread.
+
+---
+
+## Why bounded context is a feature, not a limitation
+
+A common instinct with LLM systems is to preserve as much prior conversation as possible.
+
+GitHub Agent Orchestrator deliberately does the opposite.
+
+Why?
+
+Because for long-running engineering work, preserving every prior turn can make the model more committed to its own earlier conclusions. A fresh, bounded task context is often better for:
+
+- correcting earlier mistakes
+- re-evaluating assumptions
+- preventing prompt drift
+- keeping costs predictable
+- making reasoning inspectable
+- reducing hidden state
+
+In other words:
+
+> **The system should remember the repository state, not the entire conversational path that happened to produce it.**
+
+That distinction is central to the design.
 
 ---
 
 ## Features
 
 - Minimal CLI for driving the loop
-- Repo-derived loop state (no database, no local state)
+- Repo-derived loop state with no database
 - Copilot-only planning and execution
-- Structured JSON logs (used by the dashboard and API)
+- Structured JSON logs for the dashboard and API
 - Optional REST server and UI dashboard for observability
+- Explicit task decomposition
+- Bounded-context execution for long-horizon stability
 
-## Running checks locally (recommended)
+---
+
+## Running checks locally
 
 This repository does **not** run GitHub Actions by default.
 
 After making changes, run the local verification script:
 
-- `./scripts/verify-ci.sh`
+```bash
+./scripts/verify-ci.sh
+```
 
 It runs linting, formatting checks, type checking, and tests.
 
@@ -178,19 +253,19 @@ It runs linting, formatting checks, type checking, and tests.
 
 ## User role
 
-The user owns two artefacts:
+The user owns the target specification:
 
 ```text
-/.orchestrator-agent/state/target_state.md
+/.agent-orchestrator/state/target_state.md
 ```
 
-Everything else is derived.
+Everything else is derived from that, either directly or indirectly.
 
 ---
 
 ## Quick start
 
-### CLI-first quickstart
+### CLI-first quick start
 
 ```bash
 orchestrator init --repo owner/repo
@@ -198,7 +273,7 @@ orchestrator auth github --token ghp_...
 orchestrator run --repo owner/repo
 ```
 
-Mode-driven package runner (defaults to `semi` mode):
+Mode-driven package runner:
 
 ```bash
 gao run
@@ -260,7 +335,7 @@ Supported values are `manual`, `semi` (default), and `auto`.
 orchestrator-server
 ```
 
-To run the same loop in **review mode** (review-intake → work → review-actions update):
+To run the same loop in **review mode**:
 
 ```bash
 orchestrator-server --loop-mode review
@@ -269,18 +344,20 @@ orchestrator-server --loop-mode review
 In review mode:
 
 - Step 1 consumes the next review file under `.agent-orchestrator/reviews/review-*.md` and produces exactly one queue artefact.
-- Step 2 executes queued work (both `review-*.md` and `dev-*.md` artefacts are eligible).
-- Step 3 creates an “Update Review” issue that updates `.agent-orchestrator/reviews/review-YYYY-MM-DD.actions.md` with what was resolved.
-- Review mode does **not** create “Update Capability” issues (i.e., it does not update `.agent-orchestrator/state/current_state.md`).
+- Step 2 executes queued work. Both `review-*.md` and `dev-*.md` artefacts are eligible.
+- Step 3 creates an "Update Review" issue that updates `.agent-orchestrator/reviews/review-YYYY-MM-DD.actions.md` with what was resolved.
+- Review mode does **not** create "Update Capability" issues, so it does not update `.agent-orchestrator/state/current_state.md`.
 
-- OpenAPI: http://127.0.0.1:8000/api/openapi.json
-- Swagger UI: http://127.0.0.1:8000/api/docs
+API docs:
 
-### Lightweight local control-plane backend (pre-GitHub-App phase)
+- OpenAPI: `http://127.0.0.1:8000/api/openapi.json`
+- Swagger UI: `http://127.0.0.1:8000/api/docs`
 
-For GitHub App-based operation, this repository includes a minimal FastAPI control-plane
-under `backend/app` that talks to **real GitHub repositories** using **GitHub App installation tokens**, while
-dispatching orchestration runs via **GitHub Actions**.
+---
+
+## Lightweight local control-plane backend (pre-GitHub-App phase)
+
+For GitHub App-based operation, this repository includes a minimal FastAPI control plane under `backend/app` that talks to **real GitHub repositories** using **GitHub App installation tokens**, while dispatching orchestration runs via **GitHub Actions**.
 
 Run locally:
 
@@ -290,25 +367,25 @@ uvicorn backend.app.main:app --reload --port 8000
 
 Required environment variables:
 
-- `GITHUB_APP_ID` (GitHub App ID)
-- `GITHUB_APP_PRIVATE_KEY` (GitHub App private key PEM; `\n` escapes supported)
-- `GITHUB_APP_INSTALLATION_ID` (optional fixed installation id; repo-scoped lookup is used when omitted)
-- `GITHUB_APP_SLUG` (optional app slug used to build install URL for onboarding)
-- `GITHUB_APP_INSTALL_URL` (optional explicit install URL override)
-- `GITHUB_OAUTH_CLIENT_ID` (OAuth app client id for UI sign-in)
-- `GITHUB_OAUTH_CLIENT_SECRET` (OAuth app client secret)
-- `GITHUB_OAUTH_REDIRECT_URI` (typically `https://<backend>/auth/github/callback`)
-- `AUTH_FRONTEND_REDIRECT_URL` (typically your GitHub Pages URL)
-- `AUTH_SESSION_SECRET` (long random secret used to sign auth session cookies)
-- `AUTH_ALLOWED_GITHUB_USERS` (optional comma-separated GitHub login allowlist)
-- `GITHUB_API_URL` (optional, defaults to `https://api.github.com`)
-- `CORS_ORIGINS` (optional, comma-separated; include your GitHub Pages URL and local dev origin)
-- `GITHUB_WEBHOOK_SECRET` (required for `POST /webhooks/github` signature verification)
+- `GITHUB_APP_ID` - GitHub App ID
+- `GITHUB_APP_PRIVATE_KEY` - GitHub App private key PEM; `\n` escapes supported
+- `GITHUB_APP_INSTALLATION_ID` - optional fixed installation id; repo-scoped lookup is used when omitted
+- `GITHUB_APP_SLUG` - optional app slug used to build install URL for onboarding
+- `GITHUB_APP_INSTALL_URL` - optional explicit install URL override
+- `GITHUB_OAUTH_CLIENT_ID` - OAuth app client id for UI sign-in
+- `GITHUB_OAUTH_CLIENT_SECRET` - OAuth app client secret
+- `GITHUB_OAUTH_REDIRECT_URI` - typically `https://<backend>/auth/github/callback`
+- `AUTH_FRONTEND_REDIRECT_URL` - typically your GitHub Pages URL
+- `AUTH_SESSION_SECRET` - long random secret used to sign auth session cookies
+- `AUTH_ALLOWED_GITHUB_USERS` - optional comma-separated GitHub login allowlist
+- `GITHUB_API_URL` - optional, defaults to `https://api.github.com`
+- `CORS_ORIGINS` - optional comma-separated list; include your GitHub Pages URL and local dev origin
+- `GITHUB_WEBHOOK_SECRET` - required for `POST /webhooks/github` signature verification
 
-Optional auth override flags (secure defaults already applied):
+Optional auth override flags:
 
-- `BACKEND_REQUIRE_AUTH` (optional, defaults to `true`; set `false` only for local/dev bypass)
-- `AUTH_COOKIE_SECURE` (optional, defaults to `true`; set `false` only for non-HTTPS local testing)
+- `BACKEND_REQUIRE_AUTH` - optional, defaults to `true`; set `false` only for local development bypass
+- `AUTH_COOKIE_SECURE` - optional, defaults to `true`; set `false` only for non-HTTPS local testing
 
 MVP endpoints:
 
@@ -326,36 +403,11 @@ MVP endpoints:
 - `POST /webhooks/github`
 - `GET /webhooks/events/recent`
 
-`POST /repos/{owner}/{repo}/run` dispatches the configured workflow (`orchestrator.yml` by default)
-using `workflow_dispatch` for the selected repository.
+`POST /repos/{owner}/{repo}/run` dispatches the configured workflow, `orchestrator.yml` by default, using `workflow_dispatch` for the selected repository.
 
-### Keeping orchestrator runtime fresh in workflow runs
+This control plane requires GitHub App installation for repository access and does **not** require local repository cloning.
 
-To prevent stale runtime installs in target repositories, ensure each orchestrator workflow installs
-the package at runtime. A reusable action is available in this repository:
-
-`trickl/github-agent-orchestrator/.github/actions/setup-orchestrator@main`
-
-Recommended usage in target repository workflows:
-
-- Use `with: version: latest` to always install the newest published package each run.
-- Use `with: version: <x.y.z>` to pin deterministically.
-- The action verifies installed version and exposes `installed-version` output.
-
-Example step sequence in a workflow job:
-
-1. `actions/setup-python`
-2. `trickl/github-agent-orchestrator/.github/actions/setup-orchestrator@main`
-3. `gao run --repo <owner/repo>` (or `python -m github_agent_orchestrator.cli run --repo <owner/repo>`)
-
-The backend `/repos/{owner}/{repo}/update-orchestrator` endpoint also compares workflow pins against
-the backend package version and can open a PR to bump stale workflow pins.
-
-This control-plane requires GitHub App installation for repository access and does
-**not** require local repository cloning.
-
-`GET /repos/{owner}/{repo}/status` includes `hasTargetState` so the UI can switch
-between first-time onboarding and the main control panel.
+`GET /repos/{owner}/{repo}/status` includes `hasTargetState` so the UI can switch between first-time onboarding and the main control panel.
 
 `POST /webhooks/github` currently provides deterministic summaries for:
 
@@ -366,24 +418,45 @@ between first-time onboarding and the main control panel.
 
 All other events are acknowledged and returned as `handled.kind: "unhandled"`.
 
-`GET /webhooks/events/recent` returns an in-memory ring buffer of the latest accepted
-webhook deliveries (most-recent-first), useful for local debugging.
+`GET /webhooks/events/recent` returns an in-memory ring buffer of the latest accepted webhook deliveries, most recent first, which is useful for local debugging.
 
 `GET /version` returns deploy verification metadata:
 
-- `version` (backend semantic version)
-- `gitSha` (from `RENDER_GIT_COMMIT`, `GIT_COMMIT_SHA`, or `SOURCE_VERSION`)
-- `buildTimeUtc` (from `BUILD_TIME_UTC` when set; otherwise runtime timestamp)
+- `version` - backend semantic version
+- `gitSha` - from `RENDER_GIT_COMMIT`, `GIT_COMMIT_SHA`, or `SOURCE_VERSION`
+- `buildTimeUtc` - from `BUILD_TIME_UTC` when set; otherwise runtime timestamp
 
-Use this endpoint after Render auto-deploys to confirm the exact backend revision now serving traffic.
+Use this endpoint after deployment to confirm the exact backend revision now serving traffic.
 
-When `BACKEND_REQUIRE_AUTH=true`, control-plane routes under `/repos/*` require a valid signed session
-from the OAuth login flow. This prevents anonymous web users from invoking repo mutations.
+When `BACKEND_REQUIRE_AUTH=true`, control-plane routes under `/repos/*` require a valid signed session from the OAuth login flow. This prevents anonymous web users from invoking repository mutations.
 
-For smoother first-time setup, the onboarding UI calls `GET /auth/github-app/install-url` and surfaces an
-"Install GitHub App" action when no repositories are visible yet.
+For smoother first-time setup, the onboarding UI calls `GET /auth/github-app/install-url` and surfaces an **Install GitHub App** action when no repositories are visible yet.
 
-### Automated versioning (main branch)
+---
+
+## Keeping orchestrator runtime fresh in workflow runs
+
+To prevent stale runtime installs in target repositories, ensure each orchestrator workflow installs the package at runtime. A reusable action is available in this repository:
+
+`trickl/github-agent-orchestrator/.github/actions/setup-orchestrator@main`
+
+Recommended usage in target repository workflows:
+
+- use `with: version: latest` to install the newest published package each run
+- use `with: version: <x.y.z>` to pin deterministically
+- the action verifies the installed version and exposes `installed-version` output
+
+Example step sequence in a workflow job:
+
+1. `actions/setup-python`
+2. `trickl/github-agent-orchestrator/.github/actions/setup-orchestrator@main`
+3. `gao run --repo <owner/repo>` or `python -m github_agent_orchestrator.cli run --repo <owner/repo>`
+
+The backend `/repos/{owner}/{repo}/update-orchestrator` endpoint also compares workflow pins against the backend package version and can open a PR to bump stale workflow pins.
+
+---
+
+## Automated versioning (main branch)
 
 This repository includes automatic patch versioning on `main` via:
 
@@ -392,39 +465,53 @@ This repository includes automatic patch versioning on `main` via:
 
 On each non-bot push to `main`, the workflow:
 
-1. Increments patch version (`x.y.z -> x.y.(z+1)`) in:
-    - `pyproject.toml`
-    - `src/github_agent_orchestrator/__init__.py`
-2. Commits the change
-3. Creates and pushes a `v<version>` git tag
+1. increments patch version (`x.y.z -> x.y.(z+1)`) in:
+   - `pyproject.toml`
+   - `src/github_agent_orchestrator/__init__.py`
+2. commits the change
+3. creates and pushes a `v<version>` git tag
 
 After deployment, call `GET /version` to confirm both semantic version and commit SHA served live.
 
-The dashboard is observational only; it does not alter system behaviour.
+---
 
-### UI deployment (GitHub Pages) and API connectivity
+## UI deployment (GitHub Pages) and API connectivity
 
-The UI is configured to support two modes automatically:
+The UI is configured to support two modes automatically.
 
-- **Local development** (`npm run dev` in `ui/`):
-    - Uses Vite dev proxy `/api -> http://127.0.0.1:8000`
-    - This means local UI traffic targets a localhost backend service.
-- **GitHub Pages deployment**:
-    - Workflow: `.github/workflows/ui-pages.yml`
-    - Build-time API base URL is set to:
-        - `https://github-agent-orchestrator.onrender.com`
+### Local development
+
+In `ui/`:
+
+```bash
+npm run dev
+```
+
+This uses the Vite dev proxy:
+
+```text
+/api -> http://127.0.0.1:8000
+```
+
+So local UI traffic targets a localhost backend service.
+
+### GitHub Pages deployment
+
+- Workflow: `.github/workflows/ui-pages.yml`
+- Build-time API base URL:
+  - `https://github-agent-orchestrator.onrender.com`
 
 If you see browser-side `Failed to fetch`, ensure backend CORS allows the UI origin.
+
 Default backend CORS origins are:
 
 - `https://trickl.github.io`
 - `http://localhost:5173`
 - `http://127.0.0.1:5173`
 
-Override via `CORS_ORIGINS` (comma-separated) in your deployment environment.
+Override via `CORS_ORIGINS` as a comma-separated list in your deployment environment.
 
-The Pages workflow also configures the correct Vite base path for repository-hosted pages
-(`/<repo-name>/`) during CI builds.
+The Pages workflow also configures the correct Vite base path for repository-hosted pages, `/<repo-name>/`, during CI builds.
 
 ---
 
@@ -432,8 +519,9 @@ The Pages workflow also configures the correct Vite base path for repository-hos
 
 - Artefact-driven development control loop
 - Bounded-context execution
+- Explicit repository-backed state
 - Copilot-only planning and implementation
-- Repo-derived state (no database)
+- Repo-derived state with no database
 - Optional dashboard and REST API
 - Comprehensive tests
 
@@ -441,12 +529,13 @@ The Pages workflow also configures the correct Vite base path for repository-hos
 
 ## To do
 
-- Periodic automated review cycles (e.g. complexity, test coverage, visual QA)
+- Periodic automated review cycles, for example complexity, test coverage, and visual QA
 - Improved error handling and recovery
+- Continued refinement of review and critique flows
+- Better first-class surfacing of bounded-context benefits in the UI and onboarding flow
 
 ---
 
 ## License
 
-MIT License — see LICENSE.
-npm run dev
+MIT License - see `LICENSE`.
