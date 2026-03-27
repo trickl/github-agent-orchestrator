@@ -215,7 +215,7 @@ def maybe_auto_link_focused_issue_to_pr(
     # Import here to avoid circular dependency at module load time
     from github_agent_orchestrator.server import dashboard_router
 
-    if not getattr(settings, "auto_link_focused_issue_pr", False):
+    if not getattr(settings, "auto_link_focused_issue_pr", True):
         _debug_append(debug, "Auto-link disabled (ORCHESTRATOR_AUTO_LINK_FOCUSED_ISSUE_PR is false).")
         return None
     if not settings.github_token.strip():

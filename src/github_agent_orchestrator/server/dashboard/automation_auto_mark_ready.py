@@ -41,7 +41,7 @@ def maybe_auto_mark_focused_pr_ready(
       - idempotent: GraphQL mutation is a no-op on non-draft PRs
     """
 
-    if not getattr(settings, "auto_mark_draft_pr_ready", False):
+    if not getattr(settings, "auto_mark_draft_pr_ready", True):
         return None
     if not settings.github_token.strip():
         return None

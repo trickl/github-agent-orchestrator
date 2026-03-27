@@ -101,7 +101,7 @@ def maybe_auto_close_duplicate_issues(
     Returns a list of warning/info strings describing actions taken.
     """
 
-    if not getattr(settings, "auto_close_duplicate_issues", False):
+    if not getattr(settings, "auto_close_duplicate_issues", True):
         return []
     if not settings.github_token.strip():
         return []
@@ -155,7 +155,7 @@ def maybe_auto_close_orphaned_prs(
     Returns a list of warning/info strings describing actions taken.
     """
 
-    if not getattr(settings, "auto_close_duplicate_issues", False):
+    if not getattr(settings, "auto_close_duplicate_issues", True):
         return []
     if not settings.github_token.strip():
         return []

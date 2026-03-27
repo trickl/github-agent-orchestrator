@@ -140,7 +140,7 @@ class ServerSettings(BaseSettings):
     )
 
     auto_link_focused_issue_pr: bool = Field(
-        default=False,
+        default=True,
         validation_alias="ORCHESTRATOR_AUTO_LINK_FOCUSED_ISSUE_PR",
         description=(
             "If true, the server may attempt to auto-link the focused issue to a likely open PR "
@@ -150,7 +150,7 @@ class ServerSettings(BaseSettings):
     )
 
     auto_mark_draft_pr_ready: bool = Field(
-        default=False,
+        default=True,
         validation_alias="ORCHESTRATOR_AUTO_MARK_DRAFT_PR_READY",
         description=(
             "If true, the server may automatically mark a focused draft PR as ready for review "
@@ -160,7 +160,7 @@ class ServerSettings(BaseSettings):
     )
 
     auto_close_duplicate_issues: bool = Field(
-        default=False,
+        default=True,
         validation_alias="ORCHESTRATOR_AUTO_CLOSE_DUPLICATE_ISSUES",
         description=(
             "If true, the server may automatically close duplicate follow-up issues "
